@@ -18,6 +18,8 @@ venv/
 .env
 .env.local
 .env.*.local
+.env.*
+!.env.template
 
 # Build outputs
 dist/
@@ -33,10 +35,12 @@ npm-debug.log*
 # Cache
 .cache/
 .parcel-cache/
+.pytest_cache/
 
 # Test coverage
 coverage/
 .nyc_output/
+.coverage
 
 # Secrets
 *.pem

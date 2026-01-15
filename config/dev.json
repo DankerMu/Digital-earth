@@ -1,0 +1,31 @@
+{
+  "api": {
+    "host": "0.0.0.0",
+    "port": 8000,
+    "debug": true,
+    "cors_origins": [
+      "http://localhost:3000",
+      "http://127.0.0.1:3000"
+    ]
+  },
+  "pipeline": {
+    "workers": 4,
+    "batch_size": 100
+  },
+  "web": {
+    "api_base_url": "http://localhost:8000"
+  },
+  "database": {
+    "host": "localhost",
+    "port": 5432,
+    "name": "digital_earth"
+  },
+  "redis": {
+    "host": "localhost",
+    "port": 6379
+  },
+  "storage": {
+    "tiles_bucket": "digital-earth-tiles-dev",
+    "raw_bucket": "digital-earth-raw-dev"
+  }
+}
