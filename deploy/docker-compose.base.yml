@@ -1,0 +1,83 @@
+version: '3.8'
+
+x-common: &common
+  restart: unless-stopped
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "3"
+
+services:
+  web:
+    <<: *common
+    image: ghcr.io/${GITHUB_REPOSITORY:-local}/digital-earth-web:${IMAGE_TAG:-latest}
+    expose:
+      - "80"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:80/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  api:
+    <<: *common
+    image: ghcr.io/${GITHUB_REPOSITORY:-local}/digital-earth-api:${IMAGE_TAG:-latest}
+    expose:
+      - "8000"
+    volumes:
+      - ../config:/config:ro
+    environment:
+      - DIGITAL_EARTH_CONFIG_DIR=/config
+      - DIGITAL_EARTH_DB_HOST=postgres
+      - DIGITAL_EARTH_DB_PORT=5432
+      - DIGITAL_EARTH_DB_NAME=${DIGITAL_EARTH_DB_NAME:-digital_earth}
+      - DIGITAL_EARTH_DB_USER=${DIGITAL_EARTH_DB_USER:-app}
+      - DIGITAL_EARTH_REDIS_HOST=redis
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+
+  postgres:
+    <<: *common
+    image: postgres:15-alpine
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    environment:
+      - POSTGRES_DB=${DIGITAL_EARTH_DB_NAME:-digital_earth}
+      - POSTGRES_USER=${DIGITAL_EARTH_DB_USER:-app}
+      - POSTGRES_PASSWORD=${DIGITAL_EARTH_DB_PASSWORD}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    <<: *common
+    image: redis:7-alpine
+    volumes:
+      - redis_data:/data
+
+  nginx:
+    <<: *common
+    image: nginx:1.25-alpine
+    ports:
+      - "${HTTP_PORT:-80}:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/sites-enabled:/etc/nginx/sites-enabled:ro
+    depends_on:
+      - web
+      - api
+
+volumes:
+  postgres_data:
+  redis_data:

@@ -1,0 +1,26 @@
+version: '3.8'
+
+include:
+  - docker-compose.base.yml
+
+services:
+  postgres:
+    environment:
+      - POSTGRES_PASSWORD=ci_test_password
+    ports:
+      - "5432:5432"
+
+  api:
+    ports:
+      - "8000:8000"
+    environment:
+      - DIGITAL_EARTH_DB_PASSWORD=ci_test_password
+      - DIGITAL_EARTH_ENV=dev
+
+  web:
+    volumes:
+      - ../apps/web/public/config.dev.json:/usr/share/nginx/html/config.json:ro
+
+  nginx:
+    ports:
+      - "80:80"

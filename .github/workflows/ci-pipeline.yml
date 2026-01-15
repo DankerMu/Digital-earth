@@ -1,0 +1,36 @@
+name: CI - Data Pipeline
+
+on:
+  pull_request:
+    paths:
+      - 'services/data-pipeline/**'
+      - 'packages/**'
+
+concurrency:
+  group: ci-pipeline-${{ github.head_ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint-test:
+    name: Lint & Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+      - run: pip install ruff pytest pytest-cov
+      - run: pip install -e "services/data-pipeline[test]"
+      - run: ruff check services/data-pipeline/
+      - run: ruff format --check services/data-pipeline/
+      - run: |
+          pytest services/data-pipeline/tests/ \
+            --cov=services/data-pipeline/src \
+            --cov-report=xml \
+            -m "not integration"
+      - uses: codecov/codecov-action@v4
+        with:
+          files: coverage.xml
+          flags: pipeline
+          fail_ci_if_error: false

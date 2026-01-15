@@ -1,0 +1,73 @@
+name: Nightly
+
+on:
+  schedule:
+    - cron: '0 18 * * *'  # UTC 18:00 = 北京 02:00
+  workflow_dispatch:
+
+jobs:
+  unreal-package:
+    name: UE Package
+    runs-on: [self-hosted, windows, ue5]
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      - name: Cook & Package
+        shell: pwsh
+        run: |
+          & "$env:UE_ROOT\Engine\Build\BatchFiles\RunUAT.bat" `
+            BuildCookRun `
+            -project="${{ github.workspace }}\apps\ue-client\DigitalEarth.uproject" `
+            -platform=Win64 `
+            -clientconfig=Shipping `
+            -cook -stage -package -archive `
+            -archivedirectory="${{ github.workspace }}\Packaged"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ue-package-${{ github.run_number }}
+          path: Packaged/
+          retention-days: 7
+
+  data-regression:
+    name: Data Pipeline Regression
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - run: pip install -e "services/data-pipeline[test]"
+
+      - name: Run regression with sample data
+        run: |
+          pytest services/data-pipeline/tests/ \
+            -m "integration" \
+            --sample-data=tests/fixtures/
+
+  security-scan:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          severity: 'HIGH,CRITICAL'
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+
+      - name: Upload Trivy scan results
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: 'trivy-results.sarif'

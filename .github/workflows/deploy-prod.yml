@@ -1,0 +1,58 @@
+name: Deploy Production
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: 'Image tag to deploy (e.g., sha-abc1234 or v1.0.0)'
+        required: true
+
+jobs:
+  deploy:
+    name: Deploy to Production
+    runs-on: [self-hosted, linux, production]
+    environment:
+      name: production
+      url: https://digital-earth.example.com
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set IMAGE_TAG
+        run: |
+          if [ "${{ github.event_name }}" == "release" ]; then
+            echo "IMAGE_TAG=${{ github.event.release.tag_name }}" >> $GITHUB_ENV
+          else
+            echo "IMAGE_TAG=${{ github.event.inputs.image_tag }}" >> $GITHUB_ENV
+          fi
+
+      - name: Record current version
+        run: |
+          docker compose -f deploy/docker-compose.prod.yml config 2>/dev/null \
+            | grep -oP 'image:.*:\K[^"]+' | head -1 > /tmp/prev_tag.txt || true
+          echo "Previous tag: $(cat /tmp/prev_tag.txt 2>/dev/null || echo 'none')"
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Pull & Deploy
+        run: |
+          docker compose -f deploy/docker-compose.prod.yml pull
+          docker compose -f deploy/docker-compose.prod.yml up -d
+
+      - name: Health check
+        run: |
+          sleep 30
+          curl -f http://localhost:8000/health || exit 1
+
+      - name: Notify on failure
+        if: failure()
+        run: |
+          echo "::error::Production deployment failed!"
+          echo "Previous tag: $(cat /tmp/prev_tag.txt 2>/dev/null || echo 'unknown')"
+          echo "To rollback, run: IMAGE_TAG=<prev_tag> docker compose -f deploy/docker-compose.prod.yml up -d"
