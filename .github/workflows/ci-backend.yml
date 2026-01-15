@@ -4,7 +4,6 @@ on:
   pull_request:
     paths:
       - 'apps/api/**'
-      - 'packages/**'
       - 'pyproject.toml'
       - 'poetry.lock'
 

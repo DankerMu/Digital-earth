@@ -1,0 +1,50 @@
+schema_version: 1
+
+presets:
+  light_rain:
+    effect_type: rain
+    intensity: 2
+    duration: 60
+    color_hint: "rgba(180, 200, 255, 0.5)"
+    spawn_rate: 80
+    particle_size: [0.5, 1.5]
+    wind_influence: 0.2
+
+  dense_fog:
+    effect_type: fog
+    intensity: 3
+    duration: 0
+    color_hint: "rgba(200, 200, 200, 0.7)"
+    spawn_rate: 20
+    particle_size: [5.0, 12.0]
+    wind_influence: 0.1
+
+  heavy_snow:
+    effect_type: snow
+    intensity: 4
+    duration: 120
+    color_hint: "rgba(255, 255, 255, 0.9)"
+    spawn_rate: 150
+    particle_size:
+      min: 0.8
+      max: 2.0
+    wind_influence: 0.3
+
+  gusty_wind:
+    effect_type: wind
+    intensity: 3
+    duration: 45
+    color_hint: "rgba(200, 200, 255, 0.15)"
+    spawn_rate: 30
+    particle_size: [0.2, 0.6]
+    wind_influence: 0.8
+
+  extreme_storm:
+    effect_type: storm
+    intensity: 5
+    duration: 90
+    color_hint: "rgba(120, 120, 160, 0.85)"
+    spawn_rate: 300
+    particle_size: [1.0, 3.0]
+    wind_influence: 1.0
+
