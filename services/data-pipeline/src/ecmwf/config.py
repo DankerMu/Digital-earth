@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any, Iterable, Optional, Union
 
 import yaml
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
 
 SUPPORTED_SCHEMA_VERSIONS = {1}
 
@@ -137,7 +137,10 @@ def load_ecmwf_variables_config(
             "versions": {legacy_version: {k: v for k, v in data.items() if k != "version"}},
         }
 
-    config_file = EcmwfVariablesConfigFile.model_validate(data)
+    try:
+        config_file = EcmwfVariablesConfigFile.model_validate(data)
+    except ValidationError as e:
+        raise ValueError(f"Invalid ECMWF variables config ({config_path}): {e}") from e
     selected_version = version or config_file.default_version
     if selected_version not in config_file.versions:
         raise KeyError(
@@ -151,8 +154,14 @@ def load_ecmwf_variables_config(
 
 
 @lru_cache
+def _get_ecmwf_variables_config_cached(
+    resolved_path: str, version: Optional[str] = None
+) -> EcmwfVariablesConfig:
+    return load_ecmwf_variables_config(Path(resolved_path), version=version)
+
+
 def get_ecmwf_variables_config(
     path: Union[str, Path, None] = None, *, version: Optional[str] = None
 ) -> EcmwfVariablesConfig:
-    resolved = _resolve_config_path(path)
-    return load_ecmwf_variables_config(resolved, version=version)
+    resolved = str(_resolve_config_path(path))
+    return _get_ecmwf_variables_config_cached(resolved, version=version)
