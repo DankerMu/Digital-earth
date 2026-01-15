@@ -344,6 +344,144 @@ release/v<major>.<minor>.<patch>
 
 ---
 
+## 八点五、CI 开发要点
+
+> 本章节记录 CI 配置中常见问题及解决方案，避免重复踩坑。
+
+### 8.5.1 Workflow 触发条件 (paths)
+
+**问题**：`packages/**` 等宽泛路径会导致不相关的 workflow 被误触发。
+
+**解决**：
+- 每个 workflow 的 `paths` 必须精确匹配其负责的目录
+- 共享包 (`packages/shared`) 有独立 CI，其他 workflow 不应包含 `packages/**`
+
+```yaml
+# ✅ 正确：精确匹配
+on:
+  pull_request:
+    paths:
+      - 'services/data-pipeline/**'
+
+# ❌ 错误：过于宽泛
+on:
+  pull_request:
+    paths:
+      - 'services/data-pipeline/**'
+      - 'packages/**'  # 会误触发，应由 ci-shared.yml 负责
+```
+
+### 8.5.2 pytest 路径配置
+
+**问题**：`pyproject.toml` 中的相对路径在 CI `cd` 到子目录后失效。
+
+**场景**：CI 执行 `cd services/data-pipeline && pytest tests/`，但 `pyproject.toml` 配置了相对于仓库根目录的路径。
+
+**解决**：
+- `pyproject.toml` 中避免硬编码相对路径
+- CI workflow 显式指定所有 pytest/coverage 参数
+
+```toml
+# ✅ pyproject.toml - 不包含路径
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["integration: integration tests"]
+
+# CI workflow 显式指定
+- run: |
+    cd services/data-pipeline && \
+    PYTHONPATH=src pytest tests/ \
+      --cov=src \
+      --cov-report=xml \
+      --cov-fail-under=90
+```
+
+### 8.5.3 Python 模块安装方式
+
+**问题**：`pip install -e .` 要求完整的 packages 配置，CI 环境可能缺少依赖模块。
+
+**解决**：
+- 简单场景使用 `PYTHONPATH=src` 而非 `pip install -e .`
+- 需要可编辑安装时，确保 `pyproject.toml` 正确配置 `packages`
+
+```toml
+# pyproject.toml - 多模块项目
+[tool.poetry]
+packages = [
+  {include = "ecmwf", from = "src"},
+  {include = "cldas", from = "src"}
+]
+```
+
+### 8.5.4 异常类型与测试同步
+
+**问题**：代码包装异常类型后，测试期望的异常类型未同步更新。
+
+**场景**：
+```python
+# 代码：ValidationError 被包装为 ValueError
+except ValidationError as e:
+    raise ValueError(f"Invalid config: {e}") from e
+
+# 测试：仍期望 ValidationError → 失败
+with pytest.raises(ValidationError):  # ❌
+    load_config()
+```
+
+**解决**：
+- 修改异常处理时，同步更新相关测试
+- 保持异常类型的一致性文档化
+
+### 8.5.5 lru_cache 暴露
+
+**问题**：`@lru_cache` 装饰的内部函数，外部函数无法调用 `cache_clear()`。
+
+**解决**：显式暴露缓存控制方法
+
+```python
+@lru_cache
+def _get_config_cached(path: str) -> Config:
+    return load_config(Path(path))
+
+def get_config(path: str | None = None) -> Config:
+    resolved = str(resolve_path(path))
+    return _get_config_cached(resolved)
+
+# 暴露 cache_clear 供测试使用
+get_config.cache_clear = _get_config_cached.cache_clear  # type: ignore
+```
+
+### 8.5.6 CI 依赖安装
+
+**问题**：`pip install -e ".[test]"` 要求 pyproject.toml 定义 `[test]` extra。
+
+**解决**：
+- 明确区分 dev dependencies 和 test extra
+- CI 直接安装所需包，避免依赖 extra 定义
+
+```yaml
+# ✅ 推荐：显式安装
+- run: pip install ruff pytest pytest-cov pydantic pydantic-settings pyyaml
+
+# ⚠️ 需确保 extra 存在
+- run: pip install -e ".[test]"
+```
+
+### 8.5.7 Dockerfile 与配置文件
+
+**问题**：Dockerfile 未复制运行时需要的配置文件目录。
+
+**解决**：确保所有运行时依赖的目录都被复制
+
+```dockerfile
+# 复制源码
+COPY services/data-pipeline/src ./src
+# 复制配置（容易遗漏）
+COPY services/data-pipeline/config ./config
+```
+
+---
+
 ## 九、环境配置
 
 ### 9.1 软件版本
@@ -374,4 +512,4 @@ release/v<major>.<minor>.<patch>
 
 ---
 
-*文档版本: v1.0 | 最后更新: 2026-01-14*
+*文档版本: v1.1 | 最后更新: 2026-01-15*
