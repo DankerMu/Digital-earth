@@ -134,7 +134,9 @@ def load_ecmwf_variables_config(
         data = {
             "schema_version": data.get("schema_version", 1),
             "default_version": legacy_version,
-            "versions": {legacy_version: {k: v for k, v in data.items() if k != "version"}},
+            "versions": {
+                legacy_version: {k: v for k, v in data.items() if k != "version"}
+            },
         }
 
     try:

@@ -60,7 +60,9 @@ def test_unknown_version_raises_key_error() -> None:
         load_ecmwf_variables_config(version="nope")
 
 
-def test_supports_legacy_single_version_schema(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_supports_legacy_single_version_schema(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     monkeypatch.chdir(tmp_path)
     payload = _base_version_payload()
     payload["version"] = "v-legacy"
@@ -121,4 +123,3 @@ def test_invalid_lead_time_rule_raises_validation_error(tmp_path: Path) -> None:
 
     with pytest.raises(ValidationError, match="lead time rule end must be >= start"):
         load_ecmwf_variables_config(tmp_path / "cfg.yaml")
-
