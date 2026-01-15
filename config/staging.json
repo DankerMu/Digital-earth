@@ -1,0 +1,28 @@
+{
+  "api": {
+    "host": "0.0.0.0",
+    "port": 8000,
+    "debug": false,
+    "cors_origins": []
+  },
+  "pipeline": {
+    "workers": 4,
+    "batch_size": 100
+  },
+  "web": {
+    "api_base_url": "https://staging.api.digital-earth.example"
+  },
+  "database": {
+    "host": "postgres",
+    "port": 5432,
+    "name": "digital_earth"
+  },
+  "redis": {
+    "host": "redis",
+    "port": 6379
+  },
+  "storage": {
+    "tiles_bucket": "digital-earth-tiles-staging",
+    "raw_bucket": "digital-earth-raw-staging"
+  }
+}
