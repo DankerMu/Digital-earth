@@ -102,7 +102,9 @@ class CldasMappingConfig(BaseModel):
 
         return self
 
-    def variables_for(self, *, product: str, resolution: str) -> dict[str, VariableMapping]:
+    def variables_for(
+        self, *, product: str, resolution: str
+    ) -> dict[str, VariableMapping]:
         try:
             product_mapping = self.products[product]
         except KeyError as exc:
