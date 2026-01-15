@@ -1,0 +1,19 @@
+version: '3.8'
+
+include:
+  - docker-compose.base.yml
+
+services:
+  web:
+    volumes:
+      - ../apps/web/public/config.staging.json:/usr/share/nginx/html/config.json:ro
+
+  api:
+    environment:
+      - DIGITAL_EARTH_ENV=staging
+      - DIGITAL_EARTH_DB_PASSWORD=${DIGITAL_EARTH_DB_PASSWORD}
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G

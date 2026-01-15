@@ -1,0 +1,47 @@
+name: Deploy Staging
+
+on:
+  workflow_run:
+    workflows: ["Integration Test (Compose)"]
+    types: [completed]
+    branches: [main]
+
+jobs:
+  deploy:
+    name: Deploy to Staging
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    runs-on: [self-hosted, linux, staging]
+    environment: staging
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set IMAGE_TAG
+        run: echo "IMAGE_TAG=sha-${GITHUB_SHA::7}" >> $GITHUB_ENV
+
+      - name: Record current version
+        run: |
+          docker compose -f deploy/docker-compose.staging.yml config 2>/dev/null \
+            | grep -oP 'image:.*:\K[^"]+' | head -1 > /tmp/prev_tag.txt || true
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Pull & Deploy
+        run: |
+          docker compose -f deploy/docker-compose.staging.yml pull
+          docker compose -f deploy/docker-compose.staging.yml up -d
+
+      - name: Health check
+        run: |
+          sleep 20
+          curl -f http://localhost:8000/health || exit 1
+
+      - name: Rollback on failure
+        if: failure()
+        run: |
+          PREV_TAG=$(cat /tmp/prev_tag.txt 2>/dev/null || echo "latest")
+          IMAGE_TAG=$PREV_TAG docker compose -f deploy/docker-compose.staging.yml up -d

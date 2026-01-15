@@ -1,0 +1,26 @@
+# 默认：任何改动都需要 DankerMu 审核
+* @DankerMu
+
+# Web 前端（Cesium / UI）
+/apps/web/ @DankerMu
+
+# 后端 API
+/apps/api/ @DankerMu
+
+# 数据管线（ECMWF / CLDAS）
+/services/data-pipeline/ @DankerMu
+
+# 共享代码包
+/packages/ @DankerMu
+
+# 部署 / Nginx（公网高风险）
+/deploy/ @DankerMu
+
+# Unreal 工程（插件 / Content / 构建）
+/apps/ue-client/ @DankerMu
+
+# CI / GitHub Actions（非常敏感）
+/.github/workflows/ @DankerMu
+
+# 基础设施配置
+/infra/ @DankerMu

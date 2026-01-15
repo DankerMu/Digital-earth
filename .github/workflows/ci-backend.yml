@@ -1,0 +1,67 @@
+name: CI - Backend
+
+on:
+  pull_request:
+    paths:
+      - 'apps/api/**'
+      - 'packages/**'
+      - 'pyproject.toml'
+      - 'poetry.lock'
+
+concurrency:
+  group: ci-backend-${{ github.head_ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint-format:
+    name: Lint & Format
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install ruff
+      - run: ruff check apps/api/
+      - run: ruff format --check apps/api/
+
+  unit-test:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: test_db
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+      - run: pip install -e "apps/api[test]"
+      - run: pytest apps/api/tests/ --cov=apps/api/src --cov-report=xml
+        env:
+          DIGITAL_EARTH_DB_HOST: localhost
+          DIGITAL_EARTH_DB_PORT: 5432
+          DIGITAL_EARTH_DB_NAME: test_db
+          DIGITAL_EARTH_DB_USER: postgres
+          DIGITAL_EARTH_DB_PASSWORD: test
+          DIGITAL_EARTH_REDIS_HOST: localhost
+      - uses: codecov/codecov-action@v4
+        with:
+          files: coverage.xml
+          flags: backend
+          fail_ci_if_error: false

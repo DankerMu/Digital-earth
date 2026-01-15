@@ -1,0 +1,70 @@
+name: CI - Unreal
+
+on:
+  pull_request:
+    paths:
+      - 'apps/ue-client/**'
+
+concurrency:
+  group: ci-unreal-${{ github.head_ref }}
+  cancel-in-progress: true
+
+jobs:
+  change-detection:
+    name: UE Change Detection
+    runs-on: ubuntu-latest
+    outputs:
+      has_cpp_changes: ${{ steps.changes.outputs.cpp }}
+      has_blueprint_changes: ${{ steps.changes.outputs.blueprint }}
+      has_content_changes: ${{ steps.changes.outputs.content }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Detect changes
+        id: changes
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            cpp:
+              - 'apps/ue-client/Source/**/*.cpp'
+              - 'apps/ue-client/Source/**/*.h'
+            blueprint:
+              - 'apps/ue-client/Content/**/*.uasset'
+            content:
+              - 'apps/ue-client/Content/**'
+              - 'apps/ue-client/Config/**'
+
+      - name: Summary
+        run: |
+          echo "## UE 改动检测结果" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| 类型 | 是否改动 |" >> $GITHUB_STEP_SUMMARY
+          echo "|------|----------|" >> $GITHUB_STEP_SUMMARY
+          echo "| C++ 代码 | ${{ steps.changes.outputs.cpp }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Blueprint | ${{ steps.changes.outputs.blueprint }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Content/Config | ${{ steps.changes.outputs.content }} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "> ⚠️ UE 构建需人工验证，请在本地测试后合并" >> $GITHUB_STEP_SUMMARY
+
+  script-check:
+    name: Script Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check Python scripts
+        run: |
+          if compgen -G "apps/ue-client/Scripts/*.py" > /dev/null; then
+            pip install ruff
+            ruff check apps/ue-client/Scripts/ || true
+          else
+            echo "No Python scripts found"
+          fi
+
+      - name: Check shell scripts
+        run: |
+          if compgen -G "apps/ue-client/Scripts/*.sh" > /dev/null; then
+            shellcheck apps/ue-client/Scripts/*.sh || true
+          else
+            echo "No shell scripts found"
+          fi
