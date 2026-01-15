@@ -14,6 +14,7 @@ Thumbs.db
 # Dependencies
 node_modules/
 venv/
+.venv/
 .env
 .env.local
 .env.*.local
