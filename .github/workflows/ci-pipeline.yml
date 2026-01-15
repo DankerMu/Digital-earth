@@ -4,7 +4,6 @@ on:
   pull_request:
     paths:
       - 'services/data-pipeline/**'
-      - 'packages/**'
 
 concurrency:
   group: ci-pipeline-${{ github.head_ref }}
@@ -20,14 +19,15 @@ jobs:
         with:
           python-version: '3.11'
           cache: 'pip'
-      - run: pip install ruff pytest pytest-cov
-      - run: pip install -e "services/data-pipeline[test]"
+      - run: pip install ruff pytest pytest-cov pydantic pydantic-settings pyyaml
       - run: ruff check services/data-pipeline/
       - run: ruff format --check services/data-pipeline/
       - run: |
-          pytest services/data-pipeline/tests/ \
-            --cov=services/data-pipeline/src \
+          cd services/data-pipeline && \
+          PYTHONPATH=src pytest tests/ \
+            --cov=src \
             --cov-report=xml \
+            --cov-fail-under=90 \
             -m "not integration"
       - uses: codecov/codecov-action@v4
         with:

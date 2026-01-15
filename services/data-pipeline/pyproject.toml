@@ -2,11 +2,13 @@
 name = "digital-earth-data-pipeline"
 version = "0.1.0"
 description = "Digital Earth data pipeline service"
+packages = [{include = "ecmwf", from = "src"}, {include = "cldas", from = "src"}]
 
 [tool.poetry.dependencies]
 python = "^3.11"
 pydantic = "^2.7.0"
 pydantic-settings = "^2.2.1"
+pyyaml = "^6.0.2"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.0.0"
@@ -21,7 +23,8 @@ fail_under = 90
 show_missing = true
 
 [tool.pytest.ini_options]
-addopts = "--cov-config=services/data-pipeline/.coveragerc --cov-fail-under=90"
+testpaths = ["tests"]
+markers = ["integration: integration tests (deselect with '-m \"not integration\"')"]
 
 [build-system]
 requires = ["poetry-core>=1.8.0"]
