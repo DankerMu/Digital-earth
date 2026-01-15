@@ -4,7 +4,6 @@ from pathlib import Path
 
 import pytest
 import yaml
-from pydantic import ValidationError
 
 
 def _write_yaml(path: Path, data: dict) -> None:
@@ -121,5 +120,5 @@ def test_invalid_lead_time_rule_raises_validation_error(tmp_path: Path) -> None:
         {"schema_version": 1, "default_version": "v1", "versions": {"v1": payload}},
     )
 
-    with pytest.raises(ValidationError, match="lead time rule end must be >= start"):
+    with pytest.raises(ValueError, match="lead time rule end must be >= start"):
         load_ecmwf_variables_config(tmp_path / "cfg.yaml")

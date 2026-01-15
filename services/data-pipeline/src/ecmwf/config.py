@@ -167,3 +167,7 @@ def get_ecmwf_variables_config(
 ) -> EcmwfVariablesConfig:
     resolved = str(_resolve_config_path(path))
     return _get_ecmwf_variables_config_cached(resolved, version=version)
+
+
+# Expose cache control for testing
+get_ecmwf_variables_config.cache_clear = _get_ecmwf_variables_config_cached.cache_clear  # type: ignore[attr-defined]
