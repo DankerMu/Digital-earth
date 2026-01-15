@@ -19,14 +19,15 @@ jobs:
         with:
           python-version: '3.11'
           cache: 'pip'
-      - run: pip install ruff pytest pytest-cov pyyaml
-      - run: pip install -e services/data-pipeline
+      - run: pip install ruff pytest pytest-cov pydantic pydantic-settings pyyaml
       - run: ruff check services/data-pipeline/
       - run: ruff format --check services/data-pipeline/
       - run: |
-          pytest services/data-pipeline/tests/ \
-            --cov=services/data-pipeline/src \
+          cd services/data-pipeline && \
+          PYTHONPATH=src pytest tests/ \
+            --cov=src \
             --cov-report=xml \
+            --cov-fail-under=90 \
             -m "not integration"
       - uses: codecov/codecov-action@v4
         with:
