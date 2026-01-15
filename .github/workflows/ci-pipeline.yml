@@ -20,8 +20,8 @@ jobs:
         with:
           python-version: '3.11'
           cache: 'pip'
-      - run: pip install ruff pytest pytest-cov
-      - run: pip install -e "services/data-pipeline[test]"
+      - run: pip install ruff pytest pytest-cov pyyaml
+      - run: pip install -e services/data-pipeline
       - run: ruff check services/data-pipeline/
       - run: ruff format --check services/data-pipeline/
       - run: |
