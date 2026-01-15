@@ -1,0 +1,16 @@
+schema_version: 1
+default_version: v1
+
+versions:
+  v1:
+    variables:
+      sfc: ["2t", "10u", "10v", "tp", "ptype", "tcc"]
+      pl: ["t", "u", "v", "r", "gh"]
+    pressure_levels_hpa: [850, 700, 500, 300]
+    lead_time_hours:
+      - start: 0
+        end: 72
+        step: 3
+      - start: 72
+        end: 240
+        step: 6

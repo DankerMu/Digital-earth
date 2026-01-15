@@ -7,6 +7,7 @@ description = "Digital Earth data pipeline service"
 python = "^3.11"
 pydantic = "^2.7.0"
 pydantic-settings = "^2.2.1"
+pyyaml = "^6.0.2"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.0.0"
