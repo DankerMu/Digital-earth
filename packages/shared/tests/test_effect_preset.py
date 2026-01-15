@@ -38,7 +38,9 @@ def _base_preset_payload() -> dict:
     ],
 )
 def test_risk_level_mapping(intensity: int, expected: RiskLevel) -> None:
-    preset = EffectPreset.model_validate({**_base_preset_payload(), "intensity": intensity})
+    preset = EffectPreset.model_validate(
+        {**_base_preset_payload(), "intensity": intensity}
+    )
     assert preset.risk_level == expected
     assert risk_level_from_intensity(intensity) == expected
 
@@ -56,10 +58,14 @@ def test_parses_effect_type_enum() -> None:
 def test_color_hint_accepts_string_list_and_map() -> None:
     payload = _base_preset_payload()
 
-    preset_str = EffectPreset.model_validate({**payload, "color_hint": "rgba(10,20,30,0.25)"})
+    preset_str = EffectPreset.model_validate(
+        {**payload, "color_hint": "rgba(10,20,30,0.25)"}
+    )
     assert preset_str.color_hint == "rgba(10, 20, 30, 0.25)"
 
-    preset_list = EffectPreset.model_validate({**payload, "color_hint": [10, 20, 30, 0.25]})
+    preset_list = EffectPreset.model_validate(
+        {**payload, "color_hint": [10, 20, 30, 0.25]}
+    )
     assert preset_list.color_hint == "rgba(10, 20, 30, 0.25)"
 
     preset_map = EffectPreset.model_validate(
@@ -100,13 +106,17 @@ def test_particle_size_accepts_list_or_mapping() -> None:
 
 def test_particle_size_rejects_invalid_range() -> None:
     payload = _base_preset_payload()
-    with pytest.raises(ValidationError, match="particle_size\\.max must be >= particle_size\\.min"):
+    with pytest.raises(
+        ValidationError, match="particle_size\\.max must be >= particle_size\\.min"
+    ):
         EffectPreset.model_validate({**payload, "particle_size": [1.0, 0.5]})
 
 
 def test_presets_file_schema_version_validation() -> None:
     payload = {"schema_version": 999, "presets": {"p": _base_preset_payload()}}
-    with pytest.raises(ValidationError, match="Unsupported effect preset schema_version"):
+    with pytest.raises(
+        ValidationError, match="Unsupported effect preset schema_version"
+    ):
         EffectPresetsFile.model_validate(payload)
 
 
@@ -134,4 +144,3 @@ def test_load_effect_presets_errors_are_clear(tmp_path: Path) -> None:
     wrong_shape.write_text("- not-a-mapping\n", encoding="utf-8")
     with pytest.raises(ValueError, match="must be a mapping"):
         load_effect_presets(wrong_shape)
-

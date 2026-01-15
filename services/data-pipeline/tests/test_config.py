@@ -40,4 +40,3 @@ def test_pipeline_entrypoint_uses_shared_settings(
     settings = get_settings()
     assert settings.pipeline.workers == 2
     assert main() == 0
-

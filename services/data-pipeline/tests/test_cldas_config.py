@@ -79,7 +79,9 @@ def test_loader_auto_reloads_on_change(tmp_path: Path) -> None:
     loader = CldasMappingLoader(path)
     config1 = loader.get()
     assert (
-        config1.variables_for(product="CLDAS-V2.0", resolution="0.25")["TMP"].internal_var
+        config1.variables_for(product="CLDAS-V2.0", resolution="0.25")[
+            "TMP"
+        ].internal_var
         == "air_temperature"
     )
 
@@ -116,7 +118,9 @@ def test_loader_auto_reloads_on_change(tmp_path: Path) -> None:
 
     config2 = loader.get()
     assert (
-        config2.variables_for(product="CLDAS-V2.0", resolution="0.25")["TMP"].internal_var
+        config2.variables_for(product="CLDAS-V2.0", resolution="0.25")[
+            "TMP"
+        ].internal_var
         == "t2m"
     )
 
@@ -124,7 +128,9 @@ def test_loader_auto_reloads_on_change(tmp_path: Path) -> None:
 
     config3 = loader.get(reload=True)
     assert (
-        config3.variables_for(product="CLDAS-V2.0", resolution="0.25")["TMP"].internal_var
+        config3.variables_for(product="CLDAS-V2.0", resolution="0.25")[
+            "TMP"
+        ].internal_var
         == "t2m"
     )
 
@@ -273,7 +279,11 @@ def test_applies_default_scale_offset_and_missing(tmp_path: Path) -> None:
         encoding="utf-8",
     )
 
-    mapping = CldasMappingLoader(path).load().variables_for(product="CLDAS-V2.0", resolution="0.25")["A"]
+    mapping = (
+        CldasMappingLoader(path)
+        .load()
+        .variables_for(product="CLDAS-V2.0", resolution="0.25")["A"]
+    )
     assert mapping.scale == 2.0
     assert mapping.offset == 10.0
     assert mapping.missing is not None
@@ -363,7 +373,9 @@ def test_rejects_invalid_yaml_syntax(tmp_path: Path) -> None:
         CldasMappingLoader(path).load()
 
 
-def test_relative_paths_resolve_to_cwd(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_relative_paths_resolve_to_cwd(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     from cldas.config import CldasMappingLoader
 
     monkeypatch.chdir(tmp_path)
