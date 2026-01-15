@@ -2,6 +2,7 @@
 name = "digital-earth-data-pipeline"
 version = "0.1.0"
 description = "Digital Earth data pipeline service"
+packages = [{include = "ecmwf", from = "src"}, {include = "cldas", from = "src"}]
 
 [tool.poetry.dependencies]
 python = "^3.11"
