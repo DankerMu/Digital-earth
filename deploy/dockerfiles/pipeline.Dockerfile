@@ -12,6 +12,7 @@ RUN pip install --no-cache-dir poetry \
     && poetry install --no-dev --no-interaction
 
 COPY services/data-pipeline/src ./src
+COPY services/data-pipeline/config ./config
 
 RUN useradd -m appuser && chown -R appuser:appuser /app
 USER appuser
