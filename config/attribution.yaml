@@ -1,0 +1,30 @@
+schema_version: 1
+version: "1.0.0"
+updated_at: "2026-01-16"
+
+sources:
+  - id: cesium
+    name: "CesiumJS"
+    provider: "Cesium GS, Inc."
+    url: "https://cesium.com/cesiumjs/"
+    license: "Apache-2.0"
+    attribution: "© Cesium"
+
+  - id: ecmwf
+    name: "ECMWF"
+    provider: "European Centre for Medium-Range Weather Forecasts"
+    url: "https://www.ecmwf.int/"
+    license: "ECMWF Terms of Use"
+    attribution: "© ECMWF"
+
+  - id: cldas
+    name: "CLDAS"
+    provider: "China Meteorological Administration (CMA)"
+    url: "http://data.cma.cn/"
+    license: "CMA Data Policy"
+    attribution: "© CMA / CLDAS"
+
+disclaimer:
+  - "本平台数据与可视化仅供学习、演示与参考。"
+  - "气象数据可能存在延迟、误差或缺测；具体以数据提供方/官方发布为准。"
+  - "请勿将本平台内容作为安全关键或商业决策的唯一依据。"
