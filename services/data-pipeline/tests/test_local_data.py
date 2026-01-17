@@ -690,9 +690,7 @@ def test_cache_invalidates_when_item_outside_root(
     outside = tmp_path / "outside.txt"
     outside.write_text("x", encoding="utf-8")
     stat = outside.stat()
-    generated_at = (
-        datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-    )
+    generated_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
     cache_path = tmp_path / ".cache" / "index.json"
     cache_path.parent.mkdir(parents=True, exist_ok=True)
     cache_path.write_text(
@@ -735,9 +733,7 @@ def test_cache_handles_missing_files_between_is_file_and_stat(
     paths = get_local_data_paths()
 
     missing_path = tmp_path / "missing.nc"
-    generated_at = (
-        datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-    )
+    generated_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
     cache_path = tmp_path / ".cache" / "index.json"
     cache_path.parent.mkdir(parents=True, exist_ok=True)
     cache_path.write_text(
