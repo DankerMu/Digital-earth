@@ -24,7 +24,7 @@ fail_under = 90
 show_missing = true
 
 [tool.pytest.ini_options]
-addopts = "--cov-config=apps/api/.coveragerc --cov-fail-under=90"
+testpaths = ["tests"]
 
 [build-system]
 requires = ["poetry-core>=1.8.0"]
