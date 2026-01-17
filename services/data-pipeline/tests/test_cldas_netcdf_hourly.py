@@ -129,7 +129,7 @@ def test_parser_normalizes_lat_lon_aliases(tmp_path: Path) -> None:
 
 
 def test_missing_source_variable_raises(tmp_path: Path) -> None:
-    from cldas.errors import CldasNetcdfVariableMissingError
+    from cldas.errors import CldasNetcdfStructureError
     from cldas.netcdf_hourly import parse_cldas_netcdf_hourly
 
     source_path = tmp_path / "missing_pre.nc"
@@ -149,7 +149,7 @@ def test_missing_source_variable_raises(tmp_path: Path) -> None:
     )
     ds.to_netcdf(source_path, engine="h5netcdf")
 
-    with pytest.raises(CldasNetcdfVariableMissingError, match="Missing variable 'PRE'"):
+    with pytest.raises(CldasNetcdfStructureError, match="Missing required variables"):
         parse_cldas_netcdf_hourly(
             source_path,
             product="CLDAS-V2.0",
@@ -453,3 +453,116 @@ def test_invalid_collection_index_raises(tmp_path: Path) -> None:
             source_path=tmp_path / "source.nc",
             engine="h5netcdf",
         )
+
+
+def test_source_scale_factor_add_offset_is_applied(tmp_path: Path) -> None:
+    from cldas.config import CldasMappingConfig
+    from cldas.netcdf_hourly import parse_cldas_netcdf_hourly
+
+    source_path = tmp_path / "packed.nc"
+    physical = np.array([[[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]], dtype=np.float32)
+    ds = xr.Dataset(
+        {"TMP": xr.DataArray(physical, dims=["time", "lat", "lon"])},
+        coords={
+            "time": np.array(["2026-01-01T00:00:00"], dtype="datetime64[s]"),
+            "lat": np.array([10.0, 11.0], dtype=np.float32),
+            "lon": np.array([100.0, 101.0, 102.0], dtype=np.float32),
+        },
+    )
+    ds["TMP"].encoding["dtype"] = np.int16
+    ds["TMP"].encoding["scale_factor"] = 0.1
+    ds["TMP"].encoding["add_offset"] = 1.0
+    ds.to_netcdf(source_path, engine="h5netcdf")
+
+    mapping_config = CldasMappingConfig.model_validate(
+        {
+            "schema_version": 1,
+            "defaults": {
+                "scale": 1.0,
+                "offset": 0.0,
+                "missing": {"strategy": "fill_value", "fill_value": -9999.0},
+            },
+            "products": {
+                "TEST": {
+                    "resolutions": {
+                        "R1": {
+                            "variables": [
+                                {
+                                    "source_var": "TMP",
+                                    "internal_var": "tmp",
+                                    "unit": "1",
+                                }
+                            ]
+                        }
+                    }
+                }
+            },
+        }
+    )
+
+    out = parse_cldas_netcdf_hourly(
+        source_path,
+        product="TEST",
+        resolution="R1",
+        mapping_config=mapping_config,
+        engine="h5netcdf",
+    )
+
+    assert out["tmp"].values == pytest.approx(physical, abs=1e-6)
+
+
+def test_mapping_scale_zero_is_not_treated_as_default(tmp_path: Path) -> None:
+    from cldas.config import CldasMappingConfig
+    from cldas.netcdf_hourly import parse_cldas_netcdf_hourly
+
+    source_path = tmp_path / "scale_zero.nc"
+    tmp = np.array([[[10.0, 20.0, 30.0], [40.0, 50.0, 60.0]]], dtype=np.float32)
+    ds = xr.Dataset(
+        {"TMP": xr.DataArray(tmp, dims=["time", "lat", "lon"])},
+        coords={
+            "time": np.array(["2026-01-01T00:00:00"], dtype="datetime64[s]"),
+            "lat": np.array([10.0, 11.0], dtype=np.float32),
+            "lon": np.array([100.0, 101.0, 102.0], dtype=np.float32),
+        },
+    )
+    ds["TMP"].attrs["_FillValue"] = np.float32(-9999.0)
+    ds.to_netcdf(source_path, engine="h5netcdf")
+
+    mapping_config = CldasMappingConfig.model_validate(
+        {
+            "schema_version": 1,
+            "defaults": {
+                "scale": 1.0,
+                "offset": 0.0,
+                "missing": {"strategy": "fill_value", "fill_value": -9999.0},
+            },
+            "products": {
+                "TEST": {
+                    "resolutions": {
+                        "R1": {
+                            "variables": [
+                                {
+                                    "source_var": "TMP",
+                                    "internal_var": "tmp",
+                                    "unit": "1",
+                                    "scale": 0.0,
+                                    "offset": 5.0,
+                                }
+                            ]
+                        }
+                    }
+                }
+            },
+        }
+    )
+
+    out = parse_cldas_netcdf_hourly(
+        source_path,
+        product="TEST",
+        resolution="R1",
+        mapping_config=mapping_config,
+        engine="h5netcdf",
+    )
+    assert out["tmp"].values == pytest.approx(
+        np.full_like(tmp, 5.0, dtype=np.float32), abs=1e-6
+    )

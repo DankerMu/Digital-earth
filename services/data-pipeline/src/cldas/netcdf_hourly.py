@@ -11,10 +11,10 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from cldas.config import CldasMappingConfig, VariableMapping, get_cldas_mapping_config
 from cldas.errors import (
+    CldasNetcdfError,
     CldasNetcdfMissingDataError,
     CldasNetcdfOpenError,
     CldasNetcdfStructureError,
-    CldasNetcdfVariableMissingError,
     CldasNetcdfWriteError,
 )
 
@@ -246,6 +246,65 @@ def _interpolate_missing(da: xr.DataArray) -> xr.DataArray:
     return result
 
 
+def _as_scalar_float(value: Any, *, name: str, var_name: str) -> float:
+    raw = value
+    if isinstance(raw, np.ndarray):
+        if raw.size != 1:
+            raise CldasNetcdfStructureError(
+                f"{name} for {var_name!r} must be a scalar; got ndarray shape={raw.shape}"
+            )
+        raw = raw.item()
+    if isinstance(raw, (list, tuple)):
+        if len(raw) != 1:
+            raise CldasNetcdfStructureError(
+                f"{name} for {var_name!r} must be a scalar; got {name}={raw!r}"
+            )
+        raw = raw[0]
+
+    try:
+        parsed = float(raw)
+    except (TypeError, ValueError) as exc:
+        raise CldasNetcdfStructureError(
+            f"{name} for {var_name!r} must be numeric; got {value!r}"
+        ) from exc
+
+    if not np.isfinite(parsed):
+        raise CldasNetcdfStructureError(
+            f"{name} for {var_name!r} must be finite; got {parsed!r}"
+        )
+    return parsed
+
+
+def _get_cf_scale_offset(da: xr.DataArray) -> tuple[float, float]:
+    var_name = da.name or "<unnamed>"
+    scale_candidates = []
+    offset_candidates = []
+
+    for container in (da.encoding, da.attrs):
+        if "scale_factor" in container:
+            scale_candidates.append(container.get("scale_factor"))
+        if "add_offset" in container:
+            offset_candidates.append(container.get("add_offset"))
+
+    def _coalesce(values: list[Any], *, key: str, default: float) -> float:
+        cleaned = [value for value in values if value is not None]
+        if not cleaned:
+            return default
+        parsed = [
+            _as_scalar_float(value, name=key, var_name=var_name) for value in cleaned
+        ]
+        first = parsed[0]
+        if any(not np.isclose(first, other) for other in parsed[1:]):
+            raise CldasNetcdfStructureError(
+                f"Conflicting {key} values for {var_name!r}: {cleaned!r}"
+            )
+        return first
+
+    scale = _coalesce(scale_candidates, key="scale_factor", default=1.0)
+    offset = _coalesce(offset_candidates, key="add_offset", default=0.0)
+    return scale, offset
+
+
 def _apply_mapping(da: xr.DataArray, mapping: VariableMapping) -> xr.DataArray:
     expected_dims = {"time", "lat", "lon"}
     if set(da.dims) != expected_dims:
@@ -257,9 +316,18 @@ def _apply_mapping(da: xr.DataArray, mapping: VariableMapping) -> xr.DataArray:
     da = da.transpose("time", "lat", "lon")
     mask = _missing_mask(da)
 
-    scale = float(mapping.scale or 1.0)
-    offset = float(mapping.offset or 0.0)
-    converted = xr.where(mask, np.nan, da.astype(np.float64) * scale + offset)
+    source_scale, source_offset = _get_cf_scale_offset(da)
+
+    scale = mapping.scale if mapping.scale is not None else 1.0
+    offset = mapping.offset if mapping.offset is not None else 0.0
+
+    converted = xr.where(
+        mask,
+        np.nan,
+        (da.astype(np.float64) * float(source_scale) + float(source_offset))
+        * float(scale)
+        + float(offset),
+    )
 
     if mapping.missing is None:
         raise CldasNetcdfStructureError(
@@ -281,6 +349,10 @@ def _apply_mapping(da: xr.DataArray, mapping: VariableMapping) -> xr.DataArray:
 
     converted = converted.astype(np.float32)
     converted.attrs = dict(converted.attrs)
+    converted.attrs.pop("scale_factor", None)
+    converted.attrs.pop("add_offset", None)
+    converted.encoding.pop("scale_factor", None)
+    converted.encoding.pop("add_offset", None)
     converted.attrs["units"] = mapping.unit
     converted.name = mapping.internal_var
     return converted
@@ -295,45 +367,51 @@ def parse_cldas_netcdf_hourly(
     engine: Optional[str] = None,
 ) -> xr.Dataset:
     path = Path(source_path)
-    try:
-        with xr.open_dataset(
-            path, engine=engine, decode_cf=True, mask_and_scale=False
-        ) as ds:
-            ds = ds.load()
-    except Exception as exc:  # noqa: BLE001
-        raise CldasNetcdfOpenError(f"Failed to open NetCDF: {path}") from exc
-
-    ds = _normalize_dims(ds)
 
     mapping_config = mapping_config or get_cldas_mapping_config()
     source_to_mapping = mapping_config.variables_for(
         product=product, resolution=resolution
     )
 
-    internal_vars: dict[str, xr.DataArray] = {}
-    for source_var, mapping in source_to_mapping.items():
-        if source_var not in ds.data_vars:
-            raise CldasNetcdfVariableMissingError(
-                f"Missing variable {source_var!r} in {path.name}; "
-                f"available={sorted(ds.data_vars)}"
-            )
-        internal_vars[mapping.internal_var] = _apply_mapping(ds[source_var], mapping)
+    try:
+        with xr.open_dataset(
+            path, engine=engine, decode_cf=True, mask_and_scale=False
+        ) as ds:
+            ds = _normalize_dims(ds)
+            required_vars = list(source_to_mapping)
+            missing_vars = [var for var in required_vars if var not in ds.data_vars]
+            if missing_vars:
+                raise CldasNetcdfStructureError(
+                    f"Missing required variables {missing_vars!r} in {path.name}; "
+                    f"available={sorted(ds.data_vars)}"
+                )
 
-    times = _extract_times(ds)
-    output = xr.Dataset(
-        internal_vars,
-        coords={
-            "time": ("time", times),
-            "lat": ("lat", ds["lat"].values),
-            "lon": ("lon", ds["lon"].values),
-        },
-        attrs={
-            "product": product,
-            "resolution": resolution,
-            "source_path": str(path.resolve()),
-        },
-    )
-    return output
+            ds_vars = ds[required_vars]
+            internal_vars: dict[str, xr.DataArray] = {}
+            for source_var, mapping in source_to_mapping.items():
+                internal_vars[mapping.internal_var] = _apply_mapping(
+                    ds_vars[source_var], mapping
+                )
+
+            times = _extract_times(ds)
+            output = xr.Dataset(
+                internal_vars,
+                coords={
+                    "time": ("time", times),
+                    "lat": ("lat", ds["lat"].values),
+                    "lon": ("lon", ds["lon"].values),
+                },
+                attrs={
+                    "product": product,
+                    "resolution": resolution,
+                    "source_path": str(path.resolve()),
+                },
+            )
+            return output.load()
+    except CldasNetcdfError:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        raise CldasNetcdfOpenError(f"Failed to open NetCDF: {path}") from exc
 
 
 def _axis_index(coord: xr.DataArray, *, name: str) -> AxisIndex:
@@ -408,6 +486,12 @@ def write_cldas_internal_files(
     mapping_config: Optional[CldasMappingConfig] = None,
     engine: Optional[str] = None,
 ) -> CldasImportResult:
+    """Write internal NetCDF and JSON indexes for a parsed CLDAS dataset.
+
+    For multi-time datasets, the per-file index records the full `times` coverage, while
+    the collection index uses the first timestamp (`times[0]`) as the item's key.
+    """
+
     out_root = Path(output_dir) / product / resolution
     out_root.mkdir(parents=True, exist_ok=True)
 
