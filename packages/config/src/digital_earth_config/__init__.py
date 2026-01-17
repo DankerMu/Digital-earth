@@ -1,4 +1,6 @@
 from .settings import (
+    ApiRateLimitRule,
+    ApiRateLimitSettings,
     ApiSettings,
     DatabaseSettings,
     PipelineSettings,
@@ -10,6 +12,8 @@ from .settings import (
 from .local_data import LocalDataPaths, get_local_data_paths
 
 __all__ = [
+    "ApiRateLimitRule",
+    "ApiRateLimitSettings",
     "ApiSettings",
     "DatabaseSettings",
     "LocalDataPaths",

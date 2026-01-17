@@ -191,11 +191,59 @@ class RedisSettings(BaseModel):
         return f"redis://:{self.password.get_secret_value()}@{self.host}:{self.port}/0"
 
 
+class ApiRateLimitRule(BaseModel):
+    path_prefix: str
+    requests_per_minute: int
+    window_seconds: int = 60
+
+    @field_validator("path_prefix")
+    @classmethod
+    def _normalize_path_prefix(cls, value: str) -> str:
+        normalized = (value or "").strip()
+        if not normalized.startswith("/"):
+            normalized = "/" + normalized
+        return normalized.rstrip("/") or "/"
+
+    @model_validator(mode="after")
+    def _validate_values(self) -> "ApiRateLimitRule":
+        if self.requests_per_minute <= 0:
+            raise ValueError("requests_per_minute must be > 0")
+        if self.window_seconds <= 0:
+            raise ValueError("window_seconds must be > 0")
+        return self
+
+
+def _default_api_rate_limit_rules() -> list[ApiRateLimitRule]:
+    return [
+        ApiRateLimitRule(path_prefix="/api/v1/catalog", requests_per_minute=100),
+        ApiRateLimitRule(path_prefix="/api/v1/vector", requests_per_minute=60),
+        ApiRateLimitRule(path_prefix="/api/v1/tiles", requests_per_minute=300),
+        ApiRateLimitRule(path_prefix="/api/v1/volume", requests_per_minute=30),
+    ]
+
+
+class ApiRateLimitSettings(BaseModel):
+    enabled: bool = True
+    trust_proxy_headers: bool = True
+    trusted_proxies: list[str] = Field(
+        default_factory=lambda: [
+            "127.0.0.0/8",
+            "10.0.0.0/8",
+            "172.16.0.0/12",
+            "192.168.0.0/16",
+        ]
+    )
+    ip_allowlist: list[str] = Field(default_factory=list)
+    ip_blocklist: list[str] = Field(default_factory=list)
+    rules: list[ApiRateLimitRule] = Field(default_factory=_default_api_rate_limit_rules)
+
+
 class ApiSettings(BaseModel):
     host: str
     port: int
     debug: bool = False
     cors_origins: list[str] = Field(default_factory=list)
+    rate_limit: ApiRateLimitSettings = Field(default_factory=ApiRateLimitSettings)
 
     @field_validator("cors_origins", mode="before")
     @classmethod

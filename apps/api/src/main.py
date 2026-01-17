@@ -9,9 +9,12 @@ from observability import (
     configure_logging,
     register_exception_handlers,
 )
+from rate_limit import RateLimitMiddleware, create_redis_client
 from routers.attribution import router as attribution_router
 from routers.effects import router as effects_router
+from routers.ingest import router as ingest_router
 from routers.local_data import router as local_data_router
+from routers.risk import router as risk_router
 
 
 def create_app() -> FastAPI:
@@ -20,8 +23,19 @@ def create_app() -> FastAPI:
 
     app = FastAPI(title="Digital Earth API", debug=settings.api.debug)
 
-    # Add trace_id middleware first
+    redis_client = create_redis_client(settings.redis.url)
+
+    app.add_middleware(
+        RateLimitMiddleware,
+        config=settings.api.rate_limit,
+        redis_client=redis_client,
+    )
+
     app.add_middleware(TraceIdMiddleware)
+
+    @app.on_event("shutdown")
+    async def _close_redis_client() -> None:
+        await redis_client.close()
 
     if settings.api.cors_origins:
         app.add_middleware(
@@ -42,6 +56,8 @@ def create_app() -> FastAPI:
     api_v1.include_router(effects_router)
     api_v1.include_router(attribution_router)
     api_v1.include_router(local_data_router)
+    api_v1.include_router(ingest_router)
+    api_v1.include_router(risk_router)
     app.include_router(api_v1)
 
     return app

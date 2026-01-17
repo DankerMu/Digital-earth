@@ -1,0 +1,13 @@
+schema_version: 1
+
+# Root directory for raw archive runs (relative paths resolve from repo root).
+# Layout: {raw_root_dir}/{source}/{run_time}/{variable}/{level}/
+raw_root_dir: Data/raw
+
+# Retain only the most recent N runs per source.
+keep_n_runs: 5
+
+# Manifest options
+checksum_algorithm: sha256
+manifest_filename: manifest.json
+
