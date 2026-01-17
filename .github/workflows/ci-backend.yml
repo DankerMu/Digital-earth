@@ -50,8 +50,13 @@ jobs:
         with:
           python-version: '3.11'
           cache: 'pip'
-      - run: pip install -e "apps/api[test]"
-      - run: pytest apps/api/tests/ --cov=apps/api/src --cov-report=xml
+      - run: pip install fastapi httpx pydantic pydantic-settings pytest pytest-cov pyyaml
+      - run: |
+          PYTHONPATH=apps/api/src:packages/config/src:packages/shared/src pytest apps/api/tests/ \
+            --cov=apps/api/src \
+            --cov-config=apps/api/.coveragerc \
+            --cov-report=xml \
+            --cov-fail-under=90
         env:
           DIGITAL_EARTH_DB_HOST: localhost
           DIGITAL_EARTH_DB_PORT: 5432
