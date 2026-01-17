@@ -9,8 +9,12 @@ from typing import Optional, Union
 
 from pydantic import ValidationError
 
-from schemas.effect_preset import DEFAULT_EFFECT_PRESETS_CONFIG_PATH, EffectPreset
-from schemas.effect_preset import load_effect_presets
+from schemas.effect_preset import (
+    DEFAULT_EFFECT_PRESETS_CONFIG_PATH,
+    EffectPreset,
+    EffectType,
+    load_effect_presets,
+)
 
 DEFAULT_EFFECT_PRESETS_CONFIG_ENV: str = "DIGITAL_EARTH_EFFECT_PRESETS_CONFIG"
 
