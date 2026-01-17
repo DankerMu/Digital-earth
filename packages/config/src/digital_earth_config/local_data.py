@@ -23,6 +23,9 @@ DEFAULT_LOCAL_DATA_ECMWF_DIR_ENV: Final[str] = "DIGITAL_EARTH_LOCAL_DATA_ECMWF_D
 DEFAULT_LOCAL_DATA_TOWN_FORECAST_DIR_ENV: Final[str] = (
     "DIGITAL_EARTH_LOCAL_DATA_TOWN_FORECAST_DIR"
 )
+DEFAULT_LOCAL_DATA_INDEX_CACHE_TTL_ENV: Final[str] = (
+    "DIGITAL_EARTH_LOCAL_DATA_INDEX_CACHE_TTL_SECONDS"
+)
 
 
 class LocalDataSourcePaths(BaseModel):
@@ -39,6 +42,7 @@ class LocalDataConfig(BaseModel):
     schema_version: int = 1
     root_dir: str = "Data"
     sources: LocalDataSourcePaths = Field(default_factory=LocalDataSourcePaths)
+    index_cache_ttl_seconds: int = Field(default=300, ge=0)
 
     @model_validator(mode="after")
     def _validate_schema_version(self) -> "LocalDataConfig":
@@ -57,6 +61,7 @@ class LocalDataPaths:
     cldas_dir: Path
     ecmwf_dir: Path
     town_forecast_dir: Path
+    index_cache_ttl_seconds: int
 
 
 def _resolve_config_path(path: Optional[Union[str, Path]]) -> Path:
@@ -109,6 +114,10 @@ def _env_overrides(environ: Mapping[str, str]) -> dict[str, Any]:
     if town_dir and town_dir.strip():
         result.setdefault("sources", {})["town_forecast"] = town_dir.strip()
 
+    index_cache_ttl = environ.get(DEFAULT_LOCAL_DATA_INDEX_CACHE_TTL_ENV)
+    if index_cache_ttl and index_cache_ttl.strip():
+        result["index_cache_ttl_seconds"] = index_cache_ttl.strip()
+
     return result
 
 
@@ -132,6 +141,7 @@ def _override_signature(environ: Mapping[str, str]) -> str:
         DEFAULT_LOCAL_DATA_CLDAS_DIR_ENV,
         DEFAULT_LOCAL_DATA_ECMWF_DIR_ENV,
         DEFAULT_LOCAL_DATA_TOWN_FORECAST_DIR_ENV,
+        DEFAULT_LOCAL_DATA_INDEX_CACHE_TTL_ENV,
     )
     payload = "\n".join(f"{key}={environ.get(key, '')}" for key in keys).encode("utf-8")
     return hashlib.sha256(payload).hexdigest()
@@ -166,8 +176,15 @@ def _get_local_data_config_cached(
     def resolve_child(child: str) -> Path:
         candidate = Path(child).expanduser()
         if candidate.is_absolute():
-            return candidate.resolve()
-        return (root_dir / candidate).resolve()
+            raise ValueError(
+                "local-data sources must be relative paths under local-data root_dir"
+            )
+        resolved = (root_dir / candidate).resolve()
+        if not resolved.is_relative_to(root_dir.resolve()):
+            raise ValueError(
+                "local-data sources must resolve within local-data root_dir"
+            )
+        return resolved
 
     return LocalDataPaths(
         config_path=path.resolve(),
@@ -175,6 +192,7 @@ def _get_local_data_config_cached(
         cldas_dir=resolve_child(parsed.sources.cldas),
         ecmwf_dir=resolve_child(parsed.sources.ecmwf),
         town_forecast_dir=resolve_child(parsed.sources.town_forecast),
+        index_cache_ttl_seconds=int(parsed.index_cache_ttl_seconds),
     )
 
 

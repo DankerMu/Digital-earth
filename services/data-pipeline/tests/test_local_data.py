@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from pathlib import Path
 import json
+import time
 
 import numpy as np
 import pytest
@@ -148,11 +150,106 @@ def test_cldas_loader_normalizes_lat_lon_and_adds_time(tmp_path: Path) -> None:
     ds.to_netcdf(path, engine="h5netcdf")
 
     loaded = load_cldas_dataset(path, engine="h5netcdf")
-    assert "time" in loaded.dims
-    assert loaded.dims["time"] == 1
-    assert "lat" in loaded.coords
-    assert "lon" in loaded.coords
-    assert "TMP" in loaded.data_vars
+    try:
+        assert "time" in loaded.dims
+        assert loaded.dims["time"] == 1
+        assert "lat" in loaded.coords
+        assert "lon" in loaded.coords
+        assert "TMP" in loaded.data_vars
+    finally:
+        loaded.close()
+
+
+def test_cldas_loader_accepts_mixed_case_axis_names(tmp_path: Path) -> None:
+    root_dir = tmp_path / "Data" / "CLDAS"
+    root_dir.mkdir(parents=True, exist_ok=True)
+    path = root_dir / "CHINA_WEST_0P05_HOR-TMP-2025010100.nc"
+
+    ds = xr.Dataset(
+        data_vars={
+            "SWDN": (("Lat", "Lon"), np.arange(6, dtype=np.float32).reshape(2, 3)),
+        },
+        coords={
+            "Lat": ("Lat", np.array([10.0, 10.5], dtype=np.float64)),
+            "Lon": ("Lon", np.array([70.0, 70.5, 71.0], dtype=np.float64)),
+        },
+    )
+    ds.to_netcdf(path, engine="h5netcdf")
+
+    loaded = load_cldas_dataset(path, engine="h5netcdf")
+    try:
+        assert "lat" in loaded.coords
+        assert "lon" in loaded.coords
+    finally:
+        loaded.close()
+
+
+def test_cldas_loader_rejects_invalid_timestamp_in_filename(tmp_path: Path) -> None:
+    path = tmp_path / "CHINA_WEST_0P05_HOR-TMP-2025010124.nc"
+    with pytest.raises(CldasLocalLoadError, match="Invalid CLDAS timestamp"):
+        load_cldas_dataset(path)
+
+
+def test_cldas_loader_reports_missing_file(tmp_path: Path) -> None:
+    path = tmp_path / "CHINA_WEST_0P05_HOR-TMP-2025010100.nc"
+    with pytest.raises(CldasLocalLoadError, match="file not found"):
+        load_cldas_dataset(path)
+
+
+def test_cldas_loader_rejects_file_over_max_bytes(tmp_path: Path) -> None:
+    root_dir = tmp_path / "Data" / "CLDAS"
+    root_dir.mkdir(parents=True, exist_ok=True)
+    path = root_dir / "CHINA_WEST_0P05_HOR-TMP-2025010100.nc"
+    path.write_bytes(b"abcd")
+
+    with pytest.raises(CldasLocalLoadError, match="too large"):
+        load_cldas_dataset(path, max_file_size_bytes=1)
+
+
+def test_cldas_loader_wraps_non_netcdf_files(tmp_path: Path) -> None:
+    root_dir = tmp_path / "Data" / "CLDAS"
+    root_dir.mkdir(parents=True, exist_ok=True)
+    path = root_dir / "CHINA_WEST_0P05_HOR-TMP-2025010100.nc"
+    path.write_text("not-a-netcdf", encoding="utf-8")
+
+    with pytest.raises(CldasLocalLoadError, match="Failed to load CLDAS NetCDF"):
+        load_cldas_dataset(path, engine="h5netcdf")
+
+
+def test_cldas_loader_rejects_missing_lat_lon_axes(tmp_path: Path) -> None:
+    root_dir = tmp_path / "Data" / "CLDAS"
+    root_dir.mkdir(parents=True, exist_ok=True)
+    path = root_dir / "CHINA_WEST_0P05_HOR-TMP-2025010100.nc"
+
+    ds = xr.Dataset(
+        data_vars={
+            "SWDN": (("x", "y"), np.arange(6, dtype=np.float32).reshape(2, 3)),
+        }
+    )
+    ds.to_netcdf(path, engine="h5netcdf")
+
+    with pytest.raises(CldasLocalLoadError, match="Missing LAT/LON"):
+        load_cldas_dataset(path, engine="h5netcdf")
+
+
+def test_cldas_loader_enforces_total_cells_limit(tmp_path: Path) -> None:
+    root_dir = tmp_path / "Data" / "CLDAS"
+    root_dir.mkdir(parents=True, exist_ok=True)
+    path = root_dir / "CHINA_WEST_0P05_HOR-TMP-2025010100.nc"
+
+    ds = xr.Dataset(
+        data_vars={
+            "SWDN": (("LAT", "LON"), np.arange(6, dtype=np.float32).reshape(2, 3)),
+        },
+        coords={
+            "LAT": ("LAT", np.array([10.0, 10.5], dtype=np.float64)),
+            "LON": ("LON", np.array([70.0, 70.5, 71.0], dtype=np.float64)),
+        },
+    )
+    ds.to_netcdf(path, engine="h5netcdf")
+
+    with pytest.raises(CldasLocalLoadError, match="dataset too large"):
+        load_cldas_dataset(path, engine="h5netcdf", max_total_cells=1)
 
 
 def test_town_forecast_parser_reads_single_station(tmp_path: Path) -> None:
@@ -242,6 +339,8 @@ def test_data_source_lists_and_loads_files(
     assert src.paths == paths
     index = src.list_files()
     assert {item.kind for item in index.items} == {"cldas", "ecmwf", "town_forecast"}
+    filtered = src.list_files(kinds={"cldas"})
+    assert filtered.items and {item.kind for item in filtered.items} == {"cldas"}
 
     cldas_rel = str(cldas_path.relative_to(paths.root_dir))
     summary = src.load_cldas_summary(cldas_rel)
@@ -259,6 +358,36 @@ def test_data_source_lists_and_loads_files(
 
     with pytest.raises(DataSourceError):
         src.open_path("../escape.txt")
+
+
+def test_data_source_open_path_rejects_symlink_escape_and_absolute_path(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    config_dir = tmp_path / "config"
+    config_dir.mkdir(parents=True, exist_ok=True)
+    _write_local_data_config(config_dir / "local-data.yaml")
+    monkeypatch.setenv("DIGITAL_EARTH_CONFIG_DIR", str(config_dir))
+
+    get_local_data_paths.cache_clear()
+    paths = get_local_data_paths()
+    paths.root_dir.mkdir(parents=True, exist_ok=True)
+
+    outside = tmp_path / "outside.txt"
+    outside.write_text("x", encoding="utf-8")
+
+    link_path = paths.root_dir / "link.txt"
+    try:
+        link_path.symlink_to(outside)
+    except OSError:
+        pytest.skip("Symlinks are not supported in this environment")
+
+    src = LocalDataSource(paths=paths, cache_path=tmp_path / ".cache" / "idx.json")
+    with pytest.raises(DataSourceError, match="resolve within"):
+        src.open_path("link.txt")
+    with pytest.raises(DataSourceError, match="resolve within"):
+        src.open_path(str(outside.resolve()))
 
 
 def test_remote_data_source_is_not_implemented() -> None:
@@ -403,6 +532,44 @@ def test_cache_loads_cached_index_when_valid(
     )
 
 
+def test_cache_ttl_zero_disables_cached_reads(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    config_dir = tmp_path / "config"
+    config_dir.mkdir(parents=True, exist_ok=True)
+    (config_dir / "local-data.yaml").write_text(
+        "\n".join(
+            [
+                "schema_version: 1",
+                "root_dir: Data",
+                "index_cache_ttl_seconds: 0",
+                "sources:",
+                "  cldas: CLDAS",
+                "  ecmwf: EC-forecast/EC预报",
+                "  town_forecast: 城镇预报导出",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("DIGITAL_EARTH_CONFIG_DIR", str(config_dir))
+    get_local_data_paths.cache_clear()
+    paths = get_local_data_paths()
+
+    cldas_dir = paths.root_dir / "CLDAS"
+    cldas_dir.mkdir(parents=True, exist_ok=True)
+    cldas_path = cldas_dir / "CHINA_WEST_0P05_HOR-SSRA-2022030315.nc"
+    cldas_path.write_text("x", encoding="utf-8")
+
+    cache_path = tmp_path / ".cache" / "index.json"
+    first = get_local_file_index(paths, cache_path=cache_path)
+    time.sleep(0.001)
+    second = get_local_file_index(paths, cache_path=cache_path)
+    assert second.generated_at != first.generated_at
+
+
 def test_indexer_covers_edge_cases(tmp_path: Path) -> None:
     root_dir = tmp_path / "Data"
     root_dir.mkdir(parents=True, exist_ok=True)
@@ -495,8 +662,8 @@ def test_data_source_abstract_base_default_raises() -> None:
     from data_source import DataSource
 
     class Dummy(DataSource):
-        def list_files(self, *, kinds=None, refresh: bool = False):  # type: ignore[override]
-            return super().list_files(kinds=kinds, refresh=refresh)
+        def list_files(self, *, kinds=None):  # type: ignore[override]
+            return super().list_files(kinds=kinds)
 
         def open_path(self, relative_path: str) -> Path:
             return super().open_path(relative_path)
@@ -523,13 +690,16 @@ def test_cache_invalidates_when_item_outside_root(
     outside = tmp_path / "outside.txt"
     outside.write_text("x", encoding="utf-8")
     stat = outside.stat()
+    generated_at = (
+        datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    )
     cache_path = tmp_path / ".cache" / "index.json"
     cache_path.parent.mkdir(parents=True, exist_ok=True)
     cache_path.write_text(
         json.dumps(
             {
                 "schema_version": 1,
-                "generated_at": "2020-01-01T00:00:00Z",
+                "generated_at": generated_at,
                 "root_dir": str(paths.root_dir.resolve()),
                 "items": [
                     {
@@ -565,13 +735,16 @@ def test_cache_handles_missing_files_between_is_file_and_stat(
     paths = get_local_data_paths()
 
     missing_path = tmp_path / "missing.nc"
+    generated_at = (
+        datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    )
     cache_path = tmp_path / ".cache" / "index.json"
     cache_path.parent.mkdir(parents=True, exist_ok=True)
     cache_path.write_text(
         json.dumps(
             {
                 "schema_version": 1,
-                "generated_at": "2020-01-01T00:00:00Z",
+                "generated_at": generated_at,
                 "root_dir": str(paths.root_dir.resolve()),
                 "items": [
                     {

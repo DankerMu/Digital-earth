@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import dataclasses
 import logging
-from typing import Literal, Optional
+from typing import Any, Literal, Optional
 
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import FileResponse
+from pydantic import BaseModel, ConfigDict, Field
 
 from data_source import DataNotFoundError, DataSourceError
 from local_data_service import get_data_source
@@ -17,6 +18,26 @@ router = APIRouter(prefix="/local-data", tags=["local-data"])
 LocalKind = Literal["cldas", "ecmwf", "town_forecast"]
 
 
+class LocalIndexItemResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    kind: LocalKind
+    relative_path: str
+    size: int
+    mtime_ns: int
+    time: Optional[str] = None
+    variable: Optional[str] = None
+    meta: dict[str, Any] = Field(default_factory=dict)
+
+
+class LocalIndexResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: int
+    generated_at: str
+    items: list[LocalIndexItemResponse] = Field(default_factory=list)
+
+
 def _handle_data_source_error(exc: Exception) -> HTTPException:
     if isinstance(exc, DataNotFoundError):
         return HTTPException(status_code=404, detail=str(exc))
@@ -25,19 +46,42 @@ def _handle_data_source_error(exc: Exception) -> HTTPException:
     return HTTPException(status_code=500, detail="Internal Server Error")
 
 
-@router.get("/index")
+@router.get("/index", response_model=LocalIndexResponse)
 def get_local_index(
     kind: Optional[LocalKind] = Query(default=None),
-    refresh: bool = Query(default=False),
-) -> dict:
+) -> LocalIndexResponse:
     ds = get_data_source()
     kinds = {kind} if kind else None
     try:
-        index = ds.list_files(kinds=kinds, refresh=refresh)
+        index = ds.list_files(kinds=kinds)
     except Exception as exc:  # noqa: BLE001
         logger.error("local_data_index_error", extra={"error": str(exc)})
         raise _handle_data_source_error(exc) from exc
-    return index.model_dump()
+
+    items: list[LocalIndexItemResponse] = []
+    for item in index.items:
+        relative_path = item.relative_path
+        if relative_path.strip() == "":
+            continue
+        if relative_path.startswith("/"):
+            continue
+        items.append(
+            LocalIndexItemResponse(
+                kind=item.kind,
+                relative_path=relative_path,
+                size=item.size,
+                mtime_ns=item.mtime_ns,
+                time=item.time,
+                variable=item.variable,
+                meta=item.meta,
+            )
+        )
+
+    return LocalIndexResponse(
+        schema_version=index.schema_version,
+        generated_at=index.generated_at,
+        items=items,
+    )
 
 
 @router.get("/file")

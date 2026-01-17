@@ -31,7 +31,6 @@ class DataSource(ABC):
         self,
         *,
         kinds: Optional[set[LocalDataKind]] = None,
-        refresh: bool = False,
     ) -> LocalFileIndex:
         raise NotImplementedError
 
@@ -39,10 +38,8 @@ class DataSource(ABC):
     def open_path(self, relative_path: str) -> Path:
         raise NotImplementedError
 
-    def get_index_item(
-        self, relative_path: str, *, refresh: bool = False
-    ) -> LocalFileIndexItem:
-        index = self.list_files(refresh=refresh)
+    def get_index_item(self, relative_path: str) -> LocalFileIndexItem:
+        index = self.list_files()
         for item in index.items:
             if item.relative_path == relative_path:
                 return item
@@ -53,7 +50,10 @@ class DataSource(ABC):
 
     def load_cldas_summary(self, relative_path: str) -> CldasGridSummary:
         ds = load_cldas_dataset(self.open_path(relative_path))
-        return summarize_cldas_dataset(ds)
+        try:
+            return summarize_cldas_dataset(ds)
+        finally:
+            ds.close()
 
     def load_town_forecast(
         self, relative_path: str, *, max_stations: Optional[int] = None
@@ -86,14 +86,15 @@ class LocalDataSource(DataSource):
         self,
         *,
         kinds: Optional[set[LocalDataKind]] = None,
-        refresh: bool = False,
     ) -> LocalFileIndex:
-        return get_local_file_index(
+        index = get_local_file_index(
             self._paths,
             cache_path=self._cache_path or Path(".cache/local-data-index.json"),
-            refresh=refresh,
-            kinds=kinds,
         )
+        if kinds is None:
+            return index
+        items = [item for item in index.items if item.kind in kinds]
+        return index.model_copy(update={"items": items})
 
     def open_path(self, relative_path: str) -> Path:
         if relative_path.strip() == "":
@@ -115,7 +116,6 @@ class RemoteDataSource(DataSource):
         self,
         *,
         kinds: Optional[set[LocalDataKind]] = None,
-        refresh: bool = False,
     ) -> LocalFileIndex:
         raise DataSourceError("RemoteDataSource is not implemented yet")
 

@@ -115,8 +115,11 @@ def test_local_data_endpoints_read_local_files(
     assert resp.status_code == 200
     payload = resp.json()
     assert payload["schema_version"] == 1
+    assert "root_dir" not in payload
     assert any(item["kind"] == "cldas" for item in payload["items"])
     assert any(item["kind"] == "town_forecast" for item in payload["items"])
+    assert all("path" not in item for item in payload["items"])
+    assert all(not item["relative_path"].startswith("/") for item in payload["items"])
 
     cldas_rel = str(cldas_path.relative_to(tmp_path / "Data"))
     resp = client.get(

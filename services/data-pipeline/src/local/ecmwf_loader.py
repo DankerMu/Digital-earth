@@ -29,11 +29,14 @@ def read_ecmwf_grib_bytes(
 ) -> bytes:
     path = Path(source_path)
     try:
-        data = path.read_bytes()
+        stat = path.stat()
     except FileNotFoundError as exc:
         raise EcmwfLocalLoadError(f"ECMWF GRIB file not found: {path}") from exc
-    if max_bytes is not None and len(data) > max_bytes:
+    if max_bytes is not None and int(stat.st_size) > max_bytes:
         raise EcmwfLocalLoadError(
             f"ECMWF GRIB file too large to read into memory: {path}"
         )
-    return data
+    try:
+        return path.read_bytes()
+    except FileNotFoundError as exc:
+        raise EcmwfLocalLoadError(f"ECMWF GRIB file not found: {path}") from exc
