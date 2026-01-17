@@ -23,7 +23,9 @@ def _base_config() -> dict:
     }
 
 
-def test_app_uses_shared_settings(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_app_uses_shared_settings(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     config_dir = tmp_path / "config"
     _write_config(config_dir, "dev", _base_config())
 
@@ -44,4 +46,3 @@ def test_app_uses_shared_settings(monkeypatch: pytest.MonkeyPatch, tmp_path: Pat
     response = client.get("/health")
     assert response.status_code == 200
     assert response.json() == {"status": "ok"}
-

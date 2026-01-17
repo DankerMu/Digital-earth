@@ -10,7 +10,6 @@ from typing import Optional, Union
 from pydantic import ValidationError
 
 from schemas.effect_preset import DEFAULT_EFFECT_PRESETS_CONFIG_PATH, EffectPreset
-from schemas.effect_preset import EffectType
 from schemas.effect_preset import load_effect_presets
 
 DEFAULT_EFFECT_PRESETS_CONFIG_ENV: str = "DIGITAL_EARTH_EFFECT_PRESETS_CONFIG"
@@ -52,7 +51,7 @@ def _get_effect_presets_payload_cached(
         raise FileNotFoundError(f"Effect presets config file not found: {config_path}")
 
     raw_bytes = config_path.read_bytes()
-    etag = f"\"sha256-{hashlib.sha256(raw_bytes).hexdigest()}\""
+    etag = f'"sha256-{hashlib.sha256(raw_bytes).hexdigest()}"'
 
     try:
         parsed = load_effect_presets(config_path)

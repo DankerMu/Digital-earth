@@ -79,7 +79,7 @@ def test_effect_presets_returns_list_and_etag(
     assert response.headers["cache-control"] == "public, max-age=0, must-revalidate"
 
     etag = response.headers["etag"]
-    assert etag.startswith("\"sha256-")
+    assert etag.startswith('"sha256-')
 
     payload = response.json()
     assert isinstance(payload, list)

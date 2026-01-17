@@ -129,7 +129,7 @@ def _get_attribution_payload_cached(
         raise FileNotFoundError(f"Attribution config file not found: {config_path}")
 
     raw_bytes = config_path.read_bytes()
-    etag = f"\"sha256-{hashlib.sha256(raw_bytes).hexdigest()}\""
+    etag = f'"sha256-{hashlib.sha256(raw_bytes).hexdigest()}"'
 
     raw_text = raw_bytes.decode("utf-8")
     data = _parse_yaml(raw_text, source=config_path)
@@ -146,8 +146,12 @@ def get_attribution_payload(
     try:
         stat = resolved.stat()
     except FileNotFoundError as exc:
-        raise FileNotFoundError(f"Attribution config file not found: {resolved}") from exc
-    return _get_attribution_payload_cached(str(resolved), stat.st_mtime_ns, stat.st_size)
+        raise FileNotFoundError(
+            f"Attribution config file not found: {resolved}"
+        ) from exc
+    return _get_attribution_payload_cached(
+        str(resolved), stat.st_mtime_ns, stat.st_size
+    )
 
 
 get_attribution_payload.cache_clear = _get_attribution_payload_cached.cache_clear  # type: ignore[attr-defined]

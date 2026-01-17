@@ -4,7 +4,11 @@ from fastapi import APIRouter, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from config import get_settings
-from observability import TraceIdMiddleware, configure_logging, register_exception_handlers
+from observability import (
+    TraceIdMiddleware,
+    configure_logging,
+    register_exception_handlers,
+)
 from routers.attribution import router as attribution_router
 from routers.effects import router as effects_router
 

@@ -5,7 +5,11 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import Response
 
-from effect_presets_config import EffectPresetItem, EffectType, get_effect_presets_payload
+from effect_presets_config import (
+    EffectPresetItem,
+    EffectType,
+    get_effect_presets_payload,
+)
 
 router = APIRouter(prefix="/effects", tags=["effects"])
 
@@ -27,7 +31,9 @@ def _if_none_match_matches(header: Optional[str], etag: str) -> bool:
 def list_effect_presets(
     request: Request,
     response: Response,
-    effect_type: Optional[EffectType] = Query(default=None, description="Filter by type"),
+    effect_type: Optional[EffectType] = Query(
+        default=None, description="Filter by type"
+    ),
 ) -> Response | list[EffectPresetItem]:
     try:
         payload = get_effect_presets_payload()
@@ -44,7 +50,9 @@ def list_effect_presets(
 
     presets = payload.presets
     if effect_type is not None:
-        presets = tuple(preset for preset in presets if preset.effect_type == effect_type)
+        presets = tuple(
+            preset for preset in presets if preset.effect_type == effect_type
+        )
 
     response.headers.update(headers)
     return list(presets)

@@ -44,7 +44,9 @@ def _write_attribution(
     ]
     if extra_disclaimer:
         lines.append(f'  - "{extra_disclaimer}"')
-    (config_dir / "attribution.yaml").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    (config_dir / "attribution.yaml").write_text(
+        "\n".join(lines) + "\n", encoding="utf-8"
+    )
 
 
 def _make_client(monkeypatch: pytest.MonkeyPatch, config_dir: Path) -> TestClient:
@@ -79,7 +81,7 @@ def test_attribution_returns_text_and_etag(
     assert response.headers["content-type"].startswith("text/plain")
 
     etag = response.headers["etag"]
-    assert etag.startswith("\"sha256-")
+    assert etag.startswith('"sha256-')
     assert "Attribution (v9.9.9)" in response.text
     assert "Sources:" in response.text
     assert "Disclaimer:" in response.text
@@ -151,7 +153,9 @@ def test_attribution_invalid_yaml_returns_500(
 ) -> None:
     config_dir = tmp_path / "config"
     _write_config(config_dir, "dev", _base_config())
-    (config_dir / "attribution.yaml").write_text("schema_version: [\n", encoding="utf-8")
+    (config_dir / "attribution.yaml").write_text(
+        "schema_version: [\n", encoding="utf-8"
+    )
 
     client = _make_client(monkeypatch, config_dir)
 
