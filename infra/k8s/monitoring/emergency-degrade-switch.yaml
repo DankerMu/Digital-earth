@@ -1,0 +1,31 @@
+#
+# [ST-0010] 紧急降级开关（ConfigMap 热更新示例）
+#
+# 使用方式（建议）：
+# - 将该 ConfigMap 以 volume 的形式挂载到 API/Web/网关（例如 /etc/digital-earth/emergency-degrade.yaml）
+# - 应用侧以 ≤60s 频率轮询/监听文件变化，实现 5 分钟内生效的热更新
+# - 需要更快的生效：可配合 configmap-reload sidecar 触发应用 reload（SIGHUP / HTTP reload endpoint）
+#
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: digital-earth-emergency-degrade
+  namespace: digital-earth
+data:
+  emergency-degrade.yaml: |
+    schema_version: 1
+    updated_at: "2026-01-17T00:00:00Z"
+    emergency_mode: false
+    reason: ""
+    features:
+      # 关闭“体云”（高消耗效果），用于紧急降本/止损
+      tiyun:
+        enabled: true
+      # 限制 zoom（降低瓦片请求/回源压力）
+      zoom:
+        max_level: 14
+    rollout:
+      # 应用侧建议轮询/监听周期（秒）
+      poll_interval_seconds: 60
+
