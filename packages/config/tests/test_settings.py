@@ -49,6 +49,42 @@ def test_loads_json_and_requires_db_secrets(
     assert settings.api.port == 8000
     assert settings.database.host == "localhost"
     assert settings.database.dsn.startswith("postgresql://app:secret@")
+    assert settings.api.rate_limit.enabled is True
+    assert settings.api.rate_limit.ip_allowlist == []
+    assert settings.api.rate_limit.ip_blocklist == []
+    rules = {
+        rule.path_prefix: rule.requests_per_minute
+        for rule in settings.api.rate_limit.rules
+    }
+    assert rules["/api/v1/catalog"] == 100
+    assert rules["/api/v1/vector"] == 60
+    assert rules["/api/v1/tiles"] == 300
+    assert rules["/api/v1/volume"] == 30
+
+
+def test_rate_limit_rules_normalize_path_prefix(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    config_dir = tmp_path / "config"
+    base = _base_config()
+    base["api"]["rate_limit"] = {
+        "rules": [
+            {
+                "path_prefix": "api/v1/catalog/",
+                "requests_per_minute": 10,
+                "window_seconds": 60,
+            }
+        ]
+    }
+    _write_config(config_dir, "dev", base)
+
+    monkeypatch.setenv("DIGITAL_EARTH_ENV", "dev")
+    monkeypatch.setenv("DIGITAL_EARTH_CONFIG_DIR", str(config_dir))
+    monkeypatch.setenv("DIGITAL_EARTH_DB_USER", "app")
+    monkeypatch.setenv("DIGITAL_EARTH_DB_PASSWORD", "secret")
+
+    settings = Settings()
+    assert settings.api.rate_limit.rules[0].path_prefix == "/api/v1/catalog"
 
 
 def test_env_overrides_deep_merge(
