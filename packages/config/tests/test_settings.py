@@ -34,7 +34,9 @@ def test_canonical_env_defaults_and_aliases() -> None:
         _canonical_env("nope")
 
 
-def test_loads_json_and_requires_db_secrets(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_loads_json_and_requires_db_secrets(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     config_dir = tmp_path / "config"
     _write_config(config_dir, "dev", _base_config())
 
@@ -49,7 +51,9 @@ def test_loads_json_and_requires_db_secrets(monkeypatch: pytest.MonkeyPatch, tmp
     assert settings.database.dsn.startswith("postgresql://app:secret@")
 
 
-def test_env_overrides_deep_merge(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_env_overrides_deep_merge(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     config_dir = tmp_path / "config"
     _write_config(config_dir, "dev", _base_config())
 
@@ -64,7 +68,9 @@ def test_env_overrides_deep_merge(monkeypatch: pytest.MonkeyPatch, tmp_path: Pat
     assert settings.api.host == "0.0.0.0"
 
 
-def test_cors_origins_parses_string(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_cors_origins_parses_string(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     config_dir = tmp_path / "config"
     base = _base_config()
     base["api"]["cors_origins"] = ["http://example.com"]
@@ -82,7 +88,9 @@ def test_cors_origins_parses_string(monkeypatch: pytest.MonkeyPatch, tmp_path: P
     assert settings.api.cors_origins == ["http://a.example", "http://b.example"]
 
 
-def test_cors_origins_parses_json_list(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_cors_origins_parses_json_list(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     config_dir = tmp_path / "config"
     _write_config(config_dir, "dev", _base_config())
 
@@ -98,7 +106,9 @@ def test_cors_origins_parses_json_list(monkeypatch: pytest.MonkeyPatch, tmp_path
     assert settings.api.cors_origins == ["http://a.example", "http://b.example"]
 
 
-def test_rejects_secrets_in_json(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_rejects_secrets_in_json(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     config_dir = tmp_path / "config"
     base = _base_config()
     base["database"]["password"] = "nope"
@@ -188,4 +198,3 @@ def test_storage_credentials_must_be_paired(
 
     with pytest.raises(ValueError, match="must be set together"):
         Settings()
-

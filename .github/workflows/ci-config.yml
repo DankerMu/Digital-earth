@@ -1,0 +1,30 @@
+name: CI - Config Package
+
+on:
+  pull_request:
+    paths:
+      - 'packages/config/**'
+
+concurrency:
+  group: ci-config-${{ github.head_ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint-test:
+    name: Lint & Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+      - run: pip install ruff pytest pytest-cov pydantic pydantic-settings pyyaml
+      - run: ruff check packages/config/
+      - run: ruff format --check packages/config/
+      - run: pytest packages/config/tests/ --cov=packages/config/src --cov-report=xml --cov-fail-under=90
+      - uses: codecov/codecov-action@v4
+        with:
+          files: coverage.xml
+          flags: config
+          fail_ci_if_error: false

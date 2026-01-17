@@ -1,0 +1,14 @@
+schema_version: 1
+
+# Local data root directory.
+# Relative paths are resolved against the repository root (parent of this `config/` dir).
+root_dir: Data
+
+# Local-data index cache TTL (seconds). Set to 0 to disable caching.
+index_cache_ttl_seconds: 300
+
+# Sub-directories under `root_dir` for each dataset type.
+sources:
+  cldas: CLDAS
+  ecmwf: EC-forecast/EC预报
+  town_forecast: 城镇预报导出
