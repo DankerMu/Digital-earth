@@ -104,14 +104,24 @@ def _strip_port(value: str) -> str:
     return stripped
 
 
+def _canonicalize_ip(value: str) -> str | None:
+    host = _strip_port(value)
+    if not host:
+        return None
+    try:
+        return str(ipaddress.ip_address(host))
+    except ValueError:
+        return None
+
+
 def _client_ip_from_headers(headers: Headers) -> str | None:
     xff = headers.get("x-forwarded-for")
     if xff:
         first = xff.split(",")[0].strip()
-        return _strip_port(first)
+        return _canonicalize_ip(first)
     x_real_ip = headers.get("x-real-ip")
     if x_real_ip:
-        return _strip_port(x_real_ip)
+        return _canonicalize_ip(x_real_ip)
     return None
 
 
@@ -191,6 +201,7 @@ class RateLimitMiddleware:
         self.limiter = SlidingWindowRedisRateLimiter(redis_client, now_ms=now_ms)
         self.logger = logging.getLogger("api.rate_limit")
 
+        self.trusted_proxies = _parse_ip_networks(config.trusted_proxies)
         self.allowlist = _parse_ip_networks(config.ip_allowlist)
         self.blocklist = _parse_ip_networks(config.ip_blocklist)
         self.rules = sorted(
@@ -208,10 +219,15 @@ class RateLimitMiddleware:
             return
 
         headers = Headers(scope=scope)
-        client_ip = None
-        if self.config.trust_proxy_headers:
-            client_ip = _client_ip_from_headers(headers)
-        client_ip = client_ip or _client_ip_from_scope(scope)
+        socket_ip = _client_ip_from_scope(scope)
+        client_ip = socket_ip
+
+        if self.config.trust_proxy_headers and _ip_in_networks(
+            socket_ip, self.trusted_proxies
+        ):
+            forwarded_ip = _client_ip_from_headers(headers)
+            if forwarded_ip is not None:
+                client_ip = forwarded_ip
 
         if _ip_in_networks(client_ip, self.blocklist):
             response = JSONResponse(

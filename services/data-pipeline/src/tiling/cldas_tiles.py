@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -24,6 +25,39 @@ class CldasTilingError(RuntimeError):
 _TMP_BLUE: Final[tuple[int, int, int]] = (0x3B, 0x82, 0xF6)
 _TMP_WHITE: Final[tuple[int, int, int]] = (0xFF, 0xFF, 0xFF)
 _TMP_RED: Final[tuple[int, int, int]] = (0xEF, 0x44, 0x44)
+
+_LAYER_SEGMENT_RE: Final[re.Pattern[str]] = re.compile(r"^[A-Za-z0-9_]+$")
+_TIME_KEY_RE: Final[re.Pattern[str]] = re.compile(r"^[A-Za-z0-9TZ-]+$")
+
+
+def _validate_layer(value: str) -> str:
+    normalized = (value or "").strip().strip("/")
+    if normalized == "":
+        raise ValueError("layer must not be empty")
+
+    segments = normalized.split("/")
+    invalid_segments = [
+        segment
+        for segment in segments
+        if not segment or _LAYER_SEGMENT_RE.fullmatch(segment) is None
+    ]
+    if invalid_segments:
+        raise ValueError("layer contains unsafe characters")
+    return "/".join(segments)
+
+
+def _validate_time_key(value: str) -> str:
+    normalized = (value or "").strip()
+    if normalized == "":
+        raise ValueError("time_key must not be empty")
+    if _TIME_KEY_RE.fullmatch(normalized) is None:
+        raise ValueError("time_key contains unsafe characters")
+    return normalized
+
+
+def _ensure_relative_to_base(*, base_dir: Path, path: Path, label: str) -> None:
+    if not path.is_relative_to(base_dir):
+        raise ValueError(f"{label} escapes output_dir")
 
 
 def _normalize_time_key(time_iso: str) -> str:
@@ -176,10 +210,7 @@ class CLDASTileGenerator:
         self._ds = ds
         self._variable = variable
         self._time_index = int(time_index)
-        self._layer = layer.strip().strip("/")
-
-        if self._layer == "":
-            raise ValueError("layer must not be empty")
+        self._layer = _validate_layer(layer)
         if self._variable.strip() == "":
             raise ValueError("variable must not be empty")
 
@@ -281,12 +312,14 @@ class CLDASTileGenerator:
         return Image.fromarray(rgba)
 
     def write_legend(self, output_dir: str | Path) -> Path:
-        base = Path(output_dir)
-        layer_dir = base / self._layer
+        base = Path(output_dir).resolve()
+        layer_dir = (base / self._layer).resolve()
+        _ensure_relative_to_base(base_dir=base, path=layer_dir, label="layer")
         layer_dir.mkdir(parents=True, exist_ok=True)
 
         legend = load_legend("cldas", "tmp", "legend.json")
-        target = layer_dir / "legend.json"
+        target = (layer_dir / "legend.json").resolve()
+        _ensure_relative_to_base(base_dir=base, path=target, label="layer")
         target.write_text(
             json.dumps(legend, ensure_ascii=False, indent=2) + "\n",
             encoding="utf-8",
@@ -317,10 +350,14 @@ class CLDASTileGenerator:
         resolved_time_key = time_key or (
             _normalize_time_key(time_iso) if time_iso else "unknown"
         )
+        resolved_time_key = _validate_time_key(resolved_time_key)
 
-        base = Path(output_dir)
-        layer_dir = base / self._layer
-        tiles_root = layer_dir / resolved_time_key
+        base = Path(output_dir).resolve()
+        layer_dir = (base / self._layer).resolve()
+        _ensure_relative_to_base(base_dir=base, path=layer_dir, label="layer")
+
+        tiles_root = (layer_dir / resolved_time_key).resolve()
+        _ensure_relative_to_base(base_dir=base, path=tiles_root, label="time_key")
         tiles_root.mkdir(parents=True, exist_ok=True)
 
         self.write_legend(base)

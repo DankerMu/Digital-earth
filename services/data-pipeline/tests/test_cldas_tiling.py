@@ -5,6 +5,7 @@ import sys
 from types import ModuleType, SimpleNamespace
 
 import numpy as np
+import pytest
 import xarray as xr
 from PIL import Image
 
@@ -123,6 +124,43 @@ def test_cldas_tile_generator_time_key_fallback(tmp_path: Path) -> None:
     generator = CLDASTileGenerator(ds, variable="TMP", layer="cldas/tmp")
     result = generator.generate(tmp_path, min_zoom=0, max_zoom=0, tile_size=1)
     assert result.time == "notatime"
+
+
+def test_cldas_tile_generator_rejects_layer_path_traversal() -> None:
+    from tiling.cldas_tiles import CLDASTileGenerator
+
+    ds = _make_global_tmp_dataset(value=0.0)
+    with pytest.raises(ValueError, match="layer"):
+        CLDASTileGenerator(ds, variable="TMP", layer="../evil")
+
+
+def test_cldas_tile_generator_rejects_time_key_path_traversal(tmp_path: Path) -> None:
+    from tiling.cldas_tiles import CLDASTileGenerator
+
+    ds = _make_global_tmp_dataset(value=0.0)
+    generator = CLDASTileGenerator(ds, variable="TMP", layer="cldas/tmp")
+    with pytest.raises(ValueError, match="time_key"):
+        generator.generate(
+            tmp_path, min_zoom=0, max_zoom=0, tile_size=1, time_key="../evil"
+        )
+
+
+def test_cldas_tile_generator_rejects_symlink_escape(tmp_path: Path) -> None:
+    from tiling.cldas_tiles import CLDASTileGenerator
+
+    ds = _make_global_tmp_dataset(value=0.0)
+    generator = CLDASTileGenerator(ds, variable="TMP", layer="cldas/tmp")
+
+    outside = tmp_path.parent / f"{tmp_path.name}-outside"
+    outside.mkdir()
+
+    try:
+        (tmp_path / "cldas").symlink_to(outside, target_is_directory=True)
+    except OSError:
+        pytest.skip("Symlinks are not supported in this environment")
+
+    with pytest.raises(ValueError, match="escapes output_dir"):
+        generator.generate(tmp_path, min_zoom=0, max_zoom=0, tile_size=1)
 
 
 def test_internal_axis_and_lon_normalization_helpers() -> None:

@@ -225,6 +225,14 @@ def _default_api_rate_limit_rules() -> list[ApiRateLimitRule]:
 class ApiRateLimitSettings(BaseModel):
     enabled: bool = True
     trust_proxy_headers: bool = True
+    trusted_proxies: list[str] = Field(
+        default_factory=lambda: [
+            "127.0.0.0/8",
+            "10.0.0.0/8",
+            "172.16.0.0/12",
+            "192.168.0.0/16",
+        ]
+    )
     ip_allowlist: list[str] = Field(default_factory=list)
     ip_blocklist: list[str] = Field(default_factory=list)
     rules: list[ApiRateLimitRule] = Field(default_factory=_default_api_rate_limit_rules)

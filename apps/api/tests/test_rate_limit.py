@@ -71,7 +71,8 @@ def test_rate_limit_returns_429_with_retry_after() -> None:
     clock = Clock(now=1_000_000)
     redis = FakeRedis()
     config = ApiRateLimitSettings(
-        rules=[ApiRateLimitRule(path_prefix="/api/v1/catalog", requests_per_minute=1)]
+        trusted_proxies=["127.0.0.0/8"],
+        rules=[ApiRateLimitRule(path_prefix="/api/v1/catalog", requests_per_minute=1)],
     )
     app = _make_app(config=config, redis_client=redis, clock=clock)
     hit_counter = {"count": 0}
@@ -81,7 +82,7 @@ def test_rate_limit_returns_429_with_retry_after() -> None:
         hit_counter["count"] += 1
         return {"ok": True}
 
-    client = TestClient(app)
+    client = TestClient(app, client=("127.0.0.1", 12345))
     headers = {"X-Forwarded-For": "203.0.113.10"}
 
     ok = client.get("/api/v1/catalog/items", headers=headers)
@@ -103,13 +104,14 @@ def test_rate_limit_sliding_window_allows_after_window() -> None:
     clock = Clock(now=1_000_000)
     redis = FakeRedis()
     config = ApiRateLimitSettings(
+        trusted_proxies=["127.0.0.0/8"],
         rules=[
             ApiRateLimitRule(
                 path_prefix="/api/v1/catalog",
                 requests_per_minute=1,
                 window_seconds=60,
             )
-        ]
+        ],
     )
     app = _make_app(config=config, redis_client=redis, clock=clock)
     hit_counter = {"count": 0}
@@ -119,7 +121,7 @@ def test_rate_limit_sliding_window_allows_after_window() -> None:
         hit_counter["count"] += 1
         return {"ok": True}
 
-    client = TestClient(app)
+    client = TestClient(app, client=("127.0.0.1", 12345))
     headers = {"X-Forwarded-For": "203.0.113.10"}
 
     assert client.get("/api/v1/catalog/items", headers=headers).status_code == 200
@@ -134,6 +136,7 @@ def test_ip_blocklist_returns_403() -> None:
     clock = Clock(now=1_000_000)
     redis = FakeRedis()
     config = ApiRateLimitSettings(
+        trusted_proxies=["127.0.0.0/8"],
         ip_blocklist=["203.0.113.0/24"],
         rules=[ApiRateLimitRule(path_prefix="/api/v1/catalog", requests_per_minute=10)],
     )
@@ -145,7 +148,7 @@ def test_ip_blocklist_returns_403() -> None:
         hit_counter["count"] += 1
         return {"ok": True}
 
-    client = TestClient(app)
+    client = TestClient(app, client=("127.0.0.1", 12345))
     response = client.get(
         "/api/v1/catalog/items", headers={"X-Forwarded-For": "203.0.113.10"}
     )
@@ -159,6 +162,7 @@ def test_ip_allowlist_bypasses_rate_limit() -> None:
     clock = Clock(now=1_000_000)
     redis = FakeRedis()
     config = ApiRateLimitSettings(
+        trusted_proxies=["127.0.0.0/8"],
         ip_allowlist=["203.0.113.10"],
         rules=[ApiRateLimitRule(path_prefix="/api/v1/catalog", requests_per_minute=1)],
     )
@@ -170,7 +174,7 @@ def test_ip_allowlist_bypasses_rate_limit() -> None:
         hit_counter["count"] += 1
         return {"ok": True}
 
-    client = TestClient(app)
+    client = TestClient(app, client=("127.0.0.1", 12345))
     headers = {"X-Forwarded-For": "203.0.113.10"}
 
     assert client.get("/api/v1/catalog/items", headers=headers).status_code == 200
@@ -182,7 +186,8 @@ def test_unmatched_path_does_not_hit_redis() -> None:
     clock = Clock(now=1_000_000)
     redis = FakeRedis()
     config = ApiRateLimitSettings(
-        rules=[ApiRateLimitRule(path_prefix="/api/v1/catalog", requests_per_minute=1)]
+        trusted_proxies=["127.0.0.0/8"],
+        rules=[ApiRateLimitRule(path_prefix="/api/v1/catalog", requests_per_minute=1)],
     )
     app = _make_app(config=config, redis_client=redis, clock=clock)
 
@@ -190,7 +195,7 @@ def test_unmatched_path_does_not_hit_redis() -> None:
     def catalogue_items() -> dict[str, bool]:
         return {"ok": True}
 
-    client = TestClient(app)
+    client = TestClient(app, client=("127.0.0.1", 12345))
     response = client.get(
         "/api/v1/catalogue/items", headers={"X-Forwarded-For": "203.0.113.10"}
     )
@@ -203,7 +208,8 @@ def test_client_ip_parses_port_variants(header: str) -> None:
     clock = Clock(now=1_000_000)
     redis = FakeRedis()
     config = ApiRateLimitSettings(
-        rules=[ApiRateLimitRule(path_prefix="/api/v1/catalog", requests_per_minute=1)]
+        trusted_proxies=["127.0.0.0/8"],
+        rules=[ApiRateLimitRule(path_prefix="/api/v1/catalog", requests_per_minute=1)],
     )
     app = _make_app(config=config, redis_client=redis, clock=clock)
 
@@ -211,7 +217,7 @@ def test_client_ip_parses_port_variants(header: str) -> None:
     def catalog_items() -> dict[str, bool]:
         return {"ok": True}
 
-    client = TestClient(app)
+    client = TestClient(app, client=("127.0.0.1", 12345))
     assert (
         client.get("/api/v1/catalog/items", headers={"X-Real-Ip": header}).status_code
         == 200
@@ -221,7 +227,8 @@ def test_client_ip_parses_port_variants(header: str) -> None:
 def test_redis_errors_return_503() -> None:
     clock = Clock(now=1_000_000)
     config = ApiRateLimitSettings(
-        rules=[ApiRateLimitRule(path_prefix="/api/v1/catalog", requests_per_minute=1)]
+        trusted_proxies=["127.0.0.0/8"],
+        rules=[ApiRateLimitRule(path_prefix="/api/v1/catalog", requests_per_minute=1)],
     )
     app = _make_app(config=config, redis_client=BrokenRedis(), clock=clock)
 
@@ -229,9 +236,61 @@ def test_redis_errors_return_503() -> None:
     def catalog_items() -> dict[str, bool]:
         return {"ok": True}
 
-    client = TestClient(app)
+    client = TestClient(app, client=("127.0.0.1", 12345))
     response = client.get(
         "/api/v1/catalog/items", headers={"X-Forwarded-For": "203.0.113.10"}
     )
     assert response.status_code == 503
     assert response.json()["message"] == "Rate limiter unavailable"
+
+
+def test_untrusted_socket_ip_ignores_x_forwarded_for_spoofing() -> None:
+    clock = Clock(now=1_000_000)
+    redis = FakeRedis()
+    config = ApiRateLimitSettings(
+        trusted_proxies=["127.0.0.0/8"],
+        rules=[ApiRateLimitRule(path_prefix="/api/v1/catalog", requests_per_minute=1)],
+    )
+    app = _make_app(config=config, redis_client=redis, clock=clock)
+
+    @app.get("/api/v1/catalog/items")
+    def catalog_items() -> dict[str, bool]:
+        return {"ok": True}
+
+    client = TestClient(app, client=("198.51.100.20", 12345))
+    assert (
+        client.get(
+            "/api/v1/catalog/items", headers={"X-Forwarded-For": "203.0.113.10"}
+        ).status_code
+        == 200
+    )
+    assert (
+        client.get(
+            "/api/v1/catalog/items", headers={"X-Forwarded-For": "203.0.113.11"}
+        ).status_code
+        == 429
+    )
+    assert all("203.0.113." not in key for key in redis.zsets)
+
+
+def test_invalid_x_forwarded_for_falls_back_to_socket_ip() -> None:
+    clock = Clock(now=1_000_000)
+    redis = FakeRedis()
+    config = ApiRateLimitSettings(
+        trusted_proxies=["127.0.0.0/8"],
+        rules=[ApiRateLimitRule(path_prefix="/api/v1/catalog", requests_per_minute=1)],
+    )
+    app = _make_app(config=config, redis_client=redis, clock=clock)
+
+    @app.get("/api/v1/catalog/items")
+    def catalog_items() -> dict[str, bool]:
+        return {"ok": True}
+
+    client = TestClient(app, client=("127.0.0.1", 12345))
+    assert (
+        client.get(
+            "/api/v1/catalog/items", headers={"X-Forwarded-For": "not-an-ip"}
+        ).status_code
+        == 200
+    )
+    assert any("127.0.0.1" in key for key in redis.zsets)
