@@ -4,6 +4,8 @@ on:
   pull_request:
     paths:
       - 'services/data-pipeline/**'
+      - 'config/archive.yaml'
+      - 'config/scheduler.yaml'
 
 concurrency:
   group: ci-pipeline-${{ github.head_ref }}
@@ -19,12 +21,12 @@ jobs:
         with:
           python-version: '3.11'
           cache: 'pip'
-      - run: pip install ruff pytest pytest-cov pydantic pydantic-settings pyyaml httpx xarray h5netcdf h5py
+      - run: pip install ruff pytest pytest-cov pydantic pydantic-settings pyyaml httpx xarray h5netcdf h5py pillow croniter numpy
       - run: ruff check services/data-pipeline/
       - run: ruff format --check services/data-pipeline/
       - run: |
           cd services/data-pipeline && \
-          PYTHONPATH=src:../../packages/config/src pytest tests/ \
+          PYTHONPATH=src:../../packages/config/src:../../packages/shared/src pytest tests/ \
             --cov=src \
             --cov-report=xml \
             --cov-fail-under=90 \
