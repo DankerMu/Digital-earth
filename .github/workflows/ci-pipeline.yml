@@ -19,7 +19,7 @@ jobs:
         with:
           python-version: '3.11'
           cache: 'pip'
-      - run: pip install ruff pytest pytest-cov pydantic pydantic-settings pyyaml
+      - run: pip install ruff pytest pytest-cov pydantic pydantic-settings pyyaml httpx xarray h5netcdf
       - run: ruff check services/data-pipeline/
       - run: ruff format --check services/data-pipeline/
       - run: |
