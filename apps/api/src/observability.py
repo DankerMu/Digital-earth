@@ -256,12 +256,17 @@ def register_exception_handlers(app: FastAPI) -> None:
     async def validation_exception_handler(
         request: Request, exc: RequestValidationError
     ) -> JSONResponse:
+        # Redact sensitive fields from validation errors
+        safe_errors = [
+            {"loc": e.get("loc"), "msg": e.get("msg"), "type": e.get("type")}
+            for e in exc.errors()
+        ]
         logger.warning(
             "request.validation_error",
             extra={
                 "path": request.url.path,
                 "method": request.method,
-                "errors": exc.errors(),
+                "errors": safe_errors,
             },
         )
         api_error = make_api_error(status_code=400)

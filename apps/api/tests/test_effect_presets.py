@@ -119,7 +119,7 @@ def test_effect_presets_filter_by_effect_type(
     assert all(item["effect_type"] == "rain" for item in payload)
 
 
-def test_effect_presets_invalid_effect_type_is_422(
+def test_effect_presets_invalid_effect_type_is_400(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     client = _make_client(monkeypatch, tmp_path)

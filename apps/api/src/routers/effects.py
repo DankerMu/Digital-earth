@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query, Request
@@ -10,21 +11,10 @@ from effect_presets_config import (
     EffectType,
     get_effect_presets_payload,
 )
+from http_cache import if_none_match_matches
 
 router = APIRouter(prefix="/effects", tags=["effects"])
-
-
-def _if_none_match_matches(header: Optional[str], etag: str) -> bool:
-    if header is None:
-        return False
-
-    text = header.strip()
-    if text == "":
-        return False
-    if text == "*":
-        return True
-
-    return any(item.strip() == etag for item in text.split(","))
+logger = logging.getLogger("api.error")
 
 
 @router.get("/presets", response_model=list[EffectPresetItem])
@@ -38,14 +28,15 @@ def list_effect_presets(
     try:
         payload = get_effect_presets_payload()
     except (FileNotFoundError, ValueError) as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        logger.error("effect_presets_config_error", extra={"error": str(exc)})
+        raise HTTPException(status_code=500, detail="Internal Server Error") from exc
 
     headers = {
         "Cache-Control": "public, max-age=0, must-revalidate",
         "ETag": payload.etag,
     }
 
-    if _if_none_match_matches(request.headers.get("if-none-match"), payload.etag):
+    if if_none_match_matches(request.headers.get("if-none-match"), payload.etag):
         return Response(status_code=304, headers=headers)
 
     presets = payload.presets
