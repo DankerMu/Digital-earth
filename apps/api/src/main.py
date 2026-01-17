@@ -11,6 +11,7 @@ from observability import (
 )
 from routers.attribution import router as attribution_router
 from routers.effects import router as effects_router
+from routers.local_data import router as local_data_router
 
 
 def create_app() -> FastAPI:
@@ -40,6 +41,7 @@ def create_app() -> FastAPI:
     api_v1 = APIRouter(prefix="/api/v1")
     api_v1.include_router(effects_router)
     api_v1.include_router(attribution_router)
+    api_v1.include_router(local_data_router)
     app.include_router(api_v1)
 
     return app

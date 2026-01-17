@@ -189,8 +189,7 @@ class RedisSettings(BaseModel):
         if self.password is None:
             return f"redis://{self.host}:{self.port}/0"
         return (
-            "redis://:"
-            f"{self.password.get_secret_value()}@{self.host}:{self.port}/0"
+            "redis://:" f"{self.password.get_secret_value()}@{self.host}:{self.port}/0"
         )
 
 
@@ -217,11 +216,21 @@ class PipelineSettings(BaseModel):
     workers: int
     batch_size: int
     ecmwf_api_key: Optional[SecretStr] = Field(default=None, repr=False)
+    data_source: str = Field(default="remote", description="remote|local")
 
     @model_validator(mode="after")
     def _reject_empty_ecmwf_key(self) -> "PipelineSettings":
-        if self.ecmwf_api_key is not None and self.ecmwf_api_key.get_secret_value().strip() == "":
+        if (
+            self.ecmwf_api_key is not None
+            and self.ecmwf_api_key.get_secret_value().strip() == ""
+        ):
             raise ValueError("DIGITAL_EARTH_PIPELINE_ECMWF_API_KEY must not be empty")
+        normalized = (self.data_source or "").strip().lower()
+        if normalized == "":
+            normalized = "remote"
+        if normalized not in {"remote", "local"}:
+            raise ValueError("pipeline.data_source must be either 'remote' or 'local'")
+        self.data_source = normalized
         return self
 
 
@@ -235,7 +244,9 @@ class WebSettings(BaseModel):
             self.cesium_ion_access_token is not None
             and self.cesium_ion_access_token.get_secret_value().strip() == ""
         ):
-            raise ValueError("DIGITAL_EARTH_WEB_CESIUM_ION_ACCESS_TOKEN must not be empty")
+            raise ValueError(
+                "DIGITAL_EARTH_WEB_CESIUM_ION_ACCESS_TOKEN must not be empty"
+            )
         return self
 
 
@@ -247,7 +258,9 @@ class StorageSettings(BaseModel):
 
     @model_validator(mode="after")
     def _validate_credentials_pair(self) -> "StorageSettings":
-        access = self.access_key_id.get_secret_value().strip() if self.access_key_id else ""
+        access = (
+            self.access_key_id.get_secret_value().strip() if self.access_key_id else ""
+        )
         secret = (
             self.secret_access_key.get_secret_value().strip()
             if self.secret_access_key
@@ -262,7 +275,9 @@ class StorageSettings(BaseModel):
         if self.access_key_id is not None and access == "":
             raise ValueError("DIGITAL_EARTH_STORAGE_ACCESS_KEY_ID must not be empty")
         if self.secret_access_key is not None and secret == "":
-            raise ValueError("DIGITAL_EARTH_STORAGE_SECRET_ACCESS_KEY must not be empty")
+            raise ValueError(
+                "DIGITAL_EARTH_STORAGE_SECRET_ACCESS_KEY must not be empty"
+            )
         return self
 
 

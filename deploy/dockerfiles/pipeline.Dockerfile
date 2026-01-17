@@ -13,8 +13,13 @@ RUN pip install --no-cache-dir poetry \
 
 COPY services/data-pipeline/src ./src
 COPY services/data-pipeline/config ./config
+COPY config ./config
+COPY packages/config/src ./packages/config/src
+
+ENV DIGITAL_EARTH_CONFIG_DIR=/app/config
+ENV PYTHONPATH=/app/src:/app/packages/config/src
 
 RUN useradd -m appuser && chown -R appuser:appuser /app
 USER appuser
 
-CMD ["python", "-m", "src.main"]
+CMD ["python", "-m", "main"]
