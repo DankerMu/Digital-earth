@@ -5,11 +5,12 @@ import hashlib
 import json
 import logging
 import random
+import re
 import time
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Mapping, Optional, Sequence
+from typing import Any, Callable, Mapping, Optional, Sequence, Union
 from urllib.parse import urlparse
 
 import httpx
@@ -36,13 +37,25 @@ def _sha256_file(path: Path, *, chunk_size: int = 1024 * 1024) -> str:
     return digest.hexdigest()
 
 
+_UNSAFE_FILENAME_RE = re.compile(r"[^A-Za-z0-9._-]+")
+
+
+def _sanitize_filename(value: str) -> str:
+    sanitized = value.strip().replace("\\", "_").replace("/", "_")
+    sanitized = _UNSAFE_FILENAME_RE.sub("_", sanitized)
+    sanitized = sanitized.strip(" ._")
+    if sanitized in {"", ".", ".."}:
+        return "download"
+    return sanitized
+
+
 def _safe_filename_from_url(url: str) -> str:
     parsed = urlparse(url)
     name = Path(parsed.path).name
     if name:
-        return name
+        return _sanitize_filename(name)
     normalized = parsed.path.strip("/").replace("/", "_") or "download"
-    return f"{parsed.netloc}_{normalized}"
+    return _sanitize_filename(f"{parsed.netloc}_{normalized}")
 
 
 def _parse_content_range_total(value: str) -> Optional[int]:
@@ -77,9 +90,10 @@ async def _remote_content_length(
     url: str,
     *,
     headers: Mapping[str, str],
+    timeout_s: float,
 ) -> Optional[int]:
     try:
-        resp = await client.head(url, headers=headers)
+        resp = await client.head(url, headers=headers, timeout=httpx.Timeout(timeout_s))
     except httpx.RequestError:
         resp = None
 
@@ -90,7 +104,11 @@ async def _remote_content_length(
 
     # Fallback: fetch a single byte and parse Content-Range.
     try:
-        resp = await client.get(url, headers={**dict(headers), "Range": "bytes=0-0"})
+        resp = await client.get(
+            url,
+            headers={**dict(headers), "Range": "bytes=0-0"},
+            timeout=httpx.Timeout(timeout_s),
+        )
     except httpx.RequestError:
         return None
     if resp.status_code == 206:
@@ -228,7 +246,9 @@ async def _download_one(
     headers = dict(item.headers)
     expected_size = item.expected_size
     if expected_size is None and verify_size:
-        expected_size = await _remote_content_length(client, item.url, headers=headers)
+        expected_size = await _remote_content_length(
+            client, item.url, headers=headers, timeout_s=timeout_s
+        )
 
     def local_size() -> int:
         try:
@@ -287,6 +307,7 @@ async def _download_one(
         if resume and current_size > 0:
             request_headers["Range"] = f"bytes={current_size}-"
             requested_range = True
+        did_fallback_to_full = False
 
         if log:
             await log.write(
@@ -301,71 +322,90 @@ async def _download_one(
                 }
             )
 
+        abort_attempts = False
         try:
-            async with client.stream(
-                "GET",
-                item.url,
-                headers=request_headers,
-                timeout=httpx.Timeout(timeout_s),
-            ) as resp:
-                status = resp.status_code
-                if (
-                    status == 416
-                    and expected_size is not None
-                    and current_size == expected_size
-                ):
-                    # Remote says "range not satisfiable" but we already have full file.
-                    sha256 = _sha256_file(dest_path) if compute_checksum else None
-                    finished_at = _utc_now_iso()
-                    return DownloadResult(
-                        url=item.url,
-                        dest_path=str(dest_path),
-                        status="skipped",
-                        attempts=attempt,
-                        resumed=True,
-                        bytes_written=0,
-                        expected_size=expected_size,
-                        final_size=current_size,
-                        sha256=sha256,
-                        started_at=started_at,
-                        finished_at=finished_at,
-                    )
-
-                if status >= 400:
-                    body_preview = (await resp.aread())[:200].decode(errors="replace")
+            while True:
+                async with client.stream(
+                    "GET",
+                    item.url,
+                    headers=request_headers,
+                    timeout=httpx.Timeout(timeout_s),
+                ) as resp:
+                    status = resp.status_code
                     if (
-                        _should_retry_status(status)
-                        and attempt < retry_policy.max_attempts
+                        status == 416
+                        and expected_size is not None
+                        and current_size == expected_size
                     ):
-                        last_error = f"HTTP {status}: {body_preview}"
-                        raise httpx.HTTPStatusError(
-                            last_error, request=resp.request, response=resp
+                        # Remote says "range not satisfiable" but we already have full file.
+                        sha256 = _sha256_file(dest_path) if compute_checksum else None
+                        finished_at = _utc_now_iso()
+                        return DownloadResult(
+                            url=item.url,
+                            dest_path=str(dest_path),
+                            status="skipped",
+                            attempts=attempt,
+                            resumed=True,
+                            bytes_written=0,
+                            expected_size=expected_size,
+                            final_size=current_size,
+                            sha256=sha256,
+                            started_at=started_at,
+                            finished_at=finished_at,
                         )
-                    last_error = f"HTTP {status}: {body_preview}"
-                    break
 
-                mode = "wb"
-                if status == 206:
-                    content_range = resp.headers.get("Content-Range")
-                    if content_range is not None:
-                        start = _parse_content_range_start(content_range)
-                        if start is not None and start != current_size:
-                            current_size = 0
-                    mode = "ab" if current_size > 0 else "wb"
-                elif status == 200 and requested_range and current_size > 0:
-                    current_size = 0
+                    if status >= 400:
+                        body_preview = (await resp.aread())[:200].decode(
+                            errors="replace"
+                        )
+                        if (
+                            _should_retry_status(status)
+                            and attempt < retry_policy.max_attempts
+                        ):
+                            last_error = f"HTTP {status}: {body_preview}"
+                            raise httpx.HTTPStatusError(
+                                last_error, request=resp.request, response=resp
+                            )
+                        last_error = f"HTTP {status}: {body_preview}"
+                        abort_attempts = True
+                        break
 
-                if current_size == 0 and dest_path.exists():
-                    dest_path.unlink(missing_ok=True)
+                    mode = "wb"
+                    if status == 206:
+                        content_range = resp.headers.get("Content-Range")
+                        start = (
+                            _parse_content_range_start(content_range)
+                            if content_range is not None
+                            else None
+                        )
+                        if start is None or start != current_size:
+                            if not did_fallback_to_full:
+                                did_fallback_to_full = True
+                                request_headers = dict(headers)
+                                requested_range = False
+                                current_size = 0
+                                continue
+                            last_error = (
+                                f"Malformed Content-Range header: {content_range!r}"
+                            )
+                            abort_attempts = True
+                            break
+                        mode = "ab" if start > 0 else "wb"
+                    elif status == 200 and requested_range and current_size > 0:
+                        current_size = 0
 
-                bytes_written = 0
-                with dest_path.open(mode) as handle:
-                    async for chunk in resp.aiter_bytes(chunk_size=chunk_size):
-                        handle.write(chunk)
-                        bytes_written += len(chunk)
+                    if current_size == 0 and dest_path.exists():
+                        dest_path.unlink(missing_ok=True)
 
-                bytes_written_total += bytes_written
-                resumed_any = resumed_any or (mode == "ab")
+                    bytes_written = 0
+                    with dest_path.open(mode) as handle:
+                        async for chunk in resp.aiter_bytes(chunk_size=chunk_size):
+                            handle.write(chunk)
+                            bytes_written += len(chunk)
+
+                    bytes_written_total += bytes_written
+                    resumed_any = resumed_any or (mode == "ab")
+                break
 
         except _iter_retryable_exceptions() as exc:
             last_error = str(exc)
@@ -388,6 +428,9 @@ async def _download_one(
             if delay > 0:
                 await asyncio.sleep(delay)
             continue
+
+        if abort_attempts:
+            break
 
         final_size = local_size()
         if expected_size is not None and verify_size and final_size != expected_size:
@@ -486,10 +529,33 @@ def _serialize_variables_config() -> Mapping[str, Any]:
     }
 
 
+def _validate_run_id(run_id: str) -> None:
+    normalized = run_id.strip()
+    if normalized == "":
+        raise ValueError("run_id must not be empty")
+
+    candidate = Path(normalized)
+    if candidate.is_absolute():
+        raise ValueError("run_id must not be an absolute path")
+
+    parts = [part for part in normalized.replace("\\", "/").split("/") if part != ""]
+    if any(part == ".." for part in parts):
+        raise ValueError("run_id must not contain '..'")
+
+
+def _validate_dest_path(dest_path: Path, *, run_dir: Path) -> Path:
+    resolved = dest_path.resolve()
+    if not resolved.is_relative_to(run_dir):
+        raise ValueError(
+            f"dest_path must resolve within run directory ({run_dir}): {dest_path}"
+        )
+    return resolved
+
+
 async def download_ecmwf_run(
     *,
     run_id: str,
-    items: Sequence[DownloadItem] | Sequence[str],
+    items: Union[Sequence[DownloadItem], Sequence[str]],
     output_dir: Path,
     concurrency: int = 4,
     timeout_s: float = 60.0,
@@ -501,6 +567,7 @@ async def download_ecmwf_run(
     verify_size: bool = True,
     chunk_size: int = 1024 * 256,
     trust_env: bool = False,
+    transport: Optional[httpx.AsyncBaseTransport] = None,
     log_path: Optional[Path] = None,
     manifest_path: Optional[Path] = None,
     alert: Optional[Callable[[DownloadResult], None]] = None,
@@ -517,7 +584,13 @@ async def download_ecmwf_run(
     if retry_policy.max_attempts <= 0:
         raise ValueError("retry_policy.max_attempts must be > 0")
 
-    run_dir = (output_dir / run_id).resolve()
+    _validate_run_id(run_id)
+    output_dir_resolved = output_dir.resolve()
+    run_dir = (output_dir_resolved / run_id).resolve()
+    if not run_dir.is_relative_to(output_dir_resolved):
+        raise ValueError(
+            f"run_id must resolve within output_dir ({output_dir_resolved}): {run_id}"
+        )
     run_dir.mkdir(parents=True, exist_ok=True)
 
     if log_path is None:
@@ -531,14 +604,14 @@ async def download_ecmwf_run(
     if items and isinstance(items[0], str):  # type: ignore[index]
         for url in items:  # type: ignore[assignment]
             filename = _safe_filename_from_url(str(url))
-            normalized_items.append(
-                DownloadItem(url=str(url), dest_path=run_dir / filename)
-            )
+            dest_path = _validate_dest_path(run_dir / filename, run_dir=run_dir)
+            normalized_items.append(DownloadItem(url=str(url), dest_path=dest_path))
     else:
         for item in items:  # type: ignore[assignment]
             dest_path = item.dest_path
             if not dest_path.is_absolute():
                 dest_path = run_dir / dest_path
+            dest_path = _validate_dest_path(dest_path, run_dir=run_dir)
             normalized_items.append(
                 DownloadItem(
                     url=item.url,
@@ -565,28 +638,78 @@ async def download_ecmwf_run(
             "compute_checksum must be enabled when verify_checksum is True"
         )
 
-    async with httpx.AsyncClient(follow_redirects=True, trust_env=trust_env) as client:
+    async with httpx.AsyncClient(
+        follow_redirects=True,
+        trust_env=trust_env,
+        transport=transport,
+    ) as client:
         semaphore = asyncio.Semaphore(concurrency)
 
         async def run_one(download_item: DownloadItem) -> DownloadResult:
+            item_started_at = _utc_now_iso()
             async with semaphore:
-                return await _download_one(
-                    client,
-                    download_item,
-                    retry_policy=retry_policy,
-                    timeout_s=timeout_s,
-                    resume=resume,
-                    skip_existing=skip_existing,
-                    compute_checksum=compute_checksum,
-                    verify_checksum=verify_checksum,
-                    verify_size=verify_size,
-                    chunk_size=chunk_size,
-                    log=log_writer,
-                    run_id=run_id,
-                )
+                try:
+                    return await _download_one(
+                        client,
+                        download_item,
+                        retry_policy=retry_policy,
+                        timeout_s=timeout_s,
+                        resume=resume,
+                        skip_existing=skip_existing,
+                        compute_checksum=compute_checksum,
+                        verify_checksum=verify_checksum,
+                        verify_size=verify_size,
+                        chunk_size=chunk_size,
+                        log=log_writer,
+                        run_id=run_id,
+                    )
+                except asyncio.CancelledError:
+                    raise
+                except httpx.HTTPError:
+                    raise
+                except Exception as exc:  # pragma: no cover - defensive isolation
+                    item_finished_at = _utc_now_iso()
+                    return DownloadResult(
+                        url=download_item.url,
+                        dest_path=str(download_item.dest_path),
+                        status="failed",
+                        attempts=0,
+                        resumed=False,
+                        bytes_written=0,
+                        expected_size=download_item.expected_size,
+                        final_size=None,
+                        sha256=None,
+                        started_at=item_started_at,
+                        finished_at=item_finished_at,
+                        error=str(exc),
+                    )
 
-        results = await asyncio.gather(
-            *(run_one(download_item) for download_item in normalized_items)
+        raw_results = await asyncio.gather(
+            *(run_one(download_item) for download_item in normalized_items),
+            return_exceptions=True,
+        )
+
+    results: list[DownloadResult] = []
+    for download_item, raw in zip(normalized_items, raw_results):
+        if isinstance(raw, DownloadResult):
+            results.append(raw)
+            continue
+        finished_at = _utc_now_iso()
+        results.append(
+            DownloadResult(
+                url=download_item.url,
+                dest_path=str(download_item.dest_path),
+                status="failed",
+                attempts=0,
+                resumed=False,
+                bytes_written=0,
+                expected_size=download_item.expected_size,
+                final_size=None,
+                sha256=None,
+                started_at=finished_at,
+                finished_at=finished_at,
+                error=str(raw),
+            )
         )
 
     success = sum(1 for result in results if result.status in {"success", "skipped"})
