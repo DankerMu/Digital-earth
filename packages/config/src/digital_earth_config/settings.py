@@ -188,9 +188,7 @@ class RedisSettings(BaseModel):
     def url(self) -> str:
         if self.password is None:
             return f"redis://{self.host}:{self.port}/0"
-        return (
-            "redis://:" f"{self.password.get_secret_value()}@{self.host}:{self.port}/0"
-        )
+        return f"redis://:{self.password.get_secret_value()}@{self.host}:{self.port}/0"
 
 
 class ApiSettings(BaseModel):
