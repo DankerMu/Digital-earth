@@ -81,10 +81,23 @@ Cesium ion scopes 分为 **Public Scopes**（适合公开客户端）与 **Priva
 
 ### 4.2 生产域名示例
 
-假设生产站点域名为 `https://digital-earth.example`（按实际替换），建议在 **URL Restrictions** 中选择 **Selected URLs** 并添加：
+假设生产站点域名为 `https://digital-earth.example`（按实际替换），在 **URL Restrictions** 中选择 **Selected URLs**。
 
-- `https://digital-earth.example`
-- 如存在独立子域（例如 `https://app.digital-earth.example` 或 `https://www.digital-earth.example`），按实际逐条添加
+**重要**：根据上述匹配规则（4.1），添加主域名 `https://digital-earth.example` 会自动允许该域名下的**所有子域**（如 `https://app.digital-earth.example`、`https://admin.digital-earth.example` 等）。请根据安全需求选择以下策略之一：
+
+**策略一（推荐/更安全）**：仅添加实际使用的精确站点域名
+- 如生产站点仅在 `https://app.digital-earth.example` 提供服务，则只添加：
+  - `https://app.digital-earth.example`
+- 如有多个子域（如 `https://app.digital-earth.example` 和 `https://www.digital-earth.example`），逐条添加
+- **优点**：最小化授权范围，避免未使用的子域被滥用
+- **缺点**：新增子域时需同步更新 Token 配置
+
+**策略二（更省事/风险可控时）**：仅添加主域名
+- 只添加：
+  - `https://digital-earth.example`
+- **优点**：一次配置覆盖所有子域，无需频繁更新
+- **缺点**：允许该主域下的所有子域使用 Token（包括未来可能新增的子域）
+- **适用场景**：所有子域均为可信的内部服务，或主域下子域数量可控且均需使用 Cesium ion
 
 ## 5) 项目侧注入方式（生产 Token 不入库）
 
@@ -108,7 +121,7 @@ DIGITAL_EARTH_WEB_CESIUM_ION_ACCESS_TOKEN="<your-web-token>"
 
 - Token 名称包含环境标识（prod/staging/dev），且 **prod 与 staging/dev Token 不复用**。
 - prod Web Token：只启用 `assets:read`（如需要再加 `geocode`），并启用 Selected assets。
-- prod Web Token：Allowed URLs 仅包含生产站点域名（https），无多余域名/端口。
+- prod Web Token：Allowed URLs 按 4.2 节策略配置（推荐策略一：仅添加实际使用的精确站点域名），确保使用 https 协议，无多余域名/端口。
 - 确认发布产物与仓库中不包含真实 Token（包括 `config/*.json`、`apps/web/public/config*.json`、源码等）。
 - 具备 Token 轮换预案（泄露时 Regenerate/禁用旧 Token，并同步更新 Secret）。
 
