@@ -7,8 +7,8 @@ from pathlib import Path
 PIPELINE_SRC = Path(__file__).resolve().parents[1] / "src"
 sys.path.insert(0, str(PIPELINE_SRC))
 
-from datacube.decoder import decode_datacube
-from datacube.storage import DataCubeWriteOptions
+from datacube.decoder import decode_datacube  # noqa: E402
+from datacube.storage import DataCubeWriteOptions  # noqa: E402
 
 
 def main() -> int:

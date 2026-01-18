@@ -8,7 +8,7 @@ from pathlib import Path
 PIPELINE_SRC = Path(__file__).resolve().parents[1] / "src"
 sys.path.insert(0, str(PIPELINE_SRC))
 
-from datacube.inspect import inspect_datacube
+from datacube.inspect import inspect_datacube  # noqa: E402
 
 
 def main() -> int:

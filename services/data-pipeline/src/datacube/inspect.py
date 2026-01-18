@@ -4,7 +4,6 @@ from pathlib import Path
 from typing import Any, Optional, Union
 
 import numpy as np
-import xarray as xr
 
 from datacube.storage import open_datacube
 
@@ -60,4 +59,3 @@ def inspect_datacube(
             ds.close()
         except Exception:  # noqa: BLE001
             pass
-
