@@ -33,9 +33,7 @@ def missing_mask(
 
     candidates = []
     for container in (getattr(da, "encoding", {}), getattr(da, "attrs", {})):
-        candidates.extend(
-            [container.get("_FillValue"), container.get("missing_value")]
-        )
+        candidates.extend([container.get("_FillValue"), container.get("missing_value")])
     if extra_sentinels is not None:
         candidates.extend(list(extra_sentinels))
 
@@ -64,4 +62,3 @@ def standardize_missing(
             out.encoding.pop(key, None)
 
     return out
-

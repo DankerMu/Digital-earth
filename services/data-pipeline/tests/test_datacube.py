@@ -116,7 +116,9 @@ def test_decode_netcdf_and_write_roundtrip(tmp_path: Path) -> None:
     assert summary["variables"]["t2m"]["nan_count"] == 2
 
 
-def test_decode_grib_missing_dependency_is_wrapped(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_decode_grib_missing_dependency_is_wrapped(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     from datacube.decoder import decode_datacube
     from datacube.errors import DataCubeDecodeError
 
@@ -132,7 +134,9 @@ def test_decode_grib_missing_dependency_is_wrapped(tmp_path: Path, monkeypatch: 
         decode_datacube(path, source_format="grib")
 
 
-def test_write_zarr_uses_to_zarr(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_write_zarr_uses_to_zarr(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     from datacube.storage import write_datacube
 
     ds = xr.Dataset(
@@ -183,4 +187,3 @@ def test_write_zarr_uses_to_zarr(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     assert called["consolidated"] is True
     assert "t" in called["encoding"]
     assert called["encoding"]["t"]["chunks"] == (1, 1, 2, 3)
-

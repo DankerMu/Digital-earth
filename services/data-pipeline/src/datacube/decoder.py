@@ -59,9 +59,20 @@ def decode_grib(
         ds = xr.open_dataset(path, engine=engine, decode_cf=True)
     except FileNotFoundError as exc:
         raise DataCubeDecodeError(f"GRIB file not found: {path}") from exc
+    except (ModuleNotFoundError, ImportError) as exc:
+        missing_name = getattr(exc, "name", "") or ""
+        message = str(exc).lower()
+        if engine == "cfgrib" and (
+            missing_name in {"cfgrib", "eccodes"} or "eccodes" in message
+        ):
+            raise DataCubeDecodeError(
+                "GRIB decoding requires the optional dependency `cfgrib` "
+                "(and `eccodes` system library)."
+            ) from exc
+        raise DataCubeDecodeError(f"Failed to open GRIB: {path}") from exc
     except ValueError as exc:
-        message = str(exc)
-        if "unrecognized engine" in message or "cfgrib" in message:
+        message = str(exc).lower()
+        if "unrecognized engine" in message and engine.lower() in message:
             raise DataCubeDecodeError(
                 "GRIB decoding requires the optional dependency `cfgrib` "
                 "(and `eccodes` system library)."
@@ -86,4 +97,3 @@ def decode_datacube(
     if fmt == "grib":
         return decode_grib(path, engine=engine or "cfgrib")
     raise DataCubeDecodeError(f"Unsupported source_format={fmt!r}")
-

@@ -44,7 +44,9 @@ class _AxisSpec:
     dim_name: str
 
 
-def _resolve_axis(ds: xr.Dataset, axis: str, aliases: Sequence[str]) -> Optional[_AxisSpec]:
+def _resolve_axis(
+    ds: xr.Dataset, axis: str, aliases: Sequence[str]
+) -> Optional[_AxisSpec]:
     dims = list(ds.dims)
     coords = list(ds.coords)
 

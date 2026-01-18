@@ -50,7 +50,11 @@ def inspect_datacube(
 
         return {
             "dims": dims,
-            "coords": {name: list(ds[name].values.tolist()) for name in ("level",) if name in ds.coords},
+            "coords": {
+                name: list(ds[name].values.tolist())
+                for name in ("level",)
+                if name in ds.coords
+            },
             "times": times,
             "variables": vars_summary,
         }

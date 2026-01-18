@@ -15,4 +15,3 @@ class DataCubeValidationError(DataCubeError):
 
 class DataCubeStorageError(DataCubeError):
     pass
-

@@ -36,7 +36,8 @@ class DataCube:
         format: Optional[DataCubeFormat] = None,
         engine: Optional[str] = None,
     ) -> "DataCube":
-        ds = open_datacube(path, format=format, engine=engine)
+        with open_datacube(path, format=format, engine=engine) as ds:
+            ds.load()
         return cls.from_dataset(ds)
 
     def validate(self) -> None:

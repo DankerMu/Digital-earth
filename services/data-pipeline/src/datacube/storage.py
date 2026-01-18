@@ -30,7 +30,9 @@ def _infer_format(path: Path) -> DataCubeFormat:
     return "netcdf"
 
 
-def _chunk_shape(ds: xr.Dataset, options: DataCubeWriteOptions) -> tuple[int, int, int, int]:
+def _chunk_shape(
+    ds: xr.Dataset, options: DataCubeWriteOptions
+) -> tuple[int, int, int, int]:
     return (
         min(int(ds.sizes.get("time", 1)), int(options.chunk_time)),
         min(int(ds.sizes.get("level", 1)), int(options.chunk_level)),
@@ -43,17 +45,33 @@ def _netcdf_encoding(
     ds: xr.Dataset,
     *,
     options: DataCubeWriteOptions,
+    engine: str,
 ) -> dict[str, dict[str, object]]:
     chunk = _chunk_shape(ds, options)
+    resolved_engine = (engine or "").lower()
     encoding: dict[str, dict[str, object]] = {}
     for name in ds.data_vars:
-        encoding[name] = {
+        var_encoding: dict[str, object] = {
             "dtype": np.float32,
             "chunksizes": chunk,
-            "compression": "gzip",
-            "compression_opts": int(options.compression_level),
-            "shuffle": True,
         }
+        if resolved_engine == "netcdf4":
+            var_encoding.update(
+                {
+                    "zlib": True,
+                    "complevel": int(options.compression_level),
+                    "shuffle": True,
+                }
+            )
+        elif resolved_engine == "h5netcdf":
+            var_encoding.update(
+                {
+                    "compression": "gzip",
+                    "compression_opts": int(options.compression_level),
+                    "shuffle": True,
+                }
+            )
+        encoding[name] = var_encoding
     return encoding
 
 
@@ -103,11 +121,14 @@ def write_datacube(
 
     if fmt == "netcdf":
         path.parent.mkdir(parents=True, exist_ok=True)
-        encoding = _netcdf_encoding(ds, options=opts)
+        resolved_engine = engine or "h5netcdf"
+        encoding = _netcdf_encoding(ds, options=opts, engine=resolved_engine)
         try:
-            ds.to_netcdf(path, engine=engine or "h5netcdf", encoding=encoding)
+            ds.to_netcdf(path, engine=resolved_engine, encoding=encoding)
         except Exception as exc:  # noqa: BLE001
-            raise DataCubeStorageError(f"Failed to write NetCDF DataCube: {path}") from exc
+            raise DataCubeStorageError(
+                f"Failed to write NetCDF DataCube: {path}"
+            ) from exc
         return path
 
     if fmt == "zarr":
@@ -123,7 +144,9 @@ def write_datacube(
         try:
             ds.to_zarr(path, mode="w", encoding=encoding, consolidated=True)
         except Exception as exc:  # noqa: BLE001
-            raise DataCubeStorageError(f"Failed to write Zarr DataCube: {path}") from exc
+            raise DataCubeStorageError(
+                f"Failed to write Zarr DataCube: {path}"
+            ) from exc
         return path
 
     raise DataCubeStorageError(f"Unsupported DataCube format: {fmt!r}")
