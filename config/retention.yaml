@@ -1,0 +1,35 @@
+schema_version: 1
+
+# Data retention policy for local storage (raw/cube/tiles).
+# Relative paths are resolved against the repository root (parent of this `config/` dir).
+
+raw:
+  enabled: true
+  root_dir: Data/raw
+  # Retain only the most recent N runs per source (e.g. ecmwf/cldas).
+  keep_n_runs: 5
+
+cube:
+  enabled: true
+  root_dir: Data/cube
+  # Retain only the most recent N runs per source.
+  keep_n_runs: 5
+
+tiles:
+  enabled: true
+  root_dir: Data/tiles
+  # Retain only the most recent N versions per layer.
+  keep_n_versions: 5
+  # Optional "pinned" versions to keep even if older than keep_n_versions.
+  # If unset or missing, the cleanup task keeps only the most recent N versions.
+  referenced_versions_path:
+
+audit:
+  # JSONL audit log written by the cleanup task.
+  log_path: .cache/audit/retention.jsonl
+
+scheduler:
+  # If enabled, runs cleanup on a cron schedule (UTC).
+  enabled: false
+  cron: "0 3 * * *"
+
