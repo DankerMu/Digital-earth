@@ -76,7 +76,7 @@ class EcmwfAsset(Base):
         ForeignKey("ecmwf_runs.id", ondelete="CASCADE"), nullable=False
     )
     time_id: Mapped[int] = mapped_column(
-        ForeignKey("ecmwf_times.id", ondelete="CASCADE"), nullable=False
+        ForeignKey("ecmwf_times.id", ondelete="CASCADE"), nullable=False, index=True
     )
     variable: Mapped[str] = mapped_column(String(32), nullable=False)
     level: Mapped[str] = mapped_column(String(32), nullable=False)

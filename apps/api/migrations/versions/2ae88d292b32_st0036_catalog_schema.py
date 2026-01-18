@@ -88,9 +88,11 @@ def upgrade() -> None:
             name="uq_ecmwf_assets_identity",
         ),
     )
+    op.create_index("ix_ecmwf_assets_time_id", "ecmwf_assets", ["time_id"])
 
 
 def downgrade() -> None:
+    op.drop_index("ix_ecmwf_assets_time_id", table_name="ecmwf_assets")
     op.drop_table("ecmwf_assets")
     op.drop_index("ix_ecmwf_times_valid_time", table_name="ecmwf_times")
     op.drop_table("ecmwf_times")
