@@ -1,0 +1,9 @@
+tiling:
+  crs: EPSG:4326
+  global:
+    min_zoom: 0
+    max_zoom: 6
+  event:
+    min_zoom: 8
+    max_zoom: 10
+  tile_size: 256
