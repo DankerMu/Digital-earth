@@ -8,6 +8,7 @@ import xarray as xr
 
 from datacube.errors import DataCubeValidationError
 from datacube.missing import standardize_missing
+from units.converter import kelvin_to_celsius, meters_to_mm
 
 _DIM_ALIASES: Mapping[str, Sequence[str]] = {
     "time": ("time", "Time", "TIME", "valid_time"),
@@ -141,6 +142,67 @@ def _normalize_level_units(level: xr.DataArray) -> xr.DataArray:
     )
 
 
+def _descriptor_text(name: str, da: xr.DataArray) -> str:
+    parts = [
+        name,
+        da.name,
+        da.attrs.get("standard_name"),
+        da.attrs.get("long_name"),
+    ]
+    return " ".join(str(part or "") for part in parts).lower()
+
+
+def _is_precipitation(name: str, da: xr.DataArray) -> bool:
+    name_l = (name or "").strip().lower()
+    if name_l in {"tp", "pre", "pr"}:
+        return True
+    desc = _descriptor_text(name, da)
+    return "precip" in desc or "rain" in desc
+
+
+def _normalize_units_text(value: object) -> str:
+    return str(value or "").strip()
+
+
+def _normalize_wind_units(units: str) -> Optional[str]:
+    normalized = units.lower().strip()
+    if normalized in {"m/s", "m s-1", "m s^-1", "m s**-1", "ms-1"}:
+        return "m/s"
+    return None
+
+
+def _normalize_variable_units(name: str, da: xr.DataArray) -> xr.DataArray:
+    units = _normalize_units_text(da.attrs.get("units"))
+    if units == "":
+        return da
+
+    if units.lower() in {"k", "kelvin", "kelvins"}:
+        converted = kelvin_to_celsius(da).astype(np.float32, copy=False)
+        attrs = dict(da.attrs)
+        attrs["units"] = "°C"
+        converted.attrs = attrs
+        return converted
+
+    if units.lower() in {"m", "meter", "meters", "metre", "metres"} and _is_precipitation(
+        name, da
+    ):
+        converted = meters_to_mm(da).astype(np.float32, copy=False)
+        attrs = dict(da.attrs)
+        attrs["units"] = "mm"
+        converted.attrs = attrs
+        return converted
+
+    wind_units = _normalize_wind_units(units)
+    if wind_units is not None:
+        attrs = dict(da.attrs)
+        attrs["units"] = wind_units
+        out = da.copy()
+        out.attrs = attrs
+        return out
+
+    return da
+
+
 def normalize_datacube_dataset(ds: xr.Dataset) -> xr.Dataset:
     """Normalize a dataset into canonical DataCube form."""
 
@@ -208,7 +270,7 @@ def normalize_datacube_dataset(ds: xr.Dataset) -> xr.Dataset:
         attrs.pop("_FillValue", None)
         attrs.pop("missing_value", None)
         expanded.attrs = attrs
-        ds[name] = expanded
+        ds[name] = _normalize_variable_units(name, expanded)
 
     ds.attrs = dict(ds.attrs)
     ds.attrs.setdefault("datacube_schema_version", 1)
