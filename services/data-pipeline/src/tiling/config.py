@@ -47,7 +47,9 @@ class TilingConfig(BaseModel):
         self.crs = normalized_crs
 
         if self.global_.max_zoom >= self.event.min_zoom:
-            raise ValueError("global zoom range must end before event zoom range starts")
+            raise ValueError(
+                "global zoom range must end before event zoom range starts"
+            )
 
         return self
 
