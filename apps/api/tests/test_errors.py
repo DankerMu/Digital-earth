@@ -69,7 +69,9 @@ def test_error_report_model_normalizes_timestamp_to_utc() -> None:
 
     tz_east_8 = timezone(timedelta(hours=8))
     aware = datetime(2024, 1, 1, 12, 0, 0, tzinfo=tz_east_8)
-    report2 = ErrorReport(trace_id="abc", message="boom", version="1.0", timestamp=aware)
+    report2 = ErrorReport(
+        trace_id="abc", message="boom", version="1.0", timestamp=aware
+    )
     assert report2.timestamp.tzinfo == timezone.utc
     assert report2.timestamp.hour == 4
 
@@ -129,4 +131,3 @@ def test_errors_endpoint_validation_error_returns_400(
     assert payload["error_code"] == 40000
     assert payload["message"] == "Bad Request"
     assert payload["trace_id"] == trace_id
-
