@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import logging
 from asyncio import to_thread
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Literal, Optional
 
 from fastapi import APIRouter, HTTPException, Query, Request
@@ -18,7 +18,7 @@ import db
 from data_source import DataNotFoundError, DataSourceError
 from http_cache import if_none_match_matches
 from local_data_service import get_data_source
-from models import EcmwfRun
+from models import EcmwfRun, EcmwfTime
 
 logger = logging.getLogger("api.error")
 
@@ -134,6 +134,30 @@ def _query_ecmwf_runs(*, limit: int, offset: int) -> list[EcmwfRunItemResponse]:
         )
 
     return runs
+
+
+def _parse_time(value: str, *, label: str) -> datetime:
+    raw = (value or "").strip()
+    if raw == "":
+        raise ValueError(f"{label} must not be empty")
+
+    candidate = raw
+    if candidate.endswith("Z"):
+        candidate = candidate[:-1] + "+00:00"
+
+    try:
+        parsed = datetime.fromisoformat(candidate)
+    except ValueError:
+        try:
+            parsed = datetime.strptime(raw, "%Y%m%dT%H%M%SZ")
+        except ValueError as exc:
+            raise ValueError(
+                f"{label} must be an ISO8601 timestamp or YYYYMMDDTHHMMSSZ"
+            ) from exc
+
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
 
 
 @router.get("/cldas/times", response_model=CldasTimesResponse)
@@ -271,6 +295,155 @@ async def get_ecmwf_runs(
         )
         lock_key = (
             f"catalog:ecmwf:runs:lock:limit={resolved_limit}&offset={resolved_offset}"
+        )
+        try:
+            result = await get_or_compute_cached_bytes(
+                redis,
+                fresh_key=fresh_key,
+                stale_key=stale_key,
+                lock_key=lock_key,
+                fresh_ttl_seconds=CACHE_FRESH_TTL_SECONDS,
+                stale_ttl_seconds=CACHE_STALE_TTL_SECONDS,
+                lock_ttl_ms=CACHE_LOCK_TTL_MS,
+                wait_timeout_ms=CACHE_WAIT_TIMEOUT_MS,
+                compute=_compute,
+                cooldown_ttl_seconds=CACHE_COOLDOWN_TTL_SECONDS,
+            )
+            body = result.body
+        except TimeoutError as exc:
+            raise HTTPException(
+                status_code=503, detail="Catalog cache warming timed out"
+            ) from exc
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("catalog_cache_unavailable", extra={"error": str(exc)})
+            body = await _compute()
+
+    etag = f'"sha256-{hashlib.sha256(body).hexdigest()}"'
+    headers = {"Cache-Control": SHORT_CACHE_CONTROL_HEADER, "ETag": etag}
+    if if_none_match_matches(request.headers.get("if-none-match"), etag):
+        return Response(status_code=304, headers=headers)
+
+    return Response(content=body, media_type="application/json", headers=headers)
+
+
+class EcmwfRunTimesResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    times: list[str] = Field(default_factory=list)
+    missing: list[str] = Field(default_factory=list)
+
+
+def _expected_ecmwf_lead_hours_std() -> list[int]:
+    early = range(0, 72 + 1, 3)
+    late = range(72, 240 + 1, 6)
+    return sorted(set(early).union(late))
+
+
+def _expected_time_keys_for_run(*, run_time: datetime, policy: str) -> list[str]:
+    if policy != "std":
+        raise ValueError(f"Unsupported policy: {policy}")
+
+    normalized = run_time
+    if normalized.tzinfo is None:
+        normalized = normalized.replace(tzinfo=timezone.utc)
+    normalized = normalized.astimezone(timezone.utc)
+
+    expected: list[str] = []
+    for lead_hours in _expected_ecmwf_lead_hours_std():
+        expected.append(
+            _time_key_from_datetime(normalized + timedelta(hours=lead_hours))
+        )
+    return expected
+
+
+def _query_ecmwf_run_times(*, run_time: datetime) -> tuple[datetime, list[datetime]]:
+    stmt_run = select(EcmwfRun.id, EcmwfRun.run_time).where(
+        EcmwfRun.run_time == run_time
+    )
+    try:
+        with Session(db.get_engine()) as session:
+            row = session.execute(stmt_run).first()
+            if row is None or not isinstance(row[0], int):
+                raise HTTPException(status_code=404, detail="Run not found")
+
+            run_id = row[0]
+            stored_run_time = row[1]
+            if not isinstance(stored_run_time, datetime):
+                stored_run_time = run_time
+
+            stmt_times = (
+                select(EcmwfTime.valid_time)
+                .where(EcmwfTime.run_id == run_id)
+                .order_by(EcmwfTime.valid_time)
+            )
+            rows = session.execute(stmt_times).all()
+    except SQLAlchemyError as exc:
+        logger.error("ecmwf_run_times_db_error", extra={"error": str(exc)})
+        raise HTTPException(
+            status_code=503, detail="Catalog database unavailable"
+        ) from exc
+
+    times: list[datetime] = []
+    for (valid_time,) in rows:
+        if isinstance(valid_time, datetime):
+            times.append(valid_time)
+
+    return stored_run_time, times
+
+
+@router.get("/ecmwf/runs/{run}/times", response_model=EcmwfRunTimesResponse)
+async def get_ecmwf_run_times(
+    request: Request,
+    run: str,
+    policy: str = Query(default="std", description="Sampling policy (std)"),
+) -> Response:
+    try:
+        parsed_run = _parse_time(run, label="run")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    normalized_policy = (policy or "").strip().lower() or "std"
+    if normalized_policy != "std":
+        raise HTTPException(
+            status_code=400, detail=f"Unsupported policy: {normalized_policy}"
+        )
+
+    run_key = _time_key_from_datetime(parsed_run)
+
+    redis: RedisLike | None = getattr(request.app.state, "redis_client", None)
+
+    async def _compute() -> bytes:
+        stored_run_time, valid_times = await to_thread(
+            _query_ecmwf_run_times, run_time=parsed_run
+        )
+
+        expected_keys = _expected_time_keys_for_run(
+            run_time=stored_run_time, policy=normalized_policy
+        )
+        available: set[str] = set()
+        for dt in valid_times:
+            available.add(_time_key_from_datetime(dt))
+
+        sampled = [key for key in expected_keys if key in available]
+        missing = [key for key in expected_keys if key not in available]
+
+        return (
+            EcmwfRunTimesResponse(times=sampled, missing=missing)
+            .model_dump_json()
+            .encode("utf-8")
+        )
+
+    if redis is None:
+        body = await _compute()
+    else:
+        fresh_key = (
+            f"catalog:ecmwf:run-times:fresh:run={run_key}&policy={normalized_policy}"
+        )
+        stale_key = (
+            f"catalog:ecmwf:run-times:stale:run={run_key}&policy={normalized_policy}"
+        )
+        lock_key = (
+            f"catalog:ecmwf:run-times:lock:run={run_key}&policy={normalized_policy}"
         )
         try:
             result = await get_or_compute_cached_bytes(
