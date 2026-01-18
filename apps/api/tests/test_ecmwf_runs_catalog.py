@@ -6,8 +6,11 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+from fastapi import HTTPException
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
+
+from redis_fakes import FakeRedis
 
 
 def _write_config(dir_path: Path, env: str, data: dict) -> None:
@@ -46,7 +49,7 @@ def _seed_runs(db_url: str, runs: list[tuple[datetime, str]]) -> None:
 
 def _make_client(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, *, db_url: str
-) -> TestClient:
+) -> tuple[TestClient, FakeRedis]:
     config_dir = tmp_path / "config"
     _write_config(config_dir, "dev", _base_config())
 
@@ -58,14 +61,14 @@ def _make_client(
 
     from config import get_settings
     from db import get_engine
-    from main import create_app
-    from routers.catalog import reset_ecmwf_runs_cache_for_tests
+    import main as main_module
 
     get_settings.cache_clear()
     get_engine.cache_clear()
-    reset_ecmwf_runs_cache_for_tests()
 
-    return TestClient(create_app())
+    redis = FakeRedis(use_real_time=False)
+    monkeypatch.setattr(main_module, "create_redis_client", lambda _url: redis)
+    return TestClient(main_module.create_app()), redis
 
 
 def test_catalog_ecmwf_runs_returns_runs_with_status_and_etag(
@@ -81,7 +84,7 @@ def test_catalog_ecmwf_runs_returns_runs_with_status_and_etag(
         ],
     )
 
-    client = _make_client(monkeypatch, tmp_path, db_url=db_url)
+    client, _redis = _make_client(monkeypatch, tmp_path, db_url=db_url)
     response = client.get("/api/v1/catalog/ecmwf/runs", params={"limit": 10})
     assert response.status_code == 200
     assert response.headers["cache-control"] == "public, max-age=60"
@@ -119,7 +122,7 @@ def test_catalog_ecmwf_runs_cache_hit_skips_db_query(
         runs=[(datetime(2026, 1, 1, tzinfo=timezone.utc), "complete")],
     )
 
-    client = _make_client(monkeypatch, tmp_path, db_url=db_url)
+    client, _redis = _make_client(monkeypatch, tmp_path, db_url=db_url)
     first = client.get("/api/v1/catalog/ecmwf/runs", params={"limit": 10})
     assert first.status_code == 200
 
@@ -148,13 +151,7 @@ def test_catalog_ecmwf_runs_pagination_latest_and_cache_expiry(
         ],
     )
 
-    client = _make_client(monkeypatch, tmp_path, db_url=db_url)
-
-    from routers import catalog as catalog_router
-
-    clock = {"now": 0.0}
-    monkeypatch.setattr(catalog_router.time, "monotonic", lambda: clock["now"])
-    catalog_router.reset_ecmwf_runs_cache_for_tests()
+    client, redis = _make_client(monkeypatch, tmp_path, db_url=db_url)
 
     first_page = client.get(
         "/api/v1/catalog/ecmwf/runs", params={"limit": 2, "offset": 0}
@@ -180,7 +177,7 @@ def test_catalog_ecmwf_runs_pagination_latest_and_cache_expiry(
     bad = client.get("/api/v1/catalog/ecmwf/runs", params={"latest": 1, "offset": 1})
     assert bad.status_code == 400
 
-    clock["now"] = 61.0
+    redis.advance(61)
     _seed_runs(
         db_url,
         runs=[(datetime(2026, 1, 2, tzinfo=timezone.utc), "complete")],
@@ -192,3 +189,39 @@ def test_catalog_ecmwf_runs_pagination_latest_and_cache_expiry(
         "20260102T000000Z",
         "20260101T120000Z",
     ]
+
+
+def test_catalog_ecmwf_runs_returns_stale_on_db_failure_and_sets_cooldown(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    db_url = f"sqlite+pysqlite:///{tmp_path / 'catalog.db'}"
+    _seed_runs(
+        db_url,
+        runs=[
+            (datetime(2026, 1, 1, 12, tzinfo=timezone.utc), "complete"),
+            (datetime(2026, 1, 1, tzinfo=timezone.utc), "partial"),
+        ],
+    )
+
+    client, redis = _make_client(monkeypatch, tmp_path, db_url=db_url)
+    initial = client.get("/api/v1/catalog/ecmwf/runs", params={"limit": 10})
+    assert initial.status_code == 200
+    initial_payload = initial.json()
+
+    redis.advance(61)
+
+    from routers import catalog as catalog_router
+
+    def _boom(*_args: object, **_kwargs: object) -> object:
+        raise HTTPException(status_code=503, detail="db down")
+
+    monkeypatch.setattr(catalog_router, "_query_ecmwf_runs", _boom)
+
+    degraded = client.get("/api/v1/catalog/ecmwf/runs", params={"limit": 10})
+    assert degraded.status_code == 200
+    assert degraded.json() == initial_payload
+
+    import asyncio
+
+    ttl_ms = asyncio.run(redis.pttl("catalog:ecmwf:runs:fresh:limit=10&offset=0"))
+    assert 5_000 <= ttl_ms <= 30_000
