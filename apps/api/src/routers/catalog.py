@@ -473,3 +473,102 @@ async def get_ecmwf_run_times(
         return Response(status_code=304, headers=headers)
 
     return Response(content=body, media_type="application/json", headers=headers)
+
+
+class EcmwfRunVarsResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    vars: list[str] = Field(default_factory=list)
+    levels: list[str] = Field(default_factory=list)
+    units: dict[str, str] = Field(default_factory=dict)
+    legend_version: int
+
+
+ECMWF_RUN_CATALOG_VARS = ["cloud", "precip", "wind", "temp"]
+ECMWF_RUN_CATALOG_LEVELS = ["sfc", "850", "700", "500", "300"]
+ECMWF_RUN_CATALOG_UNITS: dict[str, str] = {
+    "cloud": "%",
+    "precip": "mm",
+    "wind": "m/s",
+    "temp": "°C",
+}
+ECMWF_RUN_CATALOG_LEGEND_VERSION = 2
+
+
+def _assert_ecmwf_run_exists(*, run_time: datetime) -> None:
+    stmt = select(EcmwfRun.id).where(EcmwfRun.run_time == run_time).limit(1)
+
+    try:
+        with Session(db.get_engine()) as session:
+            row = session.execute(stmt).first()
+    except SQLAlchemyError as exc:
+        logger.error("ecmwf_run_vars_db_error", extra={"error": str(exc)})
+        raise HTTPException(
+            status_code=503, detail="Catalog database unavailable"
+        ) from exc
+
+    if row is None or not isinstance(row[0], int):
+        raise HTTPException(status_code=404, detail="Run not found")
+
+
+@router.get("/ecmwf/runs/{run}/vars", response_model=EcmwfRunVarsResponse)
+async def get_ecmwf_run_vars(
+    request: Request,
+    run: str,
+) -> Response:
+    try:
+        parsed_run = _parse_time(run, label="run")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    run_key = _time_key_from_datetime(parsed_run)
+
+    redis: RedisLike | None = getattr(request.app.state, "redis_client", None)
+
+    async def _compute() -> bytes:
+        await to_thread(_assert_ecmwf_run_exists, run_time=parsed_run)
+        return (
+            EcmwfRunVarsResponse(
+                vars=ECMWF_RUN_CATALOG_VARS,
+                levels=ECMWF_RUN_CATALOG_LEVELS,
+                units=ECMWF_RUN_CATALOG_UNITS,
+                legend_version=ECMWF_RUN_CATALOG_LEGEND_VERSION,
+            )
+            .model_dump_json()
+            .encode("utf-8")
+        )
+
+    if redis is None:
+        body = await _compute()
+    else:
+        fresh_key = f"catalog:ecmwf:run-vars:fresh:run={run_key}"
+        stale_key = f"catalog:ecmwf:run-vars:stale:run={run_key}"
+        lock_key = f"catalog:ecmwf:run-vars:lock:run={run_key}"
+        try:
+            result = await get_or_compute_cached_bytes(
+                redis,
+                fresh_key=fresh_key,
+                stale_key=stale_key,
+                lock_key=lock_key,
+                fresh_ttl_seconds=CACHE_FRESH_TTL_SECONDS,
+                stale_ttl_seconds=CACHE_STALE_TTL_SECONDS,
+                lock_ttl_ms=CACHE_LOCK_TTL_MS,
+                wait_timeout_ms=CACHE_WAIT_TIMEOUT_MS,
+                compute=_compute,
+                cooldown_ttl_seconds=CACHE_COOLDOWN_TTL_SECONDS,
+            )
+            body = result.body
+        except TimeoutError as exc:
+            raise HTTPException(
+                status_code=503, detail="Catalog cache warming timed out"
+            ) from exc
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("catalog_cache_unavailable", extra={"error": str(exc)})
+            body = await _compute()
+
+    etag = f'"sha256-{hashlib.sha256(body).hexdigest()}"'
+    headers = {"Cache-Control": SHORT_CACHE_CONTROL_HEADER, "ETag": etag}
+    if if_none_match_matches(request.headers.get("if-none-match"), etag):
+        return Response(status_code=304, headers=headers)
+
+    return Response(content=body, media_type="application/json", headers=headers)
