@@ -1,0 +1,39 @@
+schema_version: 1
+version: "1.0.0"
+updated_at: "2026-01-18"
+
+# UE（Cesium for Unreal）打包产物属于“可被反编译/提取”的客户端环境，
+# 不具备 Web Token 的 Allowed URLs（Referer）约束能力。
+# 因此必须使用独立 Token + 最小权限 scopes + 资产白名单（Selected assets）。
+
+ue_cesium_ion_token:
+  purpose: "Unreal Engine 客户端访问 Cesium ion（地形/影像/3DTiles）"
+
+  scopes:
+    required:
+      # 读取资产元数据并访问瓦片数据（地形/影像/3DTiles 均属于 ion 资产）
+      - assets:read
+    optional: []
+    forbidden:
+      # 以下均属于不必要/高风险权限，严禁授予 UE Token
+      - assets:list
+      - assets:write
+      - profile:read
+      - tokens:read
+      - tokens:write
+
+  asset_restrictions:
+    # 强烈建议：在 ion 控制台将该 Token 的 Asset Restrictions 设置为 Selected assets，
+    # 仅允许 UE 运行时确实需要的资产（地形/影像/tileset）。
+    mode: selected_assets
+    # 由运维按环境填充（此文件仅定义规范，不存放真实资产 ID）
+    categories:
+      terrain:
+        description: "Cesium World Terrain 或项目自有地形"
+        asset_ids: []
+      imagery:
+        description: "项目使用的影像资产（例如 ion imagery layer）"
+        asset_ids: []
+      tiles:
+        description: "3D Tiles（OSM Buildings / 自有 tileset）"
+        asset_ids: []
