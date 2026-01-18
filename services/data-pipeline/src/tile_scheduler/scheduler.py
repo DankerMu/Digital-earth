@@ -74,7 +74,9 @@ class TileScheduler:
         results: list[TileJobResult] = []
 
         def submit_all(executor: Executor) -> dict[Future[TileJobResult], TileJob]:
-            return {executor.submit(self._worker.process, job): job for job in jobs_list}
+            return {
+                executor.submit(self._worker.process, job): job for job in jobs_list
+            }
 
         owns_executor = self._executor is None
         executor = self._executor or ThreadPoolExecutor(max_workers=self._max_workers)
@@ -107,8 +109,7 @@ class TileScheduler:
                     failed += 1
 
                 should_log_progress = (
-                    completed == total
-                    or completed % self._progress_log_every == 0
+                    completed == total or completed % self._progress_log_every == 0
                 )
                 if should_log_progress:
                     logger.info(
@@ -145,4 +146,3 @@ class TileScheduler:
             duration_s=duration_s,
             results=results,
         )
-

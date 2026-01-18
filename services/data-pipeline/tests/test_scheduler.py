@@ -322,4 +322,6 @@ def test_ingest_scheduler_on_success_errors_are_logged(
     caplog.set_level(logging.ERROR)
     run = asyncio.run(scheduler.run_once())
     assert run.status == "success"
-    assert any(record.getMessage() == "ingest_on_success_failed" for record in caplog.records)
+    assert any(
+        record.getMessage() == "ingest_on_success_failed" for record in caplog.records
+    )

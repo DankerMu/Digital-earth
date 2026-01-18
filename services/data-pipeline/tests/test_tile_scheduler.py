@@ -190,8 +190,12 @@ def test_tile_scheduler_runs_jobs_and_logs_progress(
         if record.getMessage() == "tile_scheduler_progress"
     ]
     assert {record.completed for record in progress} == {2, 3}
-    assert any(record.getMessage() == "tile_scheduler_started" for record in caplog.records)
-    assert any(record.getMessage() == "tile_scheduler_finished" for record in caplog.records)
+    assert any(
+        record.getMessage() == "tile_scheduler_started" for record in caplog.records
+    )
+    assert any(
+        record.getMessage() == "tile_scheduler_finished" for record in caplog.records
+    )
 
 
 def test_tile_scheduler_uses_provided_executor() -> None:
@@ -223,4 +227,3 @@ def test_tile_scheduler_empty_jobs_returns_immediately() -> None:
     assert summary.total_jobs == 0
     assert summary.succeeded == 0
     assert summary.failed == 0
-

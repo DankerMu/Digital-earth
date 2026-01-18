@@ -35,7 +35,9 @@ class TileSchedulerConfig(BaseModel):
 
     # Retry policy.
     max_retries: int = Field(default=2, ge=0, le=50)
-    backoff: TileSchedulerBackoffConfig = Field(default_factory=TileSchedulerBackoffConfig)
+    backoff: TileSchedulerBackoffConfig = Field(
+        default_factory=TileSchedulerBackoffConfig
+    )
 
     # Log progress at most every N completed jobs (1 = every job).
     progress_log_every: int = Field(default=1, ge=1, le=10_000)
@@ -86,9 +88,7 @@ def load_tile_scheduler_config(
 ) -> TileSchedulerConfig:
     config_path = _resolve_config_path(path)
     if not config_path.is_file():
-        raise FileNotFoundError(
-            f"tile scheduler config file not found: {config_path}"
-        )
+        raise FileNotFoundError(f"tile scheduler config file not found: {config_path}")
 
     raw_text = config_path.read_text(encoding="utf-8")
     data = dict(_parse_yaml(raw_text, source=config_path))
@@ -119,8 +119,9 @@ def get_tile_scheduler_config(
         raise FileNotFoundError(
             f"tile scheduler config file not found: {resolved}"
         ) from exc
-    return _get_tile_scheduler_config_cached(str(resolved), stat.st_mtime_ns, stat.st_size)
+    return _get_tile_scheduler_config_cached(
+        str(resolved), stat.st_mtime_ns, stat.st_size
+    )
 
 
 get_tile_scheduler_config.cache_clear = _get_tile_scheduler_config_cached.cache_clear  # type: ignore[attr-defined]
-

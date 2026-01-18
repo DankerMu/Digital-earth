@@ -179,4 +179,3 @@ def build_tile_job(
         time=time_norm,
         payload=payload_map,
     )
-
