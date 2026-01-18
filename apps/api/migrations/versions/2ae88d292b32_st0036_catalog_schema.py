@@ -1,7 +1,7 @@
 """[ST-0036] Catalog schema for ECMWF runs/times/assets
 
 Revision ID: 2ae88d292b32
-Revises: 
+Revises:
 Create Date: 2026-01-18 00:00:00.000000
 
 """
@@ -32,9 +32,7 @@ def upgrade() -> None:
             nullable=False,
         ),
     )
-    op.create_index(
-        "ix_ecmwf_runs_run_time", "ecmwf_runs", ["run_time"], unique=True
-    )
+    op.create_index("ix_ecmwf_runs_run_time", "ecmwf_runs", ["run_time"], unique=True)
 
     op.create_table(
         "ecmwf_times",
@@ -98,4 +96,3 @@ def downgrade() -> None:
     op.drop_table("ecmwf_times")
     op.drop_index("ix_ecmwf_runs_run_time", table_name="ecmwf_runs")
     op.drop_table("ecmwf_runs")
-

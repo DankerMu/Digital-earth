@@ -48,7 +48,9 @@ def test_catalog_models_create_indexes_and_constraints() -> None:
     assert "ix_ecmwf_times_valid_time" in time_indexes
     assert time_indexes["ix_ecmwf_times_valid_time"]["column_names"] == ["valid_time"]
 
-    time_unique = {uc["name"]: uc for uc in inspector.get_unique_constraints("ecmwf_times")}
+    time_unique = {
+        uc["name"]: uc for uc in inspector.get_unique_constraints("ecmwf_times")
+    }
     assert "uq_ecmwf_times_run_valid" in time_unique
     assert time_unique["uq_ecmwf_times_run_valid"]["column_names"] == [
         "run_id",
