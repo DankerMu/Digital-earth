@@ -1,0 +1,6 @@
+Alembic migrations for `apps/api`.
+
+To run migrations, set `DATABASE_URL` (or configure `sqlalchemy.url` in `alembic.ini`) and run:
+
+`poetry run alembic -c alembic.ini upgrade head`
+
