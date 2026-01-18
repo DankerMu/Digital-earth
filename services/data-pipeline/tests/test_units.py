@@ -28,4 +28,3 @@ def test_converter_functions_handle_numpy_arrays() -> None:
     precip_m = np.array([0.0, 0.01], dtype=np.float32)
     out_mm = meters_to_mm(precip_m)
     assert np.allclose(out_mm, np.array([0.0, 10.0], dtype=np.float32), atol=1e-6)
-

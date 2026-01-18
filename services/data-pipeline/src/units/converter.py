@@ -7,4 +7,3 @@ def kelvin_to_celsius(k: float) -> float:
 
 def meters_to_mm(m: float) -> float:
     return m * 1000.0
-

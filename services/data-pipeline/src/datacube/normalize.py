@@ -183,9 +183,13 @@ def _normalize_variable_units(name: str, da: xr.DataArray) -> xr.DataArray:
         converted.attrs = attrs
         return converted
 
-    if units.lower() in {"m", "meter", "meters", "metre", "metres"} and _is_precipitation(
-        name, da
-    ):
+    if units.lower() in {
+        "m",
+        "meter",
+        "meters",
+        "metre",
+        "metres",
+    } and _is_precipitation(name, da):
         converted = meters_to_mm(da).astype(np.float32, copy=False)
         attrs = dict(da.attrs)
         attrs["units"] = "mm"
