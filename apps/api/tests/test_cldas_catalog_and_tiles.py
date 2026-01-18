@@ -9,6 +9,8 @@ import pytest
 import xarray as xr
 from fastapi.testclient import TestClient
 
+from redis_fakes import FakeRedis
+
 
 def _write_config(dir_path: Path, env: str, data: dict) -> None:
     dir_path.mkdir(parents=True, exist_ok=True)
@@ -97,13 +99,15 @@ def _make_client(
     from config import get_settings
     from digital_earth_config.local_data import get_local_data_paths
     from local_data_service import get_data_source
-    from main import create_app
+    import main as main_module
 
     get_settings.cache_clear()
     get_data_source.cache_clear()
     get_local_data_paths.cache_clear()
 
-    return TestClient(create_app())
+    redis = FakeRedis(use_real_time=False)
+    monkeypatch.setattr(main_module, "create_redis_client", lambda _url: redis)
+    return TestClient(main_module.create_app())
 
 
 def _write_cldas_file(tmp_path: Path, *, ts: str = "2025010100") -> Path:

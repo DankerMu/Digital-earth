@@ -2,8 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
-import time
-from dataclasses import dataclass
+from asyncio import to_thread
 from datetime import datetime, timezone
 from typing import Any, Literal, Optional
 
@@ -14,6 +13,7 @@ from sqlalchemy import desc, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
+from catalog_cache import RedisLike, get_or_compute_cached_bytes
 import db
 from data_source import DataNotFoundError, DataSourceError
 from http_cache import if_none_match_matches
@@ -25,7 +25,12 @@ logger = logging.getLogger("api.error")
 router = APIRouter(prefix="/catalog", tags=["catalog"])
 
 SHORT_CACHE_CONTROL_HEADER = "public, max-age=60"
-ECMWF_RUNS_CACHE_TTL_SECONDS = 60
+CACHE_FRESH_TTL_SECONDS = 60
+CACHE_STALE_TTL_SECONDS = 60 * 60
+CACHE_LOCK_TTL_MS = 30_000
+CACHE_WAIT_TIMEOUT_MS = 200
+CACHE_COOLDOWN_TTL_SECONDS: tuple[int, int] = (5, 30)
+HOT_ECMWF_RUNS_LIMIT = 20
 
 
 class CldasTimesResponse(BaseModel):
@@ -93,37 +98,6 @@ class EcmwfRunsResponse(BaseModel):
     runs: list[EcmwfRunItemResponse] = Field(default_factory=list)
 
 
-@dataclass
-class _EcmwfRunsCacheEntry:
-    expires_at: float
-    etag: str
-    body: bytes
-
-
-_ECMWF_RUNS_CACHE: dict[str, _EcmwfRunsCacheEntry] = {}
-
-
-def reset_ecmwf_runs_cache_for_tests() -> None:
-    _ECMWF_RUNS_CACHE.clear()
-
-
-def _ecmwf_runs_cache_key(*, limit: int, offset: int) -> str:
-    return f"limit={limit}&offset={offset}"
-
-
-def _get_ecmwf_runs_cached(*, limit: int, offset: int) -> _EcmwfRunsCacheEntry | None:
-    key = _ecmwf_runs_cache_key(limit=limit, offset=offset)
-    entry = _ECMWF_RUNS_CACHE.get(key)
-    if entry is None:
-        return None
-
-    if time.monotonic() >= entry.expires_at:
-        _ECMWF_RUNS_CACHE.pop(key, None)
-        return None
-
-    return entry
-
-
 def _normalize_ecmwf_run_status(raw: object) -> EcmwfRunStatus:
     value = (str(raw) if raw is not None else "").strip().lower()
     if value == "complete":
@@ -163,42 +137,72 @@ def _query_ecmwf_runs(*, limit: int, offset: int) -> list[EcmwfRunItemResponse]:
 
 
 @router.get("/cldas/times", response_model=CldasTimesResponse)
-def get_cldas_times(
+async def get_cldas_times(
     request: Request,
-    response: Response,
     var: Optional[str] = Query(default=None, description="Filter by CLDAS variable"),
-) -> Response | CldasTimesResponse:
+) -> Response:
     ds = get_data_source()
     var_filter = (var or "").strip().upper() or None
 
-    try:
-        index = ds.list_files(kinds={"cldas"})
-    except Exception as exc:  # noqa: BLE001
-        logger.error("cldas_times_error", extra={"error": str(exc)})
-        raise _handle_data_source_error(exc) from exc
+    redis: RedisLike | None = getattr(request.app.state, "redis_client", None)
 
-    times: set[str] = set()
-    for item in index.items:
-        if var_filter and getattr(item, "variable", None) != var_filter:
-            continue
-        key = _time_key_from_index_item(item)
-        if key:
-            times.add(key)
+    async def _compute() -> bytes:
+        try:
+            index = await to_thread(ds.list_files, kinds={"cldas"})
+        except Exception as exc:  # noqa: BLE001
+            logger.error("cldas_times_error", extra={"error": str(exc)})
+            raise _handle_data_source_error(exc) from exc
 
-    sorted_times = sorted(times)
-    etag_payload = "\n".join([var_filter or "", *sorted_times]).encode("utf-8")
-    etag = f'"sha256-{hashlib.sha256(etag_payload).hexdigest()}"'
+        times: set[str] = set()
+        for item in index.items:
+            if var_filter and getattr(item, "variable", None) != var_filter:
+                continue
+            key = _time_key_from_index_item(item)
+            if key:
+                times.add(key)
 
+        sorted_times = sorted(times)
+        return CldasTimesResponse(times=sorted_times).model_dump_json().encode("utf-8")
+
+    if redis is None:
+        body = await _compute()
+    else:
+        identity = var_filter or "all"
+        fresh_key = f"catalog:cldas:times:fresh:{identity}"
+        stale_key = f"catalog:cldas:times:stale:{identity}"
+        lock_key = f"catalog:cldas:times:lock:{identity}"
+        try:
+            result = await get_or_compute_cached_bytes(
+                redis,
+                fresh_key=fresh_key,
+                stale_key=stale_key,
+                lock_key=lock_key,
+                fresh_ttl_seconds=CACHE_FRESH_TTL_SECONDS,
+                stale_ttl_seconds=CACHE_STALE_TTL_SECONDS,
+                lock_ttl_ms=CACHE_LOCK_TTL_MS,
+                wait_timeout_ms=CACHE_WAIT_TIMEOUT_MS,
+                compute=_compute,
+                cooldown_ttl_seconds=CACHE_COOLDOWN_TTL_SECONDS,
+            )
+            body = result.body
+        except TimeoutError as exc:
+            raise HTTPException(
+                status_code=503, detail="Catalog cache warming timed out"
+            ) from exc
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("catalog_cache_unavailable", extra={"error": str(exc)})
+            body = await _compute()
+
+    etag = f'"sha256-{hashlib.sha256(body).hexdigest()}"'
     headers = {"Cache-Control": SHORT_CACHE_CONTROL_HEADER, "ETag": etag}
     if if_none_match_matches(request.headers.get("if-none-match"), etag):
         return Response(status_code=304, headers=headers)
 
-    response.headers.update(headers)
-    return CldasTimesResponse(times=sorted_times)
+    return Response(content=body, media_type="application/json", headers=headers)
 
 
 @router.get("/ecmwf/runs", response_model=EcmwfRunsResponse)
-def get_ecmwf_runs(
+async def get_ecmwf_runs(
     request: Request,
     limit: int = Query(default=20, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
@@ -219,27 +223,79 @@ def get_ecmwf_runs(
         resolved_limit = latest
         resolved_offset = 0
 
-    cached = _get_ecmwf_runs_cached(limit=resolved_limit, offset=resolved_offset)
-    if cached is not None:
-        headers = {"Cache-Control": SHORT_CACHE_CONTROL_HEADER, "ETag": cached.etag}
-        if if_none_match_matches(request.headers.get("if-none-match"), cached.etag):
-            return Response(status_code=304, headers=headers)
-        return Response(
-            content=cached.body, media_type="application/json", headers=headers
+    redis: RedisLike | None = getattr(request.app.state, "redis_client", None)
+
+    async def _compute() -> bytes:
+        query_limit = resolved_limit
+        if resolved_offset == 0:
+            query_limit = max(resolved_limit, HOT_ECMWF_RUNS_LIMIT)
+
+        runs = await to_thread(
+            _query_ecmwf_runs, limit=query_limit, offset=resolved_offset
         )
 
-    runs = _query_ecmwf_runs(limit=resolved_limit, offset=resolved_offset)
-    body = EcmwfRunsResponse(runs=runs).model_dump_json().encode("utf-8")
+        if resolved_offset == 0:
+            hot_runs = runs[:HOT_ECMWF_RUNS_LIMIT]
+            hot_body = (
+                EcmwfRunsResponse(runs=hot_runs).model_dump_json().encode("utf-8")
+            )
+            if redis is not None:
+                hot_fresh = (
+                    f"catalog:ecmwf:runs:fresh:limit={HOT_ECMWF_RUNS_LIMIT}&offset=0"
+                )
+                hot_stale = (
+                    f"catalog:ecmwf:runs:stale:limit={HOT_ECMWF_RUNS_LIMIT}&offset=0"
+                )
+                try:
+                    await redis.set(hot_fresh, hot_body, ex=CACHE_FRESH_TTL_SECONDS)
+                    await redis.set(hot_stale, hot_body, ex=CACHE_STALE_TTL_SECONDS)
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(
+                        "catalog_cache_prewarm_failed", extra={"error": str(exc)}
+                    )
+
+        payload_runs = runs
+        if resolved_offset == 0 and query_limit != resolved_limit:
+            payload_runs = runs[:resolved_limit]
+
+        return EcmwfRunsResponse(runs=payload_runs).model_dump_json().encode("utf-8")
+
+    if redis is None:
+        body = await _compute()
+    else:
+        fresh_key = (
+            f"catalog:ecmwf:runs:fresh:limit={resolved_limit}&offset={resolved_offset}"
+        )
+        stale_key = (
+            f"catalog:ecmwf:runs:stale:limit={resolved_limit}&offset={resolved_offset}"
+        )
+        lock_key = (
+            f"catalog:ecmwf:runs:lock:limit={resolved_limit}&offset={resolved_offset}"
+        )
+        try:
+            result = await get_or_compute_cached_bytes(
+                redis,
+                fresh_key=fresh_key,
+                stale_key=stale_key,
+                lock_key=lock_key,
+                fresh_ttl_seconds=CACHE_FRESH_TTL_SECONDS,
+                stale_ttl_seconds=CACHE_STALE_TTL_SECONDS,
+                lock_ttl_ms=CACHE_LOCK_TTL_MS,
+                wait_timeout_ms=CACHE_WAIT_TIMEOUT_MS,
+                compute=_compute,
+                cooldown_ttl_seconds=CACHE_COOLDOWN_TTL_SECONDS,
+            )
+            body = result.body
+        except TimeoutError as exc:
+            raise HTTPException(
+                status_code=503, detail="Catalog cache warming timed out"
+            ) from exc
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("catalog_cache_unavailable", extra={"error": str(exc)})
+            body = await _compute()
+
     etag = f'"sha256-{hashlib.sha256(body).hexdigest()}"'
     headers = {"Cache-Control": SHORT_CACHE_CONTROL_HEADER, "ETag": etag}
-
-    cache_key = _ecmwf_runs_cache_key(limit=resolved_limit, offset=resolved_offset)
-    _ECMWF_RUNS_CACHE[cache_key] = _EcmwfRunsCacheEntry(
-        expires_at=time.monotonic() + ECMWF_RUNS_CACHE_TTL_SECONDS,
-        etag=etag,
-        body=body,
-    )
-
     if if_none_match_matches(request.headers.get("if-none-match"), etag):
         return Response(status_code=304, headers=headers)
 

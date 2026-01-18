@@ -27,6 +27,7 @@ def create_app() -> FastAPI:
     app = FastAPI(title="Digital Earth API", debug=settings.api.debug)
 
     redis_client = create_redis_client(settings.redis.url)
+    app.state.redis_client = redis_client
 
     app.add_middleware(
         RateLimitMiddleware,
