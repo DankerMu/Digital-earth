@@ -8,6 +8,7 @@ import xarray as xr
 
 from datacube.errors import DataCubeValidationError
 from datacube.normalize import normalize_datacube_dataset
+from datacube.precipitation import add_precipitation_amount_from_tp
 from datacube.storage import DataCubeWriteOptions, open_datacube, write_datacube
 from datacube.types import DataCubeFormat
 
@@ -26,7 +27,9 @@ class DataCube:
 
     @classmethod
     def from_dataset(cls, ds: xr.Dataset) -> "DataCube":
-        return cls(dataset=normalize_datacube_dataset(ds))
+        normalized = normalize_datacube_dataset(ds)
+        processed = add_precipitation_amount_from_tp(normalized)
+        return cls(dataset=processed)
 
     @classmethod
     def open(
