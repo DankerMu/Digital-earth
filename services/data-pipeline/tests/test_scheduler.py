@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -263,3 +264,64 @@ def test_factory_helpers_load_config_from_scheduler_yaml(
     run = asyncio.run(scheduler.run_once())
     assert run.status == "failed"
     assert run.attempts == 1
+
+
+def test_ingest_scheduler_triggers_on_success_hook(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    from scheduler.ingest_scheduler import IngestScheduler
+    from scheduler.runs import IngestRunStore
+
+    store = IngestRunStore(storage_path=None, max_entries=10)
+    seen: list[str] = []
+
+    async def ingest() -> None:
+        return None
+
+    async def on_success(run: Any) -> None:
+        seen.append(getattr(run, "run_id", ""))
+
+    scheduler = IngestScheduler(
+        cron="0 * * * *",
+        ingest=ingest,
+        run_store=store,
+        max_retries=0,
+        on_success=on_success,
+        now=lambda: datetime(2026, 1, 1, tzinfo=timezone.utc),
+    )
+
+    caplog.set_level(logging.ERROR)
+    run = asyncio.run(scheduler.run_once())
+    assert run.status == "success"
+    assert len(seen) == 1
+
+
+def test_ingest_scheduler_on_success_errors_are_logged(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    from scheduler.ingest_scheduler import IngestScheduler
+    from scheduler.runs import IngestRunStore
+
+    store = IngestRunStore(storage_path=None, max_entries=10)
+
+    async def ingest() -> None:
+        return None
+
+    async def on_success(run: Any) -> None:
+        raise RuntimeError("boom")
+
+    scheduler = IngestScheduler(
+        cron="0 * * * *",
+        ingest=ingest,
+        run_store=store,
+        max_retries=0,
+        on_success=on_success,
+        now=lambda: datetime(2026, 1, 1, tzinfo=timezone.utc),
+    )
+
+    caplog.set_level(logging.ERROR)
+    run = asyncio.run(scheduler.run_once())
+    assert run.status == "success"
+    assert any(
+        record.getMessage() == "ingest_on_success_failed" for record in caplog.records
+    )
