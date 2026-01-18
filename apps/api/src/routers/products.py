@@ -42,7 +42,9 @@ def _parse_bbox(value: Optional[str]) -> Optional[tuple[float, float, float, flo
     try:
         min_x, min_y, max_x, max_y = (float(part) for part in parts)
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail="bbox must contain 4 numbers") from exc
+        raise HTTPException(
+            status_code=400, detail="bbox must contain 4 numbers"
+        ) from exc
 
     if not all(math.isfinite(v) for v in (min_x, min_y, max_x, max_y)):
         raise HTTPException(status_code=400, detail="bbox values must be finite")
@@ -166,7 +168,9 @@ def list_products(
                 bbox=bbox_tuple,
             )
         ]
-        if (start is not None or end is not None or bbox_tuple is not None) and not hazards:
+        if (
+            start is not None or end is not None or bbox_tuple is not None
+        ) and not hazards:
             continue
 
         items.append(

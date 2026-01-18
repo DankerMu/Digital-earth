@@ -261,7 +261,11 @@ def test_products_endpoint_time_filter_supports_start_and_end(
         },
     )
     assert response.status_code == 200
-    assert {item["title"] for item in response.json()["items"]} == {"降雪", "大风", "强降水"}
+    assert {item["title"] for item in response.json()["items"]} == {
+        "降雪",
+        "大风",
+        "强降水",
+    }
 
 
 def test_products_endpoint_bbox_filter_can_exclude_by_y_overlap(

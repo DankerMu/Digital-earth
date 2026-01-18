@@ -98,7 +98,9 @@ def upgrade() -> None:
             sa.select(products.c.title).where(products.c.title.in_(titles))
         ).scalars()
     )
-    to_insert = [item for item in sample_products if item["title"] not in existing_titles]
+    to_insert = [
+        item for item in sample_products if item["title"] not in existing_titles
+    ]
     if to_insert:
         op.bulk_insert(products, to_insert)
 
@@ -154,7 +156,13 @@ def upgrade() -> None:
         ],
     }
 
-    def add_hazard(*, title: str, severity: str, geometry: dict, bbox: tuple[float, float, float, float]) -> None:
+    def add_hazard(
+        *,
+        title: str,
+        severity: str,
+        geometry: dict,
+        bbox: tuple[float, float, float, float],
+    ) -> None:
         product_id = product_ids.get(title)
         if not product_id:
             return
