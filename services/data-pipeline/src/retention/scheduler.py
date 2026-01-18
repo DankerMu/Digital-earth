@@ -106,4 +106,3 @@ class RetentionCleanupScheduler:
                 except asyncio.TimeoutError:
                     pass
             await self.run_once()
-

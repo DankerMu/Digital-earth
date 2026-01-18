@@ -95,7 +95,9 @@ def _cleanup_run_tree(
         for path in to_delete:
             resolved = path.resolve()
             if not resolved.is_relative_to(source_dir_resolved):
-                raise ValueError(f"Refusing to delete path outside source_dir: {resolved}")
+                raise ValueError(
+                    f"Refusing to delete path outside source_dir: {resolved}"
+                )
             shutil.rmtree(resolved)
             deleted.append(resolved)
             audit.record(
@@ -147,7 +149,9 @@ def _cleanup_tiles_tree(
         try:
             layer_key = layer_dir.resolve().relative_to(root).as_posix()
         except ValueError:
-            raise ValueError(f"Layer directory escapes tiles_root: {layer_dir}") from None
+            raise ValueError(
+                f"Layer directory escapes tiles_root: {layer_dir}"
+            ) from None
 
         layer_dir_resolved = layer_dir.resolve()
         pinned = referenced_versions.get(layer_key, set())
@@ -177,7 +181,9 @@ def _cleanup_tiles_tree(
                 continue
             resolved = path.resolve()
             if not resolved.is_relative_to(layer_dir_resolved):
-                raise ValueError(f"Refusing to delete path outside layer_dir: {resolved}")
+                raise ValueError(
+                    f"Refusing to delete path outside layer_dir: {resolved}"
+                )
             shutil.rmtree(resolved)
             deleted.append(resolved)
             audit.record(
@@ -260,7 +266,9 @@ def run_retention_cleanup(
             references: dict[str, set[str]] = {}
             if config.tiles.referenced_versions_path is not None:
                 try:
-                    references = load_tiles_references(config.tiles.referenced_versions_path)
+                    references = load_tiles_references(
+                        config.tiles.referenced_versions_path
+                    )
                 except FileNotFoundError:
                     references = {}
                 except Exception as exc:  # noqa: BLE001
@@ -308,4 +316,3 @@ def run_retention_cleanup(
             now=now,
         )
         raise
-

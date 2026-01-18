@@ -66,8 +66,14 @@ def test_retention_config_loads_and_resolves_paths(
     assert cfg.raw.root_dir == (tmp_path / "Data" / "raw").resolve()
     assert cfg.cube.root_dir == (tmp_path / "Data" / "cube").resolve()
     assert cfg.tiles.root_dir == (tmp_path / "Data" / "tiles").resolve()
-    assert cfg.tiles.referenced_versions_path == (tmp_path / "config" / "pins.yaml").resolve()
-    assert cfg.audit.log_path == (tmp_path / ".cache" / "audit" / "retention.jsonl").resolve()
+    assert (
+        cfg.tiles.referenced_versions_path
+        == (tmp_path / "config" / "pins.yaml").resolve()
+    )
+    assert (
+        cfg.audit.log_path
+        == (tmp_path / ".cache" / "audit" / "retention.jsonl").resolve()
+    )
 
     get_retention_config.cache_clear()
     cfg2 = get_retention_config()
@@ -232,8 +238,16 @@ def test_retention_cleanup_refuses_symlink_escape(tmp_path: Path) -> None:
         {
             "schema_version": 1,
             "raw": {"enabled": True, "root_dir": str(raw_root), "keep_n_runs": 0},
-            "cube": {"enabled": False, "root_dir": str(tmp_path / "cube"), "keep_n_runs": 0},
-            "tiles": {"enabled": False, "root_dir": str(tmp_path / "tiles"), "keep_n_versions": 0},
+            "cube": {
+                "enabled": False,
+                "root_dir": str(tmp_path / "cube"),
+                "keep_n_runs": 0,
+            },
+            "tiles": {
+                "enabled": False,
+                "root_dir": str(tmp_path / "tiles"),
+                "keep_n_versions": 0,
+            },
             "audit": {"log_path": str(tmp_path / "audit.jsonl")},
             "scheduler": {"enabled": False, "cron": "0 3 * * *"},
         }
@@ -243,7 +257,10 @@ def test_retention_cleanup_refuses_symlink_escape(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="Refusing to delete path outside source_dir"):
         run_retention_cleanup(cfg, audit=audit)
 
-    events = [json.loads(line) for line in cfg.audit.log_path.read_text(encoding="utf-8").splitlines()]
+    events = [
+        json.loads(line)
+        for line in cfg.audit.log_path.read_text(encoding="utf-8").splitlines()
+    ]
     assert events[0]["event"] == "retention.cleanup.started"
     assert events[-1]["event"] == "retention.cleanup.error"
 
@@ -286,7 +303,9 @@ def test_tiles_references_loader_supports_multiple_formats(tmp_path: Path) -> No
     assert refs2["c"] == {"v1"}
 
 
-def test_tiles_references_loader_handles_missing_and_invalid_files(tmp_path: Path) -> None:
+def test_tiles_references_loader_handles_missing_and_invalid_files(
+    tmp_path: Path,
+) -> None:
     from retention.refs import load_tiles_references
 
     assert load_tiles_references(tmp_path / "missing.yaml") == {}
@@ -340,8 +359,16 @@ def test_retention_cleanup_skips_invalid_names_and_files(tmp_path: Path) -> None
         {
             "schema_version": 1,
             "raw": {"enabled": True, "root_dir": str(raw_root), "keep_n_runs": 0},
-            "cube": {"enabled": False, "root_dir": str(tmp_path / "cube"), "keep_n_runs": 0},
-            "tiles": {"enabled": True, "root_dir": str(tiles_root), "keep_n_versions": 0},
+            "cube": {
+                "enabled": False,
+                "root_dir": str(tmp_path / "cube"),
+                "keep_n_runs": 0,
+            },
+            "tiles": {
+                "enabled": True,
+                "root_dir": str(tiles_root),
+                "keep_n_versions": 0,
+            },
             "audit": {"log_path": str(tmp_path / "audit.jsonl")},
             "scheduler": {"enabled": False, "cron": "0 3 * * *"},
         }
@@ -382,7 +409,9 @@ def test_retention_cleanup_scheduler_retries_and_uses_cron() -> None:
     )
 
     base = datetime(2026, 1, 1, 0, 30, tzinfo=timezone.utc)
-    assert scheduler.next_run_after(base) == datetime(2026, 1, 1, 1, 0, tzinfo=timezone.utc)
+    assert scheduler.next_run_after(base) == datetime(
+        2026, 1, 1, 1, 0, tzinfo=timezone.utc
+    )
 
     result = asyncio.run(scheduler.run_once())
     assert result.run_id == "r"
@@ -405,7 +434,9 @@ def test_retention_cleanup_scheduler_run_forever_stops_on_event() -> None:
     asyncio.run(runner())
 
 
-def test_retention_cli_cleanup_smoke(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_retention_cli_cleanup_smoke(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     monkeypatch.chdir(tmp_path)
     config_dir = tmp_path / "config"
     config_dir.mkdir(parents=True, exist_ok=True)

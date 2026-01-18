@@ -86,4 +86,3 @@ def load_tiles_references(path: Path) -> dict[str, set[str]]:
 
     out = {layer: versions for layer, versions in out.items() if versions}
     return out
-

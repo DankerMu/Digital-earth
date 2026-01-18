@@ -68,7 +68,9 @@ class RetentionConfig(BaseModel):
     cube: CubeRetentionConfig = Field(default_factory=CubeRetentionConfig)
     tiles: TilesRetentionConfig = Field(default_factory=TilesRetentionConfig)
     audit: RetentionAuditConfig = Field(default_factory=RetentionAuditConfig)
-    scheduler: RetentionSchedulerConfig = Field(default_factory=RetentionSchedulerConfig)
+    scheduler: RetentionSchedulerConfig = Field(
+        default_factory=RetentionSchedulerConfig
+    )
 
     @model_validator(mode="after")
     def _validate_schema(self) -> "RetentionConfig":
@@ -117,9 +119,7 @@ def _resolve_repo_root(*, config_path: Path) -> Path:
     return repo_root.resolve()
 
 
-def _resolve_within_repo_root(
-    *, value: Path, repo_root: Path, field_name: str
-) -> Path:
+def _resolve_within_repo_root(*, value: Path, repo_root: Path, field_name: str) -> Path:
     candidate = Path(value).expanduser()
     if not candidate.is_absolute():
         resolved = (repo_root / candidate).resolve()
@@ -219,4 +219,3 @@ def get_retention_config(path: Optional[Union[str, Path]] = None) -> RetentionCo
 
 
 get_retention_config.cache_clear = _get_retention_config_cached.cache_clear  # type: ignore[attr-defined]
-
