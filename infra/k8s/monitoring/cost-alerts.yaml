@@ -1,0 +1,169 @@
+#
+# [ST-0010] 成本告警：带宽/回源/对象存储请求数
+#
+# 目标：在 Prometheus + Alertmanager 上快速落地“成本风险”告警。
+# 说明：
+# - 该文件面向 Prometheus Operator / kube-prometheus-stack（使用 PrometheusRule / AlertmanagerConfig CRD）。
+# - `metadata.labels.release` 需要与集群 Prometheus/Alertmanager 的 selector 匹配（Helm 安装时常为 kube-prometheus-stack）。
+# - 告警表达式中默认聚焦 `namespace="digital-earth"`；如你的业务命名空间不同请替换。
+#
+
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: digital-earth-cost-alerts
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name: digital-earth
+    app.kubernetes.io/part-of: digital-earth
+    release: kube-prometheus-stack
+spec:
+  groups:
+    - name: digital-earth.cost
+      rules:
+        # ------------------------------
+        # 带宽（出口流量）
+        # ------------------------------
+        - alert: DigitalEarthEgressBandwidthHigh
+          expr: |
+            (
+              sum(rate(container_network_transmit_bytes_total{namespace="digital-earth", pod!=""}[5m]))
+              * 8 / 1e6
+            ) > 200
+          for: 10m
+          labels:
+            severity: warning
+            service: digital-earth
+            category: cost
+          annotations:
+            summary: "Digital Earth 出口带宽过高（warning）"
+            description: "digital-earth namespace egress bandwidth > 200 Mbps for 10m (pod egress approximation)."
+            runbook: "docs/cost-alerts.md"
+
+        - alert: DigitalEarthEgressBandwidthCritical
+          expr: |
+            (
+              sum(rate(container_network_transmit_bytes_total{namespace="digital-earth", pod!=""}[5m]))
+              * 8 / 1e6
+            ) > 500
+          for: 10m
+          labels:
+            severity: critical
+            service: digital-earth
+            category: cost
+          annotations:
+            summary: "Digital Earth 出口带宽过高（critical）"
+            description: "digital-earth namespace egress bandwidth > 500 Mbps for 10m (pod egress approximation)."
+            runbook: "docs/cost-alerts.md"
+
+        # ------------------------------
+        # 回源请求（Origin Requests，默认以 NGINX Ingress 请求数近似）
+        # ------------------------------
+        - alert: DigitalEarthOriginRequestRateHigh
+          expr: |
+            sum(rate(nginx_ingress_controller_requests{namespace="digital-earth", service="digital-earth-api"}[5m])) > 80
+          for: 10m
+          labels:
+            severity: warning
+            service: digital-earth
+            category: cost
+          annotations:
+            summary: "Digital Earth 回源请求过高（warning）"
+            description: "Ingress requests to digital-earth-api > 80 rps for 10m."
+            runbook: "docs/cost-alerts.md"
+
+        - alert: DigitalEarthOriginRequestRateCritical
+          expr: |
+            sum(rate(nginx_ingress_controller_requests{namespace="digital-earth", service="digital-earth-api"}[5m])) > 200
+          for: 10m
+          labels:
+            severity: critical
+            service: digital-earth
+            category: cost
+          annotations:
+            summary: "Digital Earth 回源请求过高（critical）"
+            description: "Ingress requests to digital-earth-api > 200 rps for 10m."
+            runbook: "docs/cost-alerts.md"
+
+        # ------------------------------
+        # 对象存储请求数（需接入 exporter 或业务自定义 Counter）
+        # 默认指标名：digital_earth_object_storage_requests_total
+        # ------------------------------
+        - alert: DigitalEarthObjectStorageRequestRateHigh
+          expr: |
+            sum(rate(digital_earth_object_storage_requests_total{namespace="digital-earth"}[5m])) > 120
+          for: 15m
+          labels:
+            severity: warning
+            service: digital-earth
+            category: cost
+          annotations:
+            summary: "Digital Earth 对象存储请求过高（warning）"
+            description: "Object storage requests > 120 rps for 15m (replace metric name/labels to match your exporter)."
+            runbook: "docs/cost-alerts.md"
+
+        - alert: DigitalEarthObjectStorageRequestRateCritical
+          expr: |
+            sum(rate(digital_earth_object_storage_requests_total{namespace="digital-earth"}[5m])) > 300
+          for: 15m
+          labels:
+            severity: critical
+            service: digital-earth
+            category: cost
+          annotations:
+            summary: "Digital Earth 对象存储请求过高（critical）"
+            description: "Object storage requests > 300 rps for 15m (replace metric name/labels to match your exporter)."
+            runbook: "docs/cost-alerts.md"
+
+---
+
+apiVersion: monitoring.coreos.com/v1alpha1
+kind: AlertmanagerConfig
+metadata:
+  name: digital-earth-cost-alerts
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name: digital-earth
+    app.kubernetes.io/part-of: digital-earth
+    release: kube-prometheus-stack
+spec:
+  route:
+    receiver: digital-earth-cost-email
+    groupBy: ["alertname", "namespace"]
+    groupWait: 30s
+    groupInterval: 5m
+    repeatInterval: 2h
+    routes:
+      - receiver: digital-earth-cost-email-and-sms
+        matchers:
+          - name: severity
+            value: critical
+            matchType: "="
+  receivers:
+    # warning: 邮件
+    - name: digital-earth-cost-email
+      emailConfigs:
+        - to: "oncall@example.com"
+          from: "alertmanager@example.com"
+          smarthost: "smtp.example.com:587"
+          authUsername: "alertmanager@example.com"
+          authPassword:
+            name: alertmanager-smtp
+            key: password
+          sendResolved: true
+
+    # critical: 邮件 + 短信（Webhook→短信网关）
+    - name: digital-earth-cost-email-and-sms
+      emailConfigs:
+        - to: "oncall@example.com"
+          from: "alertmanager@example.com"
+          smarthost: "smtp.example.com:587"
+          authUsername: "alertmanager@example.com"
+          authPassword:
+            name: alertmanager-smtp
+            key: password
+          sendResolved: true
+      webhookConfigs:
+        - url: "https://sms-gateway.example.com/alertmanager"
+          sendResolved: true
+
