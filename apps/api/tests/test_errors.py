@@ -64,13 +64,23 @@ def _make_client(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> TestClient:
 
 def test_error_report_model_normalizes_timestamp_to_utc() -> None:
     naive = datetime(2024, 1, 1, 12, 0, 0)
-    report = ErrorReport(trace_id="abc", message="boom", version="1.0", timestamp=naive)
+    report = ErrorReport(
+        trace_id="abc",
+        error_code="E123",
+        message="boom",
+        version="1.0",
+        timestamp=naive,
+    )
     assert report.timestamp.tzinfo == timezone.utc
 
     tz_east_8 = timezone(timedelta(hours=8))
     aware = datetime(2024, 1, 1, 12, 0, 0, tzinfo=tz_east_8)
     report2 = ErrorReport(
-        trace_id="abc", message="boom", version="1.0", timestamp=aware
+        trace_id="abc",
+        error_code="E123",
+        message="boom",
+        version="1.0",
+        timestamp=aware,
     )
     assert report2.timestamp.tzinfo == timezone.utc
     assert report2.timestamp.hour == 4
@@ -80,6 +90,7 @@ def test_post_errors_logs_structured_payload(caplog: pytest.LogCaptureFixture) -
     client = TestClient(_make_app())
     payload = {
         "trace_id": "frontend-123",
+        "error_code": "E123",
         "message": "Something went wrong",
         "stack": "Error: boom\\n  at line 1",
         "browser_info": {"ua": "pytest"},
@@ -98,13 +109,15 @@ def test_post_errors_logs_structured_payload(caplog: pytest.LogCaptureFixture) -
         for item in caplog.records
         if item.name == "api.error" and item.getMessage() == "frontend.error_reported"
     )
-    assert record.frontend_trace_id == payload["trace_id"]
-    assert record.frontend_version == payload["version"]
-    assert record.error_message == payload["message"]
-    assert record.error_stack == payload["stack"]
-    assert record.browser_info == payload["browser_info"]
-    assert record.app_state == payload["app_state"]
+    assert record.error_code == payload["error_code"]
+    assert record.sanitized_message == payload["message"]
     assert record.reported_at == "2024-01-01T00:00:00Z"
+    assert "frontend_trace_id" not in record.__dict__
+    assert "frontend_version" not in record.__dict__
+    assert "error_message" not in record.__dict__
+    assert "error_stack" not in record.__dict__
+    assert "browser_info" not in record.__dict__
+    assert "app_state" not in record.__dict__
 
 
 def test_errors_endpoint_registered_in_main(
@@ -113,7 +126,12 @@ def test_errors_endpoint_registered_in_main(
     client = _make_client(monkeypatch, tmp_path)
     response = client.post(
         "/api/v1/errors",
-        json={"trace_id": "frontend-123", "message": "boom", "version": "web@1.0.0"},
+        json={
+            "trace_id": "frontend-123",
+            "error_code": "E123",
+            "message": "boom",
+            "version": "web@1.0.0",
+        },
     )
     assert response.status_code == 204
     assert "x-trace-id" in response.headers
@@ -131,3 +149,56 @@ def test_errors_endpoint_validation_error_returns_400(
     assert payload["error_code"] == 40000
     assert payload["message"] == "Bad Request"
     assert payload["trace_id"] == trace_id
+
+
+def test_errors_endpoint_rejects_non_alphanumeric_error_code(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    client = TestClient(_make_app())
+    with caplog.at_level(logging.ERROR, logger="api.error"):
+        response = client.post(
+            "/api/v1/errors",
+            json={
+                "trace_id": "frontend-123",
+                "error_code": "ERR-1",
+                "message": "boom",
+                "version": "web@1.0.0",
+            },
+        )
+    assert response.status_code == 400
+    assert response.json()["message"] == "Bad Request"
+    assert not any(
+        item.name == "api.error" and item.getMessage() == "frontend.error_reported"
+        for item in caplog.records
+    )
+
+
+def test_errors_endpoint_rejects_too_long_message() -> None:
+    client = TestClient(_make_app())
+    response = client.post(
+        "/api/v1/errors",
+        json={
+            "trace_id": "frontend-123",
+            "error_code": "E123",
+            "message": "x" * 1001,
+            "version": "web@1.0.0",
+        },
+    )
+    assert response.status_code == 400
+    assert response.json()["message"] == "Bad Request"
+
+
+def test_errors_endpoint_rejects_too_long_stack() -> None:
+    client = TestClient(_make_app())
+    response = client.post(
+        "/api/v1/errors",
+        json={
+            "trace_id": "frontend-123",
+            "error_code": "E123",
+            "message": "boom",
+            "stack": "x" * 5001,
+            "version": "web@1.0.0",
+        },
+    )
+    assert response.status_code == 400
+    assert response.json()["message"] == "Bad Request"

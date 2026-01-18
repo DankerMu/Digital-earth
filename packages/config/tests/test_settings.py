@@ -60,6 +60,7 @@ def test_loads_json_and_requires_db_secrets(
     assert rules["/api/v1/vector"] == 60
     assert rules["/api/v1/tiles"] == 300
     assert rules["/api/v1/volume"] == 30
+    assert rules["/api/v1/errors"] == 10
 
 
 def test_rate_limit_rules_normalize_path_prefix(

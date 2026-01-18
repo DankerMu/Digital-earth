@@ -34,7 +34,9 @@ def validate_yaml_file(path: Path) -> list[str]:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Validate YAML syntax for repo configs.")
+    parser = argparse.ArgumentParser(
+        description="Validate YAML syntax for repo configs."
+    )
     parser.add_argument(
         "paths",
         nargs="*",
