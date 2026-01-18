@@ -384,7 +384,11 @@ def test_retention_cleanup_refuses_symlink_tiles_version(tmp_path: Path) -> None
     cfg = RetentionConfig.model_validate(
         {
             "schema_version": 1,
-            "raw": {"enabled": False, "root_dir": str(tmp_path / "raw"), "keep_n_runs": 0},
+            "raw": {
+                "enabled": False,
+                "root_dir": str(tmp_path / "raw"),
+                "keep_n_runs": 0,
+            },
             "cube": {
                 "enabled": False,
                 "root_dir": str(tmp_path / "cube"),
