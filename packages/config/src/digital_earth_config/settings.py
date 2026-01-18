@@ -264,6 +264,10 @@ class PipelineSettings(BaseModel):
     batch_size: int
     ecmwf_api_key: Optional[SecretStr] = Field(default=None, repr=False)
     data_source: str = Field(default="remote", description="remote|local")
+    precip_type_temp_threshold_c: float = Field(
+        default=0.0,
+        description="Temperature threshold (°C) used as a fallback for precipitation type; below => snow.",
+    )
 
     @model_validator(mode="after")
     def _reject_empty_ecmwf_key(self) -> "PipelineSettings":

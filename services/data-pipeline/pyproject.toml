@@ -6,6 +6,7 @@ packages = [
     {include = "ecmwf", from = "src"},
     {include = "cldas", from = "src"},
     {include = "datacube", from = "src"},
+    {include = "processing", from = "src"},
     {include = "units", from = "src"},
 ]
 
