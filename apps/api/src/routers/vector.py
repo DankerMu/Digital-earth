@@ -238,7 +238,9 @@ def _parse_bbox(value: Optional[str]) -> tuple[float, float, float, float] | Non
 
     parts = [part.strip() for part in raw.split(",")]
     if len(parts) != 4:
-        raise ValueError("bbox must have 4 comma-separated numbers: minLon,minLat,maxLon,maxLat")
+        raise ValueError(
+            "bbox must have 4 comma-separated numbers: minLon,minLat,maxLon,maxLat"
+        )
 
     try:
         min_lon, min_lat, max_lon, max_lat = (float(part) for part in parts)
@@ -466,4 +468,3 @@ async def get_ecmwf_wind_vectors(
     etag = f'"sha256-{hashlib.sha256(body).hexdigest()}"'
     headers = {"Cache-Control": SHORT_CACHE_CONTROL_HEADER, "ETag": etag}
     return Response(content=body, media_type="application/json", headers=headers)
-
