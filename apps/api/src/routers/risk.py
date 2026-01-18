@@ -192,7 +192,7 @@ async def get_risk_pois(
         body = await _compute()
     else:
         identity = (
-            f"{min_lon:.6f},{min_lat:.6f},{max_lon:.6f},{max_lat:.6f}"
+            f"{min_lon!r},{min_lat!r},{max_lon!r},{max_lat!r}"
             f":page={page}:size={page_size}"
         )
         fresh_key = f"risk:pois:fresh:{identity}"
