@@ -219,6 +219,7 @@ def _default_api_rate_limit_rules() -> list[ApiRateLimitRule]:
         ApiRateLimitRule(path_prefix="/api/v1/vector", requests_per_minute=60),
         ApiRateLimitRule(path_prefix="/api/v1/tiles", requests_per_minute=300),
         ApiRateLimitRule(path_prefix="/api/v1/volume", requests_per_minute=30),
+        ApiRateLimitRule(path_prefix="/api/v1/errors", requests_per_minute=10),
     ]
 
 
