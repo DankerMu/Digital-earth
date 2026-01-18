@@ -160,7 +160,9 @@ def _query_risk_pois(
         )
         for item in pois
     ]
-    return RiskPOIQueryResponse(page=page, page_size=page_size, total=total, items=items)
+    return RiskPOIQueryResponse(
+        page=page, page_size=page_size, total=total, items=items
+    )
 
 
 @router.get("/pois", response_model=RiskPOIQueryResponse)
