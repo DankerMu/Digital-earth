@@ -186,7 +186,46 @@ def _normalize_tile_key(tile_path: str) -> str:
 def _accepts_gzip(header: Optional[str]) -> bool:
     if not header:
         return False
-    return "gzip" in header.lower()
+
+    gzip_q: float | None = None
+    star_q: float | None = None
+
+    for part in header.split(","):
+        token = part.strip()
+        if not token:
+            continue
+
+        coding, *param_parts = [p.strip() for p in token.split(";")]
+        coding_lower = coding.lower()
+
+        q = 1.0
+        for param in param_parts:
+            key, sep, value = param.partition("=")
+            if sep != "=":
+                continue
+            if key.strip().lower() != "q":
+                continue
+            try:
+                q = float(value.strip())
+            except ValueError:
+                q = 0.0
+            break
+
+        if q < 0:
+            q = 0.0
+        elif q > 1:
+            q = 1.0
+
+        if coding_lower == "gzip":
+            gzip_q = max(gzip_q, q) if gzip_q is not None else q
+        elif coding_lower == "*":
+            star_q = max(star_q, q) if star_q is not None else q
+
+    if gzip_q is not None:
+        return gzip_q > 0
+    if star_q is not None:
+        return star_q > 0
+    return False
 
 
 def _accepts_webp(header: Optional[str]) -> bool:
@@ -432,9 +471,13 @@ def get_tile(
     if not isinstance(content_type, str) or content_type.strip() == "":
         content_type = _guess_media_type(key_to_fetch)
 
-    headers = {
-        "Cache-Control": obj.get("CacheControl") or _DEFAULT_CACHE_CONTROL,
-    }
+    cache_control = obj.get("CacheControl")
+    cache_control_value = (
+        cache_control.strip()
+        if isinstance(cache_control, str) and cache_control.strip()
+        else _DEFAULT_CACHE_CONTROL
+    )
+    headers = {"Cache-Control": cache_control_value}
 
     transformed = False
 

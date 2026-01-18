@@ -124,6 +124,29 @@ def test_tiles_redirects_to_webp_when_accepted(
     assert response.headers["vary"] == "Accept"
 
 
+def test_tiles_does_not_redirect_to_webp_when_accept_is_image_wildcard(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    client = _make_client(
+        monkeypatch,
+        tmp_path,
+        config_overrides={
+            "storage": {"tiles_base_url": "https://cdn.example/tiles"},
+        },
+    )
+
+    response = client.get(
+        "/api/v1/tiles/layer/time/1/2/3.png",
+        headers={"Accept": "image/*"},
+        follow_redirects=False,
+    )
+    assert response.status_code == 302
+    assert (
+        response.headers["location"] == "https://cdn.example/tiles/layer/time/1/2/3.png"
+    )
+    assert "vary" not in response.headers
+
+
 def test_tiles_redirects_to_signed_url_when_credentials_present(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -152,7 +175,7 @@ def test_tiles_redirects_to_signed_url_when_credentials_present(
     response = client.get("/api/v1/tiles/a/b/c.png", follow_redirects=False)
     assert response.status_code == 302
     assert response.headers["location"] == "https://signed.example/object?a=1"
-    assert response.headers["cache-control"] == "public, max-age=899"
+    assert response.headers["cache-control"] == "private, max-age=899"
 
 
 def test_tiles_proxy_returns_bytes_with_etag_and_supports_304(
@@ -220,6 +243,38 @@ def test_tiles_proxy_gzips_vector_tiles_when_accepted(
     assert int(response.headers["content-length"]) < len(payload)
     # httpx TestClient transparently decodes gzip; response bytes are the decoded payload.
     assert response.content == payload
+
+
+def test_tiles_proxy_does_not_gzip_when_gzip_qvalue_zero(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    payload = b"a" * 2048
+
+    class ProxyClient:
+        def get_object(self, *, Bucket: str, Key: str) -> dict[str, Any]:
+            assert Bucket == "tiles"
+            assert Key == "vector/0/0/0.pbf"
+            return {
+                "Body": FakeBody(payload),
+                "ContentType": "application/x-protobuf",
+                "CacheControl": "public, max-age=3600",
+                "ETag": '"v"',
+            }
+
+    _install_fake_boto3(
+        monkeypatch, client_factory=lambda *args, **kwargs: ProxyClient()
+    )
+    client = _make_client(monkeypatch, tmp_path, config_overrides=None)
+
+    response = client.get(
+        "/api/v1/tiles/vector/0/0/0.pbf?redirect=false",
+        headers={"Accept-Encoding": "gzip;q=0"},
+    )
+    assert response.status_code == 200
+    assert response.content == payload
+    assert "content-encoding" not in response.headers
+    assert "vary" not in response.headers
+    assert response.headers["etag"] == '"v"'
 
 
 def test_tiles_proxy_decompresses_when_storage_is_gzip_but_client_disallows(
