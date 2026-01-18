@@ -56,6 +56,26 @@ def _write_local_data_config(path: Path) -> None:
     )
 
 
+def _write_tiling_config(path: Path) -> None:
+    path.write_text(
+        "\n".join(
+            [
+                "tiling:",
+                "  crs: EPSG:4326",
+                "  global:",
+                "    min_zoom: 0",
+                "    max_zoom: 6",
+                "  event:",
+                "    min_zoom: 8",
+                "    max_zoom: 10",
+                "  tile_size: 256",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+
 def _make_client(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -67,6 +87,7 @@ def _make_client(
     config_dir = tmp_path / "config"
     _write_config(config_dir, "dev", config or _base_config())
     _write_local_data_config(config_dir / "local-data.yaml")
+    _write_tiling_config(config_dir / "tiling.yaml")
 
     monkeypatch.setenv("DIGITAL_EARTH_ENV", "dev")
     monkeypatch.setenv("DIGITAL_EARTH_CONFIG_DIR", str(config_dir))
