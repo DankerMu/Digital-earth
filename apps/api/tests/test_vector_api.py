@@ -157,9 +157,8 @@ def test_vector_helpers_cover_edge_cases() -> None:
 
     parsed = vector_router._parse_time("2026-01-01T00:00:00", label="run")
     assert parsed.tzinfo == timezone.utc
-    assert (
-        vector_router._parse_time("20260101T000000Z", label="run")
-        == datetime(2026, 1, 1, tzinfo=timezone.utc)
+    assert vector_router._parse_time("20260101T000000Z", label="run") == datetime(
+        2026, 1, 1, tzinfo=timezone.utc
     )
     assert vector_router._time_key(datetime(2026, 1, 1)) == "20260101T000000Z"
 
@@ -236,7 +235,9 @@ def test_vector_helpers_cover_edge_cases() -> None:
     assert exc.value.status_code == 404
 
     with pytest.raises(HTTPException) as exc:
-        vector_router._resolve_wind_components(xr.Dataset({"temp": xr.DataArray([1.0])}))
+        vector_router._resolve_wind_components(
+            xr.Dataset({"temp": xr.DataArray([1.0])})
+        )
     assert exc.value.status_code == 404
 
 
