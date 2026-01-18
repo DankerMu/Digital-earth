@@ -2,7 +2,11 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
+
+PIPELINE_SRC = Path(__file__).resolve().parents[1] / "src"
+sys.path.insert(0, str(PIPELINE_SRC))
 
 from datacube.inspect import inspect_datacube
 
@@ -30,4 +34,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

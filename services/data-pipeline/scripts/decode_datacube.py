@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 import argparse
+import sys
 from pathlib import Path
+
+PIPELINE_SRC = Path(__file__).resolve().parents[1] / "src"
+sys.path.insert(0, str(PIPELINE_SRC))
 
 from datacube.decoder import decode_datacube
 from datacube.storage import DataCubeWriteOptions
@@ -59,4 +63,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
