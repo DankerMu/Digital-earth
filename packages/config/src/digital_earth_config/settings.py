@@ -299,6 +299,9 @@ class WebSettings(BaseModel):
 class StorageSettings(BaseModel):
     tiles_bucket: str
     raw_bucket: str
+    endpoint_url: Optional[str] = None
+    region_name: Optional[str] = None
+    tiles_base_url: Optional[str] = None
     access_key_id: Optional[SecretStr] = Field(default=None, repr=False)
     secret_access_key: Optional[SecretStr] = Field(default=None, repr=False)
 
