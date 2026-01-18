@@ -55,10 +55,52 @@ return {0, retry_after_ms}
 """
 
 
-def create_redis_client(redis_url: str) -> Redis:
-    if Redis is object:  # pragma: no cover
-        raise RuntimeError("redis dependency is required for rate limiting")
-    return Redis.from_url(redis_url, decode_responses=False)
+def create_redis_client(redis_url: str) -> LazyRedisClient:
+    return LazyRedisClient(redis_url)
+
+
+class LazyRedisClient:
+    def __init__(self, redis_url: str) -> None:
+        self._redis_url = redis_url
+        self._client: Redis | None = None
+
+    async def connect(self) -> None:
+        if self._client is not None:
+            return
+        if Redis is object:  # pragma: no cover
+            raise RuntimeError("redis dependency is required for rate limiting")
+        self._client = Redis.from_url(self._redis_url, decode_responses=False)
+
+    def _require(self) -> Redis:
+        if self._client is None:  # pragma: no cover
+            raise RuntimeError("Redis client is not connected yet")
+        return self._client
+
+    async def eval(self, script: str, numkeys: int, *keys_and_args: object) -> object:
+        return await self._require().eval(script, numkeys, *keys_and_args)
+
+    async def get(self, key: str) -> bytes | None:
+        return await self._require().get(key)
+
+    async def set(
+        self,
+        key: str,
+        value: bytes,
+        *,
+        ex: int | None = None,
+        px: int | None = None,
+        nx: bool = False,
+    ) -> object:
+        return await self._require().set(key, value, ex=ex, px=px, nx=nx)
+
+    async def delete(self, *keys: str) -> int:
+        return await self._require().delete(*keys)
+
+    async def close(self) -> None:
+        if self._client is None:
+            return
+        await self._client.close()
+        self._client = None
 
 
 def _now_ms() -> int:

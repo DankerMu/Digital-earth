@@ -3,6 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from catalog_cache import StaleRedisCache
 from config import get_settings
 from observability import (
     TraceIdMiddleware,
@@ -27,6 +28,14 @@ def create_app() -> FastAPI:
     app = FastAPI(title="Digital Earth API", debug=settings.api.debug)
 
     redis_client = create_redis_client(settings.redis.url)
+    app.state.redis_client = redis_client
+    app.state.catalog_cache = StaleRedisCache(redis_client)
+
+    @app.on_event("startup")
+    async def _connect_redis_client() -> None:
+        connect = getattr(redis_client, "connect", None)
+        if callable(connect):
+            await connect()
 
     app.add_middleware(
         RateLimitMiddleware,

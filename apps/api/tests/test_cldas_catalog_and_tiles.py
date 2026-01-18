@@ -8,6 +8,7 @@ import numpy as np
 import pytest
 import xarray as xr
 from fastapi.testclient import TestClient
+from tests.fake_redis import FakeRedis
 
 
 def _write_config(dir_path: Path, env: str, data: dict) -> None:
@@ -56,6 +57,26 @@ def _write_local_data_config(path: Path) -> None:
     )
 
 
+def _write_tiling_config(path: Path) -> None:
+    path.write_text(
+        "\n".join(
+            [
+                "tiling:",
+                "  crs: EPSG:4326",
+                "  global:",
+                "    min_zoom: 0",
+                "    max_zoom: 6",
+                "  event:",
+                "    min_zoom: 8",
+                "    max_zoom: 10",
+                "  tile_size: 256",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+
 def _make_client(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -67,6 +88,7 @@ def _make_client(
     config_dir = tmp_path / "config"
     _write_config(config_dir, "dev", config or _base_config())
     _write_local_data_config(config_dir / "local-data.yaml")
+    _write_tiling_config(config_dir / "tiling.yaml")
 
     monkeypatch.setenv("DIGITAL_EARTH_ENV", "dev")
     monkeypatch.setenv("DIGITAL_EARTH_CONFIG_DIR", str(config_dir))
@@ -76,13 +98,14 @@ def _make_client(
     from config import get_settings
     from digital_earth_config.local_data import get_local_data_paths
     from local_data_service import get_data_source
-    from main import create_app
+    import main
 
     get_settings.cache_clear()
     get_data_source.cache_clear()
     get_local_data_paths.cache_clear()
 
-    return TestClient(create_app())
+    monkeypatch.setattr(main, "create_redis_client", lambda _url: FakeRedis())
+    return TestClient(main.create_app())
 
 
 def _write_cldas_file(tmp_path: Path, *, ts: str = "2025010100") -> Path:
