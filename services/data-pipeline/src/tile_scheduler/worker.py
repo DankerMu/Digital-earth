@@ -51,7 +51,7 @@ class TileJobResult:
     metadata: Mapping[str, Any] = field(default_factory=dict)
 
 
-TileJobHandler = Callable[[TileJob], Mapping[str, Any] | None]
+TileJobHandler = Callable[[TileJob], Optional[Mapping[str, Any]]]
 
 
 class TileWorker:
