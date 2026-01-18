@@ -5,7 +5,7 @@ import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Final, Optional
+from typing import Any, Final, Optional
 
 import numpy as np
 import xarray as xr
@@ -187,6 +187,79 @@ def temperature_rgba(values: np.ndarray) -> np.ndarray:
     return rgba
 
 
+def _parse_hex_rgb(value: str) -> tuple[int, int, int]:
+    normalized = (value or "").strip()
+    if not normalized.startswith("#") or len(normalized) != 7:
+        raise ValueError(f"Invalid hex color: {value!r}")
+    try:
+        r = int(normalized[1:3], 16)
+        g = int(normalized[3:5], 16)
+        b = int(normalized[5:7], 16)
+    except ValueError as exc:
+        raise ValueError(f"Invalid hex color: {value!r}") from exc
+    return r, g, b
+
+
+def gradient_rgba_from_legend(values: np.ndarray, *, legend: dict[str, Any]) -> np.ndarray:
+    if legend.get("type") != "gradient":
+        raise ValueError("Only gradient legends are supported for raster tiling")
+
+    stops = legend.get("stops")
+    if not isinstance(stops, list) or len(stops) < 2:
+        raise ValueError("legend.stops must be a list with at least 2 stops")
+
+    stop_values: list[float] = []
+    stop_colors: list[tuple[int, int, int]] = []
+    for stop in stops:
+        if not isinstance(stop, dict):
+            raise ValueError("legend.stops entries must be objects")
+        raw_value = stop.get("value")
+        raw_color = stop.get("color")
+        if not isinstance(raw_value, (int, float)) or not np.isfinite(float(raw_value)):
+            raise ValueError("legend stop value must be a finite number")
+        if not isinstance(raw_color, str):
+            raise ValueError("legend stop color must be a string")
+        stop_values.append(float(raw_value))
+        stop_colors.append(_parse_hex_rgb(raw_color))
+
+    order = np.argsort(np.asarray(stop_values, dtype=np.float64))
+    stop_values_np = np.asarray(stop_values, dtype=np.float32)[order]
+    stop_colors_np = np.asarray(stop_colors, dtype=np.float32)[order]
+    diffs = np.diff(stop_values_np.astype(np.float64, copy=False))
+    if not np.all(diffs > 0):
+        raise ValueError("legend stop values must be strictly increasing")
+
+    values_f = values.astype(np.float32, copy=False)
+    mask = np.isfinite(values_f)
+    clipped = np.clip(values_f, float(stop_values_np[0]), float(stop_values_np[-1]))
+    clipped = np.where(mask, clipped, float(stop_values_np[0])).astype(
+        np.float32, copy=False
+    )
+
+    right = np.searchsorted(stop_values_np, clipped, side="right").astype(np.int64)
+    left = np.clip(right - 1, 0, stop_values_np.size - 2)
+    right = left + 1
+
+    v0 = stop_values_np[left]
+    v1 = stop_values_np[right]
+    denom = v1 - v0
+    denom_safe = np.where(denom == 0, 1.0, denom)
+    frac = (clipped - v0) / denom_safe
+    frac = np.clip(frac, 0.0, 1.0).astype(np.float32, copy=False)
+
+    c0 = stop_colors_np[left]
+    c1 = stop_colors_np[right]
+    rgb = c0 * (1.0 - frac[..., None]) + c1 * frac[..., None]
+    rgb = np.where(mask[..., None], rgb, 0.0)
+
+    rgba = np.zeros((*values_f.shape, 4), dtype=np.uint8)
+    alpha = np.zeros(values_f.shape, dtype=np.uint8)
+    alpha[mask] = 255
+    rgba[..., :3] = np.clip(np.rint(rgb), 0, 255).astype(np.uint8)
+    rgba[..., 3] = alpha
+    return rgba
+
+
 @dataclass(frozen=True)
 class TileGenerationResult:
     layer: str
@@ -211,6 +284,7 @@ class CLDASTileGenerator:
         self._variable = variable
         self._time_index = int(time_index)
         self._layer = _validate_layer(layer)
+        self._legend: Optional[dict[str, Any]] = None
         if self._variable.strip() == "":
             raise ValueError("variable must not be empty")
 
@@ -234,6 +308,18 @@ class CLDASTileGenerator:
     @property
     def layer(self) -> str:
         return self._layer
+
+    def _load_legend(self) -> dict[str, Any]:
+        if self._legend is None:
+            parts = self._layer.split("/")
+            self._legend = load_legend(*parts, "legend.json")
+        return self._legend
+
+    def _colorize(self, values: np.ndarray) -> np.ndarray:
+        if self._layer == "cldas/tmp":
+            return temperature_rgba(values)
+        legend = self._load_legend()
+        return gradient_rgba_from_legend(values, legend=legend)
 
     def _extract_grid(self) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         if self._variable not in self._ds.data_vars:
@@ -300,7 +386,7 @@ class CLDASTileGenerator:
         sampled = _bilinear_sample(
             lat, lon, grid, lat_query=lat_px.astype(np.float64), lon_query=lon_px
         )
-        return temperature_rgba(sampled)
+        return self._colorize(sampled)
 
     def render_tile(
         self, *, zoom: int, x: int, y: int, tile_size: int = 256
@@ -317,7 +403,7 @@ class CLDASTileGenerator:
         _ensure_relative_to_base(base_dir=base, path=layer_dir, label="layer")
         layer_dir.mkdir(parents=True, exist_ok=True)
 
-        legend = load_legend("cldas", "tmp", "legend.json")
+        legend = self._load_legend()
         target = (layer_dir / "legend.json").resolve()
         _ensure_relative_to_base(base_dir=base, path=target, label="layer")
         target.write_text(
