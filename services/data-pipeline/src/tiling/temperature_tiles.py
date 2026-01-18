@@ -12,6 +12,7 @@ import numpy as np
 import xarray as xr
 from PIL import Image
 
+from legend import normalize_legend_for_clients
 from datacube.core import DataCube
 from digital_earth_config.settings import _resolve_config_dir
 from tiling.cldas_tiles import (
@@ -530,19 +531,32 @@ class TemperatureTileGenerator:
         )
         return Image.fromarray(rgba)
 
-    def write_legend(self, output_dir: str | Path) -> Path:
+    def write_legend(
+        self, output_dir: str | Path, *, level_key: str | None = None
+    ) -> Path:
         base = Path(output_dir).resolve()
         layer_dir = (base / self._layer).resolve()
         _ensure_relative_to_base(base_dir=base, path=layer_dir, label="layer")
         layer_dir.mkdir(parents=True, exist_ok=True)
 
-        legend = self._load_legend()
+        legend = normalize_legend_for_clients(self._load_legend())
         target = (layer_dir / DEFAULT_TEMPERATURE_LEGEND_FILENAME).resolve()
         _ensure_relative_to_base(base_dir=base, path=target, label="layer")
         target.write_text(
-            json.dumps(legend, ensure_ascii=False, indent=2) + "\n",
+            json.dumps(legend, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
             encoding="utf-8",
         )
+
+        if level_key is not None:
+            level_dir = (layer_dir / _validate_level_key(level_key)).resolve()
+            _ensure_relative_to_base(base_dir=base, path=level_dir, label="level")
+            level_dir.mkdir(parents=True, exist_ok=True)
+            level_target = (level_dir / DEFAULT_TEMPERATURE_LEGEND_FILENAME).resolve()
+            _ensure_relative_to_base(base_dir=base, path=level_target, label="level")
+            level_target.write_text(
+                json.dumps(legend, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
         return target
 
     def generate(
@@ -597,7 +611,7 @@ class TemperatureTileGenerator:
         _ensure_relative_to_base(base_dir=base, path=tiles_root, label="time_key")
         tiles_root.mkdir(parents=True, exist_ok=True)
 
-        self.write_legend(base)
+        self.write_legend(base, level_key=level_key)
 
         tiles_written = 0
         for zoom in range(resolved_min_zoom, resolved_max_zoom + 1):
