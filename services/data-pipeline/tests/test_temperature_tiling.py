@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
+import re
 
 import numpy as np
 import pytest
@@ -105,6 +107,17 @@ def test_temperature_tile_generator_writes_png_webp_and_legend(
 
     legend_path = tmp_path / "ecmwf" / "temp" / "legend.json"
     assert legend_path.is_file()
+    legend = json.loads(legend_path.read_text(encoding="utf-8"))
+    assert legend["unit"] == "°C"
+    assert legend["min"] == -20
+    assert legend["max"] == 40
+    assert len(legend["colorStops"]) == 3
+    assert re.fullmatch(r"[a-f0-9]{64}", legend["version"]) is not None
+
+    level_legend_path = tmp_path / "ecmwf" / "temp" / result.level / "legend.json"
+    assert level_legend_path.is_file()
+    level_legend = json.loads(level_legend_path.read_text(encoding="utf-8"))
+    assert level_legend["version"] == legend["version"]
 
     png_path = (
         tmp_path / "ecmwf" / "temp" / result.time / result.level / "0" / "0" / "0.png"

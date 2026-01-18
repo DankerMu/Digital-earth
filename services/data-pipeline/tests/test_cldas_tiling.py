@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
+import re
 import sys
 from types import ModuleType, SimpleNamespace
 
@@ -62,6 +64,13 @@ def test_cldas_tile_generator_writes_png_and_legend(tmp_path: Path) -> None:
 
     legend_path = tmp_path / "cldas" / "tmp" / "legend.json"
     assert legend_path.is_file()
+    legend = json.loads(legend_path.read_text(encoding="utf-8"))
+    assert legend["unit"] == "°C"
+    assert legend["min"] == -20
+    assert legend["max"] == 40
+    assert len(legend["colorStops"]) == 3
+    assert legend["colorStops"][0]["color"] == "#3B82F6"
+    assert re.fullmatch(r"[a-f0-9]{64}", legend["version"]) is not None
 
     tile_path = tmp_path / "cldas" / "tmp" / "20260101T000000Z" / "0" / "0" / "0.png"
     assert tile_path.is_file()

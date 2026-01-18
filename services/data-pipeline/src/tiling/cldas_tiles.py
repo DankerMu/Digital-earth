@@ -11,7 +11,7 @@ import numpy as np
 import xarray as xr
 from PIL import Image
 
-from legend import load_legend
+from legend import load_legend, normalize_legend_for_clients
 from digital_earth_config import Settings
 from local.cldas_loader import load_cldas_dataset
 from tiling.config import TilingConfig, get_tiling_config
@@ -208,8 +208,12 @@ def gradient_rgba_from_legend(
         raise ValueError("Only gradient legends are supported for raster tiling")
 
     stops = legend.get("stops")
+    if stops is None:
+        stops = legend.get("colorStops")
     if not isinstance(stops, list) or len(stops) < 2:
-        raise ValueError("legend.stops must be a list with at least 2 stops")
+        raise ValueError(
+            "legend.stops (or legend.colorStops) must be a list with at least 2 stops"
+        )
 
     stop_values: list[float] = []
     stop_colors: list[tuple[int, int, int]] = []
@@ -451,11 +455,11 @@ class CLDASTileGenerator:
         _ensure_relative_to_base(base_dir=base, path=layer_dir, label="layer")
         layer_dir.mkdir(parents=True, exist_ok=True)
 
-        legend = self._load_legend()
+        legend = normalize_legend_for_clients(self._load_legend())
         target = (layer_dir / "legend.json").resolve()
         _ensure_relative_to_base(base_dir=base, path=target, label="layer")
         target.write_text(
-            json.dumps(legend, ensure_ascii=False, indent=2) + "\n",
+            json.dumps(legend, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
             encoding="utf-8",
         )
         return target
