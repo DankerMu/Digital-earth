@@ -14,8 +14,9 @@ from PIL import Image
 from legend import load_legend
 from digital_earth_config import Settings
 from local.cldas_loader import load_cldas_dataset
+from tiling.config import TilingConfig, get_tiling_config
 from tiling.storage import S3UploadConfig, upload_directory_to_s3
-from tiling.web_mercator import TileBounds, lat_to_tile_y, lon_to_tile_x, tile_bounds
+from tiling.epsg4326 import TileBounds, lat_to_tile_y, lon_to_tile_x, tile_bounds
 
 
 class CldasTilingError(RuntimeError):
@@ -375,27 +376,72 @@ class CLDASTileGenerator:
             raise ValueError("tile_size must be > 0")
 
         bounds: TileBounds = tile_bounds(zoom, x, y)
-        n = 2**zoom
 
         cols = (np.arange(tile_size, dtype=np.float64) + 0.5) / tile_size
         rows = (np.arange(tile_size, dtype=np.float64) + 0.5) / tile_size
 
         lon_px = bounds.west + cols * (bounds.east - bounds.west)
-        merc_y = (y + rows) / n
-        lat_rad = np.arctan(np.sinh(np.pi * (1.0 - 2.0 * merc_y)))
-        lat_px = np.degrees(lat_rad)
+        lat_px = bounds.north - rows * (bounds.north - bounds.south)
 
         sampled = _bilinear_sample(
             lat, lon, grid, lat_query=lat_px.astype(np.float64), lon_query=lon_px
         )
         return self._colorize(sampled)
 
+    @staticmethod
+    def _validate_config(config: TilingConfig) -> None:
+        if config.crs != "EPSG:4326":
+            raise ValueError(
+                f"Unsupported tiling CRS={config.crs!r}; expected EPSG:4326"
+            )
+
+    @staticmethod
+    def _validate_zoom_range(
+        *, min_zoom: int, max_zoom: int, config: TilingConfig
+    ) -> None:
+        if min_zoom < 0 or max_zoom < 0 or max_zoom < min_zoom:
+            raise ValueError("Invalid zoom range")
+
+        global_range = config.global_
+        event_range = config.event
+
+        if min_zoom < global_range.min_zoom:
+            raise ValueError(
+                f"Requested min_zoom={min_zoom} below configured global min_zoom={global_range.min_zoom}"
+            )
+        if max_zoom > event_range.max_zoom:
+            raise ValueError(
+                f"Requested max_zoom={max_zoom} exceeds configured max_zoom={event_range.max_zoom}"
+            )
+
+        in_global = (
+            min_zoom >= global_range.min_zoom and max_zoom <= global_range.max_zoom
+        )
+        in_event = min_zoom >= event_range.min_zoom and max_zoom <= event_range.max_zoom
+        if not (in_global or in_event):
+            raise ValueError(
+                "Requested zoom range must fall entirely within configured "
+                f"global={global_range.min_zoom}–{global_range.max_zoom} "
+                f"or event={event_range.min_zoom}–{event_range.max_zoom}"
+            )
+
     def render_tile(
-        self, *, zoom: int, x: int, y: int, tile_size: int = 256
+        self, *, zoom: int, x: int, y: int, tile_size: int | None = None
     ) -> Image.Image:
+        config = get_tiling_config()
+        self._validate_config(config)
+
         lat, lon, grid = self._extract_grid()
+        resolved_tile_size = int(config.tile_size if tile_size is None else tile_size)
+        self._validate_zoom_range(min_zoom=int(zoom), max_zoom=int(zoom), config=config)
         rgba = self._render_tile_array(
-            zoom=zoom, x=x, y=y, tile_size=tile_size, lat=lat, lon=lon, grid=grid
+            zoom=zoom,
+            x=x,
+            y=y,
+            tile_size=resolved_tile_size,
+            lat=lat,
+            lon=lon,
+            grid=grid,
         )
         return Image.fromarray(rgba)
 
@@ -418,13 +464,28 @@ class CLDASTileGenerator:
         self,
         output_dir: str | Path,
         *,
-        min_zoom: int = 6,
-        max_zoom: int = 14,
-        tile_size: int = 256,
+        min_zoom: int | None = None,
+        max_zoom: int | None = None,
+        tile_size: int | None = None,
         time_key: Optional[str] = None,
     ) -> TileGenerationResult:
-        if min_zoom < 0 or max_zoom < 0 or max_zoom < min_zoom:
-            raise ValueError("Invalid zoom range")
+        config = get_tiling_config()
+        self._validate_config(config)
+
+        resolved_min_zoom: int
+        resolved_max_zoom: int
+        if min_zoom is None and max_zoom is None:
+            resolved_min_zoom = int(config.global_.min_zoom)
+            resolved_max_zoom = int(config.global_.max_zoom)
+        else:
+            resolved_min_zoom = int(max_zoom if min_zoom is None else min_zoom)
+            resolved_max_zoom = int(min_zoom if max_zoom is None else max_zoom)
+
+        resolved_tile_size = int(config.tile_size if tile_size is None else tile_size)
+
+        self._validate_zoom_range(
+            min_zoom=resolved_min_zoom, max_zoom=resolved_max_zoom, config=config
+        )
 
         lat, lon, grid = self._extract_grid()
         lat_min = float(np.nanmin(lat))
@@ -451,7 +512,7 @@ class CLDASTileGenerator:
         self.write_legend(base)
 
         tiles_written = 0
-        for zoom in range(min_zoom, max_zoom + 1):
+        for zoom in range(resolved_min_zoom, resolved_max_zoom + 1):
             x0 = lon_to_tile_x(lon_min, zoom)
             x1 = lon_to_tile_x(lon_max, zoom)
             y0 = lat_to_tile_y(lat_max, zoom)
@@ -465,7 +526,7 @@ class CLDASTileGenerator:
                         zoom=zoom,
                         x=x,
                         y=y,
-                        tile_size=tile_size,
+                        tile_size=resolved_tile_size,
                         lat=lat,
                         lon=lon,
                         grid=grid,
@@ -480,8 +541,8 @@ class CLDASTileGenerator:
             variable=self._variable,
             time=resolved_time_key,
             output_dir=layer_dir,
-            min_zoom=min_zoom,
-            max_zoom=max_zoom,
+            min_zoom=resolved_min_zoom,
+            max_zoom=resolved_max_zoom,
             tiles_written=tiles_written,
         )
 
