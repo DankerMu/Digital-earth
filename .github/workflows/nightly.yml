@@ -15,6 +15,83 @@ jobs:
         with:
           lfs: true
 
+      - name: Inject Cesium ion token (UE)
+        shell: pwsh
+        env:
+          DIGITAL_EARTH_UE_CESIUM_ION_ACCESS_TOKEN: ${{ secrets.DIGITAL_EARTH_UE_CESIUM_ION_ACCESS_TOKEN }}
+        run: |
+          $token = $env:DIGITAL_EARTH_UE_CESIUM_ION_ACCESS_TOKEN
+          if ($null -eq $token) { $token = "" }
+          $token = $token.Trim()
+          if ($token -eq "") {
+            throw "Missing GitHub Actions secret: DIGITAL_EARTH_UE_CESIUM_ION_ACCESS_TOKEN"
+          }
+
+          $configPath = Join-Path "${{ github.workspace }}" "apps\\ue-client\\Config\\DefaultEngine.ini"
+          $configDir = Split-Path -Parent $configPath
+          New-Item -ItemType Directory -Force -Path $configDir | Out-Null
+          if (-not (Test-Path $configPath)) {
+            New-Item -ItemType File -Force -Path $configPath | Out-Null
+          }
+
+          $sectionHeader = "[/Script/CesiumRuntime.CesiumRuntimeSettings]"
+          $key = "DefaultIonAccessToken"
+          $lines = @()
+          if (Test-Path $configPath) {
+            $lines = Get-Content -Path $configPath -ErrorAction SilentlyContinue
+          }
+
+          $inSection = $false
+          $foundSection = $false
+          $replaced = $false
+          $out = New-Object System.Collections.Generic.List[string]
+
+          foreach ($line in $lines) {
+            $trim = $line
+            if ($null -eq $trim) { $trim = "" }
+            $trim = $trim.Trim()
+
+            if ($trim -match '^\\[.*\\]$') {
+              if ($inSection -and -not $replaced) {
+                $out.Add("$key=$token")
+                $replaced = $true
+              }
+
+              $inSection = ($trim -eq $sectionHeader)
+              if ($inSection) {
+                $foundSection = $true
+              }
+
+              $out.Add($line)
+              continue
+            }
+
+            if ($inSection -and ($trim -match ("^" + [regex]::Escape($key) + "\\s*="))) {
+              $out.Add("$key=$token")
+              $replaced = $true
+              continue
+            }
+
+            $out.Add($line)
+          }
+
+          if (-not $foundSection) {
+            $last = ""
+            if ($out.Count -gt 0) {
+              $last = $out[$out.Count - 1]
+              if ($null -eq $last) { $last = "" }
+            }
+            if ($out.Count -gt 0 -and $last -ne "") {
+              $out.Add("")
+            }
+            $out.Add($sectionHeader)
+            $out.Add("$key=$token")
+          } elseif (-not $replaced) {
+            $out.Add("$key=$token")
+          }
+
+          Set-Content -Path $configPath -Value $out -Encoding UTF8
+
       - name: Cook & Package
         shell: pwsh
         run: |
