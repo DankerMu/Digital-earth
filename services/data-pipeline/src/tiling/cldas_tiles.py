@@ -200,7 +200,9 @@ def _parse_hex_rgb(value: str) -> tuple[int, int, int]:
     return r, g, b
 
 
-def gradient_rgba_from_legend(values: np.ndarray, *, legend: dict[str, Any]) -> np.ndarray:
+def gradient_rgba_from_legend(
+    values: np.ndarray, *, legend: dict[str, Any]
+) -> np.ndarray:
     if legend.get("type") != "gradient":
         raise ValueError("Only gradient legends are supported for raster tiling")
 

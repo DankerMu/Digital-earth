@@ -91,9 +91,9 @@ def create_demo_monitoring_dataset(
     precip_base = (0.55 + 0.45 * wave_x) * (0.6 + 0.4 * wave_y) * precip_band
     precip_mm = 95.0 * precip_base + 6.0 * rng.random(size=precip_base.shape)
     precip_mm = np.clip(precip_mm, 0.0, 120.0).astype(np.float32, copy=False)
-    precip_mm = np.where(
-        precip_mm < 0.5, np.nan, precip_mm
-    ).astype(np.float32, copy=False)
+    precip_mm = np.where(precip_mm < 0.5, np.nan, precip_mm).astype(
+        np.float32, copy=False
+    )
 
     time = _time_coord_from_iso(time_iso)
     ds = xr.Dataset(
