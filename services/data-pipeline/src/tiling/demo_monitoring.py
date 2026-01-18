@@ -11,6 +11,7 @@ import numpy as np
 import xarray as xr
 
 from tiling.cldas_tiles import CLDASTileGenerator, TileGenerationResult
+from tiling.config import get_tiling_config
 
 DEFAULT_DEMO_SEED: Final[int] = 870056
 DEFAULT_TIME_ISO: Final[str] = "2026-01-01T00:00:00Z"
@@ -122,9 +123,9 @@ def generate_demo_monitoring_tiles(
     time_iso: str = DEFAULT_TIME_ISO,
     bounds: DemoBounds = DemoBounds(),
     resolution_deg: float = 0.05,
-    min_zoom: int = 6,
-    max_zoom: int = 8,
-    tile_size: int = 256,
+    min_zoom: int | None = None,
+    max_zoom: int | None = None,
+    tile_size: int | None = None,
     time_key: str | None = None,
 ) -> list[TileGenerationResult]:
     ds = create_demo_monitoring_dataset(
@@ -153,6 +154,7 @@ def generate_demo_monitoring_tiles(
 
 
 def _build_parser() -> argparse.ArgumentParser:
+    config = get_tiling_config()
     parser = argparse.ArgumentParser(
         prog="python -m tiling.demo_monitoring",
         description="Generate deterministic demo monitoring tiles (snow depth / precipitation).",
@@ -167,9 +169,9 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--north", type=float, default=DemoBounds.north)
     parser.add_argument("--resolution-deg", type=float, default=0.05)
 
-    parser.add_argument("--min-zoom", type=int, default=6)
-    parser.add_argument("--max-zoom", type=int, default=8)
-    parser.add_argument("--tile-size", type=int, default=256)
+    parser.add_argument("--min-zoom", type=int, default=config.global_.min_zoom)
+    parser.add_argument("--max-zoom", type=int, default=config.global_.max_zoom)
+    parser.add_argument("--tile-size", type=int, default=config.tile_size)
     parser.add_argument("--time-key", default=None)
     return parser
 
@@ -190,9 +192,9 @@ def main(argv: Iterable[str] | None = None) -> int:
         time_iso=str(args.time_iso),
         bounds=bounds,
         resolution_deg=float(args.resolution_deg),
-        min_zoom=int(args.min_zoom),
-        max_zoom=int(args.max_zoom),
-        tile_size=int(args.tile_size),
+        min_zoom=int(args.min_zoom) if args.min_zoom is not None else None,
+        max_zoom=int(args.max_zoom) if args.max_zoom is not None else None,
+        tile_size=int(args.tile_size) if args.tile_size is not None else None,
         time_key=str(args.time_key) if args.time_key is not None else None,
     )
     for result in results:

@@ -31,7 +31,7 @@ def test_temperature_rgba_endpoints_and_nodata() -> None:
 def _make_global_tmp_dataset(
     *, value: float, lat_descending: bool = False
 ) -> xr.Dataset:
-    lat = np.array([-85.05112878, 0.0, 85.05112878], dtype=np.float64)
+    lat = np.array([-90.0, 0.0, 90.0], dtype=np.float64)
     lon = np.array([-180.0, 0.0, 180.0], dtype=np.float64)
     if lat_descending:
         lat = lat[::-1]
