@@ -1,0 +1,38 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  # NOTE:
+  # - This ConfigMap is intended to be merged into the ingress-nginx controller ConfigMap.
+  # - The actual name/namespace may differ depending on how ingress-nginx is installed (Helm/kustomize).
+  # - Do NOT blindly apply to a shared cluster without reviewing existing controller config.
+  name: ingress-nginx-controller
+  namespace: ingress-nginx
+data:
+  # Enable ModSecurity module in ingress-nginx controller.
+  enable-modsecurity: "true"
+  # Enable bundled OWASP ModSecurity Core Rule Set (CRS) in ingress-nginx controller.
+  enable-owasp-modsecurity-crs: "true"
+  # Custom ModSecurity directives/rules (appended to the controller's ModSecurity config).
+  # - Keep this conservative to reduce false positives.
+  # - Log blocked requests as JSON to stdout for cluster log collection.
+  modsecurity-snippet: |
+    SecRuleEngine On
+
+    SecAuditEngine RelevantOnly
+    SecAuditLog /dev/stdout
+    SecAuditLogFormat JSON
+    SecAuditLogType Serial
+    SecAuditLogRelevantStatus "^(?:403|4(?!04)|5)"
+
+    # [Scan] Block common crawler/scanner paths probing for secrets/admin panels.
+    SecRule REQUEST_URI "@rx (?i)(?:/\\.git(?:/|$)|/\\.env(?:/|$)|/\\.svn(?:/|$)|/\\.hg(?:/|$)|/wp-admin(?:/|$)|/wp-login\\.php|/phpmyadmin(?:/|$)|/cgi-bin(?:/|$)|/actuator(?:/|$)|/server-status(?:$|/))" "id:1001000,phase:1,deny,status:403,log,auditlog,msg:'WAF: scanner path blocked',tag:'waf/scan'"
+
+    # [SQLi] Block obvious SQL injection payloads in query arguments.
+    SecRule ARGS "@rx (?i)(?:\\bunion(?:\\s+all)?\\s+select\\b|\\bor\\s+1=1\\b|\\bbenchmark\\s*\\(|\\bsleep\\s*\\(|\\bload_file\\s*\\(|\\binto\\s+outfile\\b)" "id:1001001,phase:2,deny,status:403,log,auditlog,msg:'WAF: basic SQLi pattern blocked',tag:'waf/sqli'"
+
+    # [XSS] Block obvious script injection payloads in query arguments.
+    SecRule ARGS "@rx (?i)(?:<script\\b|javascript:|\\bonerror\\s*=|\\bonload\\s*=)" "id:1001002,phase:2,deny,status:403,log,auditlog,msg:'WAF: basic XSS pattern blocked',tag:'waf/xss'"
+
+    # [Optional: Auto-ban] Increment per-IP counter for well-known attack tool UAs; deny when threshold reached.
+    SecRule IP:BAD_UA "@ge 5" "id:1001101,phase:1,deny,status:403,log,auditlog,msg:'WAF: IP temporarily banned (bad UA threshold)',tag:'waf/ban'"
+    SecRule REQUEST_HEADERS:User-Agent "@rx (?i)(?:sqlmap|nikto|acunetix|nessus|zgrab|masscan|nmap|gobuster|dirbuster)" "id:1001100,phase:1,deny,status:403,log,auditlog,msg:'WAF: bad UA blocked',tag:'waf/bot',setvar:ip.bad_ua=+1,expirevar:ip.bad_ua=600"
