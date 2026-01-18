@@ -14,6 +14,34 @@ from retention.refs import load_tiles_references
 logger = logging.getLogger(__name__)
 
 
+def _assert_no_symlink(path: Path, *, label: str) -> None:
+    if path.is_symlink():
+        raise ValueError(f"Refusing to {label} symlink: {path}")
+
+
+def _assert_resolved_within_root(path: Path, *, root: Path, label: str) -> Path:
+    resolved = path.resolve()
+    if not resolved.is_relative_to(root):
+        raise ValueError(
+            f"Refusing to {label} path outside root_dir: {resolved} (root_dir={root})"
+        )
+    return resolved
+
+
+def _assert_no_symlink_components(path: Path, *, root: Path, label: str) -> None:
+    try:
+        rel = path.relative_to(root)
+    except ValueError:
+        raise ValueError(
+            f"Refusing to {label} path outside root_dir: {path} (root_dir={root})"
+        ) from None
+
+    cursor = root
+    for part in rel.parts:
+        cursor = cursor / part
+        _assert_no_symlink(cursor, label=label)
+
+
 def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -71,8 +99,11 @@ def _cleanup_run_tree(
     for source_dir in sorted(root.iterdir()):
         if not source_dir.is_dir():
             continue
+        _assert_no_symlink(source_dir, label="traverse")
 
-        source_dir_resolved = source_dir.resolve()
+        source_dir_resolved = _assert_resolved_within_root(
+            source_dir, root=root, label="traverse"
+        )
         runs: list[tuple[datetime, Path]] = []
         for child in source_dir.iterdir():
             if not child.is_dir():
@@ -93,12 +124,11 @@ def _cleanup_run_tree(
             )
 
         for path in to_delete:
-            resolved = path.resolve()
+            _assert_no_symlink(path, label="delete")
+            resolved = _assert_resolved_within_root(path, root=root, label="delete")
             if not resolved.is_relative_to(source_dir_resolved):
-                raise ValueError(
-                    f"Refusing to delete path outside source_dir: {resolved}"
-                )
-            shutil.rmtree(resolved)
+                raise ValueError(f"Refusing to delete path outside source_dir: {path}")
+            shutil.rmtree(path)
             deleted.append(resolved)
             audit.record(
                 event="retention.cleanup.deleted",
@@ -146,14 +176,18 @@ def _cleanup_tiles_tree(
 
     deleted: list[Path] = []
     for layer_dir in _discover_tile_layers(root):
+        _assert_no_symlink_components(layer_dir, root=root, label="traverse")
+        layer_dir_resolved = _assert_resolved_within_root(
+            layer_dir, root=root, label="traverse"
+        )
+
         try:
-            layer_key = layer_dir.resolve().relative_to(root).as_posix()
+            layer_key = layer_dir_resolved.relative_to(root).as_posix()
         except ValueError:
             raise ValueError(
                 f"Layer directory escapes tiles_root: {layer_dir}"
             ) from None
 
-        layer_dir_resolved = layer_dir.resolve()
         pinned = referenced_versions.get(layer_key, set())
 
         versions: list[tuple[datetime, Path]] = []
@@ -179,12 +213,12 @@ def _cleanup_tiles_tree(
         for _, path in versions:
             if path.name in keep:
                 continue
-            resolved = path.resolve()
+            _assert_no_symlink_components(path, root=root, label="delete")
+            _assert_no_symlink(path, label="delete")
+            resolved = _assert_resolved_within_root(path, root=root, label="delete")
             if not resolved.is_relative_to(layer_dir_resolved):
-                raise ValueError(
-                    f"Refusing to delete path outside layer_dir: {resolved}"
-                )
-            shutil.rmtree(resolved)
+                raise ValueError(f"Refusing to delete path outside layer_dir: {path}")
+            shutil.rmtree(path)
             deleted.append(resolved)
             audit.record(
                 event="retention.cleanup.deleted",

@@ -28,10 +28,10 @@ class AuditEvent:
 
     def to_dict(self) -> dict[str, Any]:
         return {
+            **self.payload,
             "event": self.event,
             "run_id": self.run_id,
             "timestamp": self.timestamp,
-            **self.payload,
         }
 
 

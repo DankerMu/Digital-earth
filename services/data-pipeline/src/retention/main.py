@@ -5,7 +5,7 @@ import asyncio
 from typing import Optional
 
 from retention import AuditLogger, get_retention_config, run_retention_cleanup
-from retention.scheduler import RetentionCleanupScheduler
+from retention.cleanup import RetentionCleanupResult
 
 
 def _parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
@@ -48,10 +48,12 @@ def main(argv: Optional[list[str]] = None) -> int:
         return 0
 
     if args.command == "run":
+        from retention.scheduler import RetentionCleanupScheduler
+
         cron = (args.cron or cfg.scheduler.cron).strip()
         max_retries = 0 if args.max_retries is None else args.max_retries
 
-        def cleanup() -> object:
+        def cleanup() -> RetentionCleanupResult:
             latest_cfg = get_retention_config(args.config_path)
             latest_audit = AuditLogger(log_path=latest_cfg.audit.log_path)
             return run_retention_cleanup(latest_cfg, audit=latest_audit)

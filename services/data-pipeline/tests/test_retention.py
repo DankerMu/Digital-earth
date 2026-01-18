@@ -254,8 +254,10 @@ def test_retention_cleanup_refuses_symlink_escape(tmp_path: Path) -> None:
     )
     audit = AuditLogger(log_path=cfg.audit.log_path)
 
-    with pytest.raises(ValueError, match="Refusing to delete path outside source_dir"):
+    with pytest.raises(ValueError, match="Refusing to delete symlink"):
         run_retention_cleanup(cfg, audit=audit)
+
+    assert (outside / "sentinel").exists()
 
     events = [
         json.loads(line)
@@ -263,6 +265,146 @@ def test_retention_cleanup_refuses_symlink_escape(tmp_path: Path) -> None:
     ]
     assert events[0]["event"] == "retention.cleanup.started"
     assert events[-1]["event"] == "retention.cleanup.error"
+
+
+def test_retention_cleanup_refuses_symlink_source_dir(tmp_path: Path) -> None:
+    from retention.audit import AuditLogger
+    from retention.cleanup import run_retention_cleanup
+    from retention.config import RetentionConfig
+
+    raw_root = tmp_path / "raw"
+    raw_root.mkdir(parents=True, exist_ok=True)
+
+    outside = tmp_path / "outside"
+    run_dir = outside / "ecmwf" / "2024010100"
+    run_dir.mkdir(parents=True, exist_ok=True)
+    (run_dir / "sentinel").write_text("x", encoding="utf-8")
+
+    source_link = raw_root / "ecmwf"
+    try:
+        source_link.symlink_to(outside / "ecmwf", target_is_directory=True)
+    except (OSError, NotImplementedError):
+        pytest.skip("symlinks not supported on this platform")
+
+    cfg = RetentionConfig.model_validate(
+        {
+            "schema_version": 1,
+            "raw": {"enabled": True, "root_dir": str(raw_root), "keep_n_runs": 0},
+            "cube": {
+                "enabled": False,
+                "root_dir": str(tmp_path / "cube"),
+                "keep_n_runs": 0,
+            },
+            "tiles": {
+                "enabled": False,
+                "root_dir": str(tmp_path / "tiles"),
+                "keep_n_versions": 0,
+            },
+            "audit": {"log_path": str(tmp_path / "audit.jsonl")},
+            "scheduler": {"enabled": False, "cron": "0 3 * * *"},
+        }
+    )
+    audit = AuditLogger(log_path=cfg.audit.log_path)
+
+    with pytest.raises(ValueError, match="Refusing to traverse symlink"):
+        run_retention_cleanup(cfg, audit=audit)
+
+    assert (run_dir / "sentinel").exists()
+
+
+def test_retention_cleanup_refuses_symlink_run_dir_even_within_root(
+    tmp_path: Path,
+) -> None:
+    from retention.audit import AuditLogger
+    from retention.cleanup import run_retention_cleanup
+    from retention.config import RetentionConfig
+
+    raw_root = tmp_path / "raw"
+    source_dir = raw_root / "ecmwf"
+    source_dir.mkdir(parents=True, exist_ok=True)
+
+    target_run = source_dir / "2024010200"
+    target_run.mkdir(parents=True, exist_ok=True)
+    (target_run / "sentinel").write_text("x", encoding="utf-8")
+
+    link_run = source_dir / "2024010100"
+    try:
+        link_run.symlink_to(target_run, target_is_directory=True)
+    except (OSError, NotImplementedError):
+        pytest.skip("symlinks not supported on this platform")
+
+    cfg = RetentionConfig.model_validate(
+        {
+            "schema_version": 1,
+            "raw": {"enabled": True, "root_dir": str(raw_root), "keep_n_runs": 0},
+            "cube": {
+                "enabled": False,
+                "root_dir": str(tmp_path / "cube"),
+                "keep_n_runs": 0,
+            },
+            "tiles": {
+                "enabled": False,
+                "root_dir": str(tmp_path / "tiles"),
+                "keep_n_versions": 0,
+            },
+            "audit": {"log_path": str(tmp_path / "audit.jsonl")},
+            "scheduler": {"enabled": False, "cron": "0 3 * * *"},
+        }
+    )
+    audit = AuditLogger(log_path=cfg.audit.log_path)
+
+    with pytest.raises(ValueError, match="Refusing to delete symlink"):
+        run_retention_cleanup(cfg, audit=audit)
+
+    assert (target_run / "sentinel").exists()
+
+
+def test_retention_cleanup_refuses_symlink_tiles_version(tmp_path: Path) -> None:
+    from retention.audit import AuditLogger
+    from retention.cleanup import run_retention_cleanup
+    from retention.config import RetentionConfig
+
+    tiles_root = tmp_path / "tiles"
+    layer_dir = tiles_root / "cldas" / "tmp"
+    layer_dir.mkdir(parents=True, exist_ok=True)
+    (layer_dir / "legend.json").write_text("{}", encoding="utf-8")
+
+    outside = tmp_path / "outside_version"
+    outside.mkdir(parents=True, exist_ok=True)
+    (outside / "sentinel").write_text("x", encoding="utf-8")
+
+    symlink_version = layer_dir / "20240101T000000Z"
+    try:
+        symlink_version.symlink_to(outside, target_is_directory=True)
+    except (OSError, NotImplementedError):
+        pytest.skip("symlinks not supported on this platform")
+
+    (layer_dir / "20240102T000000Z").mkdir(parents=True, exist_ok=True)
+
+    cfg = RetentionConfig.model_validate(
+        {
+            "schema_version": 1,
+            "raw": {"enabled": False, "root_dir": str(tmp_path / "raw"), "keep_n_runs": 0},
+            "cube": {
+                "enabled": False,
+                "root_dir": str(tmp_path / "cube"),
+                "keep_n_runs": 0,
+            },
+            "tiles": {
+                "enabled": True,
+                "root_dir": str(tiles_root),
+                "keep_n_versions": 0,
+            },
+            "audit": {"log_path": str(tmp_path / "audit.jsonl")},
+            "scheduler": {"enabled": False, "cron": "0 3 * * *"},
+        }
+    )
+    audit = AuditLogger(log_path=cfg.audit.log_path)
+
+    with pytest.raises(ValueError, match="Refusing to delete symlink"):
+        run_retention_cleanup(cfg, audit=audit)
+
+    assert (outside / "sentinel").exists()
 
 
 def test_tiles_references_loader_supports_multiple_formats(tmp_path: Path) -> None:

@@ -1,3 +1,5 @@
+from typing import TYPE_CHECKING, Any
+
 from retention.audit import AuditLogger
 from retention.cleanup import RetentionCleanupResult, run_retention_cleanup
 from retention.config import (
@@ -5,7 +7,9 @@ from retention.config import (
     get_retention_config,
     load_retention_config,
 )
-from retention.scheduler import RetentionCleanupScheduler
+
+if TYPE_CHECKING:
+    from retention.scheduler import RetentionCleanupScheduler
 
 __all__ = [
     "AuditLogger",
@@ -16,3 +20,11 @@ __all__ = [
     "load_retention_config",
     "run_retention_cleanup",
 ]
+
+
+def __getattr__(name: str) -> Any:
+    if name == "RetentionCleanupScheduler":
+        from retention.scheduler import RetentionCleanupScheduler
+
+        return RetentionCleanupScheduler
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
