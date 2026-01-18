@@ -280,3 +280,24 @@ def test_write_zarr_uses_to_zarr(
     assert called["consolidated"] is True
     assert "t" in called["encoding"]
     assert called["encoding"]["t"]["chunks"] == (1, 1, 2, 3)
+
+
+def test_datacube_open_loads_and_normalizes(tmp_path: Path) -> None:
+    from datacube.core import DataCube
+
+    source = tmp_path / "source.nc"
+    ds = _surface_dataset()
+    ds.to_netcdf(source, engine="h5netcdf")
+
+    cube = DataCube.open(source)
+    out = cube.dataset
+    assert set(out.dims) == {"time", "level", "lat", "lon"}
+
+
+def test_datacube_validate_raises_for_missing_dims() -> None:
+    from datacube.core import DataCube
+    from datacube.errors import DataCubeValidationError
+
+    cube = DataCube(dataset=xr.Dataset())
+    with pytest.raises(DataCubeValidationError, match="missing required dimensions"):
+        cube.validate()

@@ -8,6 +8,10 @@ import xarray as xr
 
 from datacube.errors import DataCubeValidationError
 from datacube.missing import standardize_missing
+from processing.precip_type import (
+    ensure_precip_type,
+    resolve_precip_type_temp_threshold_c,
+)
 from units.converter import kelvin_to_celsius, meters_to_mm
 
 _DIM_ALIASES: Mapping[str, Sequence[str]] = {
@@ -207,7 +211,9 @@ def _normalize_variable_units(name: str, da: xr.DataArray) -> xr.DataArray:
     return da
 
 
-def normalize_datacube_dataset(ds: xr.Dataset) -> xr.Dataset:
+def normalize_datacube_dataset(
+    ds: xr.Dataset, *, precip_type_temp_threshold_c: float | None = None
+) -> xr.Dataset:
     """Normalize a dataset into canonical DataCube form."""
 
     ds = ds.copy()
@@ -279,5 +285,13 @@ def normalize_datacube_dataset(ds: xr.Dataset) -> xr.Dataset:
     ds.attrs = dict(ds.attrs)
     ds.attrs.setdefault("datacube_schema_version", 1)
     ds.attrs.setdefault("datacube_missing", "NaN")
+
+    if "precip_type" not in ds.data_vars:
+        threshold_c = (
+            float(precip_type_temp_threshold_c)
+            if precip_type_temp_threshold_c is not None
+            else resolve_precip_type_temp_threshold_c()
+        )
+        ds = ensure_precip_type(ds, temp_threshold_c=threshold_c)
 
     return ds

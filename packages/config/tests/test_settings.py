@@ -105,6 +105,27 @@ def test_env_overrides_deep_merge(
     assert settings.api.host == "0.0.0.0"
 
 
+def test_pipeline_precip_type_threshold_loads_and_env_overrides(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    config_dir = tmp_path / "config"
+    base = _base_config()
+    base["pipeline"]["precip_type_temp_threshold_c"] = 1.5
+    _write_config(config_dir, "dev", base)
+
+    monkeypatch.setenv("DIGITAL_EARTH_ENV", "dev")
+    monkeypatch.setenv("DIGITAL_EARTH_CONFIG_DIR", str(config_dir))
+    monkeypatch.setenv("DIGITAL_EARTH_DB_USER", "app")
+    monkeypatch.setenv("DIGITAL_EARTH_DB_PASSWORD", "secret")
+
+    settings = Settings()
+    assert settings.pipeline.precip_type_temp_threshold_c == pytest.approx(1.5)
+
+    monkeypatch.setenv("DIGITAL_EARTH_PIPELINE_PRECIP_TYPE_TEMP_THRESHOLD_C", "2.25")
+    settings = Settings()
+    assert settings.pipeline.precip_type_temp_threshold_c == pytest.approx(2.25)
+
+
 def test_cors_origins_parses_string(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
