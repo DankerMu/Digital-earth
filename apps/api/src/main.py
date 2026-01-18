@@ -19,6 +19,7 @@ from routers.local_data import router as local_data_router
 from routers.risk import router as risk_router
 from routers.tiles import router as tiles_router
 from routers.sample import router as sample_router
+from routers.vector import router as vector_router
 
 
 def create_app() -> FastAPI:
@@ -67,6 +68,7 @@ def create_app() -> FastAPI:
     api_v1.include_router(risk_router)
     api_v1.include_router(tiles_router)
     api_v1.include_router(sample_router)
+    api_v1.include_router(vector_router)
     app.include_router(api_v1)
 
     return app
