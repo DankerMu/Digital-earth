@@ -46,3 +46,7 @@ coverage/
 *.pem
 *.key
 credentials.json
+
+# K8s Secret manifests (commit templates only)
+infra/k8s/secrets/*.secret.yaml
+!infra/k8s/secrets/*.secret.template.yaml
