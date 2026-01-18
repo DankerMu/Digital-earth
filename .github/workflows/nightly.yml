@@ -17,6 +17,8 @@ jobs:
 
       - name: Cook & Package
         shell: pwsh
+        env:
+          DIGITAL_EARTH_UE_CESIUM_ION_ACCESS_TOKEN: ${{ secrets.DIGITAL_EARTH_UE_CESIUM_ION_ACCESS_TOKEN }}
         run: |
           & "$env:UE_ROOT\Engine\Build\BatchFiles\RunUAT.bat" `
             BuildCookRun `
