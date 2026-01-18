@@ -94,11 +94,11 @@ def test_tiles_redirects_to_base_url_and_sets_cache_headers(
         },
     )
 
-    response = client.get(
-        "/api/v1/tiles/layer/time/1/2/3.png", follow_redirects=False
-    )
+    response = client.get("/api/v1/tiles/layer/time/1/2/3.png", follow_redirects=False)
     assert response.status_code == 302
-    assert response.headers["location"] == "https://cdn.example/tiles/layer/time/1/2/3.png"
+    assert (
+        response.headers["location"] == "https://cdn.example/tiles/layer/time/1/2/3.png"
+    )
     assert response.headers["cache-control"] == "public, max-age=3600"
     assert "x-trace-id" in response.headers
 
@@ -137,7 +137,9 @@ def test_tiles_redirects_to_signed_url_when_credentials_present(
             assert ExpiresIn == 900
             return "https://signed.example/object?a=1"
 
-    _install_fake_boto3(monkeypatch, client_factory=lambda *args, **kwargs: SignedClient())
+    _install_fake_boto3(
+        monkeypatch, client_factory=lambda *args, **kwargs: SignedClient()
+    )
     monkeypatch.setenv("DIGITAL_EARTH_STORAGE_ACCESS_KEY_ID", "a")
     monkeypatch.setenv("DIGITAL_EARTH_STORAGE_SECRET_ACCESS_KEY", "b")
 
@@ -167,7 +169,9 @@ def test_tiles_proxy_returns_bytes_with_etag_and_supports_304(
                 "ETag": '"t"',
             }
 
-    _install_fake_boto3(monkeypatch, client_factory=lambda *args, **kwargs: ProxyClient())
+    _install_fake_boto3(
+        monkeypatch, client_factory=lambda *args, **kwargs: ProxyClient()
+    )
     client = _make_client(monkeypatch, tmp_path, config_overrides=None)
 
     ok = client.get("/api/v1/tiles/a/b/c.png?redirect=false")
@@ -200,7 +204,9 @@ def test_tiles_proxy_gzips_vector_tiles_when_accepted(
                 "ETag": '"v"',
             }
 
-    _install_fake_boto3(monkeypatch, client_factory=lambda *args, **kwargs: ProxyClient())
+    _install_fake_boto3(
+        monkeypatch, client_factory=lambda *args, **kwargs: ProxyClient()
+    )
     client = _make_client(monkeypatch, tmp_path, config_overrides=None)
 
     response = client.get(
@@ -234,7 +240,9 @@ def test_tiles_proxy_decompresses_when_storage_is_gzip_but_client_disallows(
                 "ETag": '"gz"',
             }
 
-    _install_fake_boto3(monkeypatch, client_factory=lambda *args, **kwargs: ProxyClient())
+    _install_fake_boto3(
+        monkeypatch, client_factory=lambda *args, **kwargs: ProxyClient()
+    )
     client = _make_client(monkeypatch, tmp_path, config_overrides=None)
 
     response = client.get(
@@ -265,7 +273,9 @@ def test_tiles_proxy_prefers_webp_and_falls_back_when_missing(
                 "CacheControl": "public, max-age=3600",
             }
 
-    _install_fake_boto3(monkeypatch, client_factory=lambda *args, **kwargs: ProxyClient())
+    _install_fake_boto3(
+        monkeypatch, client_factory=lambda *args, **kwargs: ProxyClient()
+    )
     client = _make_client(monkeypatch, tmp_path, config_overrides=None)
 
     response = client.get(
@@ -347,7 +357,9 @@ def test_tiles_proxy_returns_404_when_object_missing(
         def get_object(self, *, Bucket: str, Key: str) -> dict[str, Any]:
             raise FakeClientError(status_code=404, code="NoSuchKey")
 
-    _install_fake_boto3(monkeypatch, client_factory=lambda *args, **kwargs: ProxyClient())
+    _install_fake_boto3(
+        monkeypatch, client_factory=lambda *args, **kwargs: ProxyClient()
+    )
     client = _make_client(monkeypatch, tmp_path, config_overrides=None)
 
     response = client.get("/api/v1/tiles/a/b/c.png?redirect=false")
@@ -364,7 +376,9 @@ def test_tiles_proxy_returns_500_when_storage_body_invalid(
         def get_object(self, *, Bucket: str, Key: str) -> dict[str, Any]:
             return {"Body": None}
 
-    _install_fake_boto3(monkeypatch, client_factory=lambda *args, **kwargs: ProxyClient())
+    _install_fake_boto3(
+        monkeypatch, client_factory=lambda *args, **kwargs: ProxyClient()
+    )
     client = _make_client(monkeypatch, tmp_path, config_overrides=None)
 
     response = client.get("/api/v1/tiles/a/b/c.png?redirect=false")
@@ -391,7 +405,9 @@ def test_tiles_proxy_guesses_content_type_when_missing(
         def get_object(self, *, Bucket: str, Key: str) -> dict[str, Any]:
             return {"Body": FakeBody(b"data"), "CacheControl": "public, max-age=3600"}
 
-    _install_fake_boto3(monkeypatch, client_factory=lambda *args, **kwargs: ProxyClient())
+    _install_fake_boto3(
+        monkeypatch, client_factory=lambda *args, **kwargs: ProxyClient()
+    )
     client = _make_client(monkeypatch, tmp_path, config_overrides=None)
 
     response = client.get(path, headers={"Accept-Encoding": "identity"})
@@ -413,7 +429,9 @@ def test_tiles_proxy_does_not_gzip_images(
                 "ETag": '"img"',
             }
 
-    _install_fake_boto3(monkeypatch, client_factory=lambda *args, **kwargs: ProxyClient())
+    _install_fake_boto3(
+        monkeypatch, client_factory=lambda *args, **kwargs: ProxyClient()
+    )
     client = _make_client(monkeypatch, tmp_path, config_overrides=None)
 
     response = client.get(
@@ -442,7 +460,9 @@ def test_tiles_proxy_can_return_304_for_gzipped_object_when_client_accepts_gzip(
                 "ETag": '"gz"',
             }
 
-    _install_fake_boto3(monkeypatch, client_factory=lambda *args, **kwargs: ProxyClient())
+    _install_fake_boto3(
+        monkeypatch, client_factory=lambda *args, **kwargs: ProxyClient()
+    )
     client = _make_client(monkeypatch, tmp_path, config_overrides=None)
 
     response = client.get(
@@ -466,7 +486,9 @@ def test_tiles_proxy_returns_500_when_gzip_decode_fails(
                 "CacheControl": "public, max-age=3600",
             }
 
-    _install_fake_boto3(monkeypatch, client_factory=lambda *args, **kwargs: ProxyClient())
+    _install_fake_boto3(
+        monkeypatch, client_factory=lambda *args, **kwargs: ProxyClient()
+    )
     client = _make_client(monkeypatch, tmp_path, config_overrides=None)
 
     response = client.get(

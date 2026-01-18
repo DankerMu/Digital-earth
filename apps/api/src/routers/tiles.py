@@ -424,7 +424,9 @@ def get_tile(
             raise HTTPException(status_code=404, detail="Not Found") from exc
         else:
             logger.error("tiles_proxy_error", extra={"error": str(exc)})
-            raise HTTPException(status_code=500, detail="Internal Server Error") from exc
+            raise HTTPException(
+                status_code=500, detail="Internal Server Error"
+            ) from exc
 
     content_type = obj.get("ContentType")
     if not isinstance(content_type, str) or content_type.strip() == "":
