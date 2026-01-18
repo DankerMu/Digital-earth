@@ -260,6 +260,7 @@ def test_tile_storage_helpers(tmp_path: Path) -> None:
     )
     assert build_s3_key("", Path("legend.json")) == "legend.json"
     assert guess_content_type(Path("a.png")) == "image/png"
+    assert guess_content_type(Path("a.webp")) == "image/webp"
     assert guess_content_type(Path("a.json")) == "application/json"
 
     with pytest.raises(TileStorageError, match="Tile directory not found"):

@@ -19,6 +19,8 @@ def guess_content_type(path: Path) -> str:
     suffix = path.suffix.lower()
     if suffix == ".png":
         return "image/png"
+    if suffix == ".webp":
+        return "image/webp"
     if suffix == ".json":
         return "application/json"
     return "application/octet-stream"
