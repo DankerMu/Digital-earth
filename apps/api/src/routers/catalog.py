@@ -95,4 +95,3 @@ def get_cldas_times(
 
     response.headers.update(headers)
     return CldasTimesResponse(times=sorted_times)
-
