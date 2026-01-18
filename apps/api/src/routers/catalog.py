@@ -9,7 +9,7 @@ from typing import Any, Literal, Optional
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import Response
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import desc, select
+from sqlalchemy import desc, func, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
@@ -18,7 +18,7 @@ import db
 from data_source import DataNotFoundError, DataSourceError
 from http_cache import if_none_match_matches
 from local_data_service import get_data_source
-from models import EcmwfRun
+from models import EcmwfAsset, EcmwfRun
 
 logger = logging.getLogger("api.error")
 
@@ -134,6 +134,138 @@ def _query_ecmwf_runs(*, limit: int, offset: int) -> list[EcmwfRunItemResponse]:
         )
 
     return runs
+
+
+def _parse_ecmwf_run_time(value: str) -> datetime:
+    raw = (value or "").strip()
+    if raw == "":
+        raise ValueError("run must not be empty")
+
+    candidate = raw
+    if candidate.endswith("Z"):
+        candidate = candidate[:-1] + "+00:00"
+    try:
+        parsed = datetime.fromisoformat(candidate)
+    except ValueError:
+        try:
+            parsed = datetime.strptime(raw, "%Y%m%dT%H%M%SZ")
+        except ValueError as exc:
+            raise ValueError(
+                "run must be an ISO8601 timestamp or YYYYMMDDTHHMMSSZ"
+            ) from exc
+
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+_ECMWF_CATALOG_VAR_ORDER: tuple[str, ...] = ("cloud", "precip", "wind", "temp")
+_ECMWF_CATALOG_LEVEL_ORDER: tuple[str, ...] = ("sfc", "850", "700", "500", "300")
+
+_ECMWF_UNITS: dict[str, str] = {
+    "cloud": "%",
+    "precip": "mm",
+    "wind": "m/s",
+    "temp": "°C",
+}
+
+_ECMWF_VAR_ALIASES: dict[str, set[str]] = {
+    "cloud": {"cloud", "tcc", "tcdc"},
+    "precip": {"precip", "tp", "pr", "pre", "ptype", "precip_type"},
+    "wind": {
+        "wind",
+        "u",
+        "v",
+        "10u",
+        "10v",
+        "wind_speed",
+        "wind_dir",
+        "wind_speed_10m",
+        "wind_dir_10m",
+    },
+    "temp": {"temp", "t", "2t", "t2m", "temperature", "air_temperature"},
+}
+
+_SURFACE_LEVEL_ALIASES: set[str] = {"sfc", "surface"}
+
+
+def _normalize_ecmwf_level(value: object) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        value = str(value)
+    raw = value.strip()
+    if raw == "":
+        return None
+    lowered = raw.lower()
+    if lowered in _SURFACE_LEVEL_ALIASES:
+        return "sfc"
+
+    token = lowered.removesuffix("hpa").strip()
+    if token.isdigit():
+        return str(int(token))
+    return lowered
+
+
+def _query_ecmwf_run_vars(*, run_time: datetime) -> tuple[list[str], list[str], int]:
+    stmt_run = select(EcmwfRun.id).where(EcmwfRun.run_time == run_time).limit(1)
+    try:
+        with Session(db.get_engine()) as session:
+            run_row = session.execute(stmt_run).first()
+            if run_row is None:
+                raise HTTPException(status_code=404, detail="Run not found")
+            run_id = int(run_row[0])
+
+            max_version_row = session.execute(
+                select(func.max(EcmwfAsset.version)).where(EcmwfAsset.run_id == run_id)
+            ).first()
+            legend_version = int(max_version_row[0] or 1)
+
+            var_rows = session.execute(
+                select(EcmwfAsset.variable)
+                .where(EcmwfAsset.run_id == run_id)
+                .distinct()
+            ).all()
+            level_rows = session.execute(
+                select(EcmwfAsset.level).where(EcmwfAsset.run_id == run_id).distinct()
+            ).all()
+    except SQLAlchemyError as exc:
+        logger.error("ecmwf_vars_db_error", extra={"error": str(exc)})
+        raise HTTPException(
+            status_code=503, detail="Catalog database unavailable"
+        ) from exc
+
+    raw_vars = {
+        str(row[0]).strip().lower()
+        for row in var_rows
+        if isinstance(row[0], str) and row[0].strip()
+    }
+
+    resolved_vars: list[str] = []
+    for var_id in _ECMWF_CATALOG_VAR_ORDER:
+        if raw_vars.intersection(_ECMWF_VAR_ALIASES.get(var_id, set())):
+            resolved_vars.append(var_id)
+
+    raw_levels: set[str] = set()
+    for row in level_rows:
+        normalized = _normalize_ecmwf_level(row[0])
+        if normalized is not None:
+            raw_levels.add(normalized)
+
+    resolved_levels = [
+        level for level in _ECMWF_CATALOG_LEVEL_ORDER if level in raw_levels
+    ]
+
+    return resolved_vars, resolved_levels, legend_version
+
+
+class EcmwfRunVarsResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    vars: list[str] = Field(default_factory=list)
+    levels: list[str] = Field(default_factory=list)
+    units: dict[str, str] = Field(default_factory=dict)
+    legend_version: int = 1
 
 
 @router.get("/cldas/times", response_model=CldasTimesResponse)
@@ -272,6 +404,61 @@ async def get_ecmwf_runs(
         lock_key = (
             f"catalog:ecmwf:runs:lock:limit={resolved_limit}&offset={resolved_offset}"
         )
+        try:
+            result = await get_or_compute_cached_bytes(
+                redis,
+                fresh_key=fresh_key,
+                stale_key=stale_key,
+                lock_key=lock_key,
+                fresh_ttl_seconds=CACHE_FRESH_TTL_SECONDS,
+                stale_ttl_seconds=CACHE_STALE_TTL_SECONDS,
+                lock_ttl_ms=CACHE_LOCK_TTL_MS,
+                wait_timeout_ms=CACHE_WAIT_TIMEOUT_MS,
+                compute=_compute,
+                cooldown_ttl_seconds=CACHE_COOLDOWN_TTL_SECONDS,
+            )
+            body = result.body
+        except TimeoutError as exc:
+            raise HTTPException(
+                status_code=503, detail="Catalog cache warming timed out"
+            ) from exc
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("catalog_cache_unavailable", extra={"error": str(exc)})
+            body = await _compute()
+
+    etag = f'"sha256-{hashlib.sha256(body).hexdigest()}"'
+    headers = {"Cache-Control": SHORT_CACHE_CONTROL_HEADER, "ETag": etag}
+    if if_none_match_matches(request.headers.get("if-none-match"), etag):
+        return Response(status_code=304, headers=headers)
+
+    return Response(content=body, media_type="application/json", headers=headers)
+
+
+@router.get("/ecmwf/runs/{run}/vars", response_model=EcmwfRunVarsResponse)
+async def get_ecmwf_run_vars(request: Request, run: str) -> Response:
+    try:
+        run_dt = _parse_ecmwf_run_time(run)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    redis: RedisLike | None = getattr(request.app.state, "redis_client", None)
+    run_key = _time_key_from_datetime(run_dt)
+
+    async def _compute() -> bytes:
+        vars_, levels, legend_version = await to_thread(
+            _query_ecmwf_run_vars, run_time=run_dt
+        )
+        payload = EcmwfRunVarsResponse(
+            vars=vars_, levels=levels, units=_ECMWF_UNITS, legend_version=legend_version
+        )
+        return payload.model_dump_json().encode("utf-8")
+
+    if redis is None:
+        body = await _compute()
+    else:
+        fresh_key = f"catalog:ecmwf:vars:fresh:run={run_key}"
+        stale_key = f"catalog:ecmwf:vars:stale:run={run_key}"
+        lock_key = f"catalog:ecmwf:vars:lock:run={run_key}"
         try:
             result = await get_or_compute_cached_bytes(
                 redis,
