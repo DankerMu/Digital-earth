@@ -12,6 +12,7 @@ from processing.precip_type import (
     ensure_precip_type,
     resolve_precip_type_temp_threshold_c,
 )
+from processing.wind import maybe_add_wind_speed_dir
 from units.converter import kelvin_to_celsius, meters_to_mm
 
 _DIM_ALIASES: Mapping[str, Sequence[str]] = {
@@ -293,5 +294,12 @@ def normalize_datacube_dataset(
             else resolve_precip_type_temp_threshold_c()
         )
         ds = ensure_precip_type(ds, temp_threshold_c=threshold_c)
+
+    ds = maybe_add_wind_speed_dir(
+        ds,
+        u_name="eastward_wind_10m",
+        v_name="northward_wind_10m",
+    )
+    ds = maybe_add_wind_speed_dir(ds, u_name="u", v_name="v")
 
     return ds
