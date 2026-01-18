@@ -18,6 +18,7 @@ from routers.ingest import router as ingest_router
 from routers.local_data import router as local_data_router
 from routers.risk import router as risk_router
 from routers.tiles import router as tiles_router
+from routers.sample import router as sample_router
 
 
 def create_app() -> FastAPI:
@@ -65,6 +66,7 @@ def create_app() -> FastAPI:
     api_v1.include_router(errors_router)
     api_v1.include_router(risk_router)
     api_v1.include_router(tiles_router)
+    api_v1.include_router(sample_router)
     app.include_router(api_v1)
 
     return app
