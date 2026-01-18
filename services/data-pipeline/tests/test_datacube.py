@@ -92,6 +92,99 @@ def test_normalize_rejects_unsupported_dims() -> None:
         normalize_datacube_dataset(ds)
 
 
+def test_normalize_converts_temperature_and_precipitation_units() -> None:
+    from datacube.normalize import normalize_datacube_dataset
+
+    ds = xr.Dataset(
+        {
+            "air_temperature": xr.DataArray(
+                np.array([[[273.15, 274.15], [275.15, np.nan]]], dtype=np.float32),
+                dims=["time", "lat", "lon"],
+                attrs={"units": "K"},
+            ),
+            "precipitation_amount": xr.DataArray(
+                np.array([[[0.001, 0.0], [0.01, np.nan]]], dtype=np.float32),
+                dims=["time", "lat", "lon"],
+                attrs={"units": "m"},
+            ),
+        },
+        coords={
+            "time": np.array(["2026-01-01T00:00:00"], dtype="datetime64[s]"),
+            "lat": np.array([10.0, 11.0], dtype=np.float32),
+            "lon": np.array([100.0, 101.0], dtype=np.float32),
+        },
+    )
+
+    out = normalize_datacube_dataset(ds)
+    assert out["air_temperature"].attrs.get("units") == "°C"
+    assert out["air_temperature"].dtype == np.float32
+    assert out["air_temperature"].values[0, 0, 0, 0] == pytest.approx(0.0, abs=1e-3)
+    assert out["air_temperature"].values[0, 0, 0, 1] == pytest.approx(1.0, abs=1e-3)
+
+    assert out["precipitation_amount"].attrs.get("units") == "mm"
+    assert out["precipitation_amount"].dtype == np.float32
+    assert out["precipitation_amount"].values[0, 0, 0, 0] == pytest.approx(
+        1.0, abs=1e-6
+    )
+    assert out["precipitation_amount"].values[0, 0, 1, 0] == pytest.approx(
+        10.0, abs=1e-6
+    )
+
+
+def test_normalize_does_not_convert_non_precip_meter_variables() -> None:
+    from datacube.normalize import normalize_datacube_dataset
+
+    ds = xr.Dataset(
+        {
+            "geopotential_height": xr.DataArray(
+                np.array([[[123.0, 456.0], [789.0, 101.0]]], dtype=np.float32),
+                dims=["time", "lat", "lon"],
+                attrs={"units": "m"},
+            )
+        },
+        coords={
+            "time": np.array(["2026-01-01T00:00:00"], dtype="datetime64[s]"),
+            "lat": np.array([10.0, 11.0], dtype=np.float32),
+            "lon": np.array([100.0, 101.0], dtype=np.float32),
+        },
+    )
+
+    out = normalize_datacube_dataset(ds)
+    assert out["geopotential_height"].attrs.get("units") == "m"
+    assert out["geopotential_height"].values[0, 0, 0, 0] == pytest.approx(123.0)
+
+
+def test_normalize_standardizes_wind_units_without_changing_values() -> None:
+    from datacube.normalize import normalize_datacube_dataset
+
+    ds = xr.Dataset(
+        {
+            "eastward_wind_10m": xr.DataArray(
+                np.array([[[1.5, 2.0], [3.0, 4.0]]], dtype=np.float32),
+                dims=["time", "lat", "lon"],
+                attrs={"units": "m s-1"},
+            ),
+            "tp": xr.DataArray(
+                np.array([[[0.001, 0.002], [0.0, 0.01]]], dtype=np.float32),
+                dims=["time", "lat", "lon"],
+                attrs={"units": "m"},
+            ),
+        },
+        coords={
+            "time": np.array(["2026-01-01T00:00:00"], dtype="datetime64[s]"),
+            "lat": np.array([10.0, 11.0], dtype=np.float32),
+            "lon": np.array([100.0, 101.0], dtype=np.float32),
+        },
+    )
+
+    out = normalize_datacube_dataset(ds)
+    assert out["eastward_wind_10m"].attrs.get("units") == "m/s"
+    assert out["eastward_wind_10m"].values[0, 0, 0, 0] == pytest.approx(1.5)
+
+    assert out["tp"].attrs.get("units") == "mm"
+    assert out["tp"].values[0, 0, 0, 1] == pytest.approx(2.0, abs=1e-6)
+
+
 def test_decode_netcdf_and_write_roundtrip(tmp_path: Path) -> None:
     from datacube.decoder import decode_datacube
     from datacube.inspect import inspect_datacube
