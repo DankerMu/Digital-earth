@@ -2,13 +2,26 @@
 name = "digital-earth-data-pipeline"
 version = "0.1.0"
 description = "Digital Earth data pipeline service"
-packages = [{include = "ecmwf", from = "src"}, {include = "cldas", from = "src"}]
+packages = [
+    {include = "ecmwf", from = "src"},
+    {include = "cldas", from = "src"},
+    {include = "datacube", from = "src"},
+]
 
 [tool.poetry.dependencies]
 python = "^3.11"
 pydantic = "^2.7.0"
 pydantic-settings = "^2.2.1"
 pyyaml = "^6.0.2"
+httpx = "^0.27.0"
+numpy = "^1.26.0"
+xarray = "^2024.7.0"
+h5netcdf = "^1.7.0"
+pillow = "^11.0.0"
+zarr = "^2.18.0"
+numcodecs = "^0.13.0"
+cfgrib = "^0.9.10.4"
+eccodes = "^1.7.0"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.0.0"
