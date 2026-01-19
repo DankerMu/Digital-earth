@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import hashlib
 import math
+import os
 from collections.abc import Iterable, Mapping, Sequence
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Protocol
@@ -152,7 +154,7 @@ class WeatherSampler(Protocol):
         product_id: int,
         valid_time: datetime,
         pois: Sequence[RiskPOI],
-    ) -> Mapping[int, Mapping[str | RiskFactorId, float]]:
+    ) -> Mapping[int, Mapping[str | RiskFactorId, float] | None]:
         raise NotImplementedError
 
 
@@ -203,9 +205,16 @@ class RiskEvaluationEngine:
         *,
         sampler: WeatherSampler | None = None,
         batch_size: int = 256,
+        max_workers: int | None = None,
     ) -> None:
         self._sampler = sampler or _MockWeatherSampler()
         self._batch_size = int(batch_size)
+        resolved_max_workers = (
+            int(max_workers) if max_workers is not None else int(os.cpu_count() or 1)
+        )
+        if resolved_max_workers <= 0:
+            raise RiskEngineInputError("max_workers must be > 0")
+        self._max_workers = resolved_max_workers
 
     def evaluate_pois(
         self,
@@ -249,6 +258,7 @@ class RiskEvaluationEngine:
             valid_time=dt,
             pois=pois,
             batch_size=self._batch_size,
+            max_workers=self._max_workers,
             locale=locale,
         )
 
@@ -323,6 +333,7 @@ def _evaluate_pois(
     valid_time: datetime,
     pois: Sequence[RiskPOI],
     batch_size: int,
+    max_workers: int,
     locale: str | None,
 ) -> list[POIRiskResult]:
     results: list[POIRiskResult] = []
@@ -333,43 +344,65 @@ def _evaluate_pois(
         factor_id: idx for idx, factor_id in enumerate(RiskFactorId)
     }
 
-    for batch in _chunked(list(pois), batch_size=batch_size):
-        samples = sampler.sample(
-            product_id=int(product_id), valid_time=valid_time, pois=batch
+    if max_workers <= 0:
+        raise RiskEngineInputError("max_workers must be > 0")
+
+    def _evaluate_one(
+        payload: tuple[int, Mapping[str | RiskFactorId, float]],
+    ) -> POIRiskResult:
+        poi_id, raw_values = payload
+        try:
+            evaluation = rules.evaluate(raw_values)
+        except ValueError as exc:
+            raise RiskEngineInputError(str(exc)) from exc
+
+        reasons = [
+            POIRiskReason(
+                factor_id=factor.id,
+                factor_name=_factor_name(factor.id, locale=locale),
+                value=float(factor.value),
+                threshold=_selected_threshold(rule_lookup[factor.id], factor.value),
+                contribution=float(factor.contribution),
+            )
+            for factor in evaluation.factors
+            if float(factor.contribution) > 0.0
+        ]
+        reasons.sort(
+            key=lambda item: (-float(item.contribution), factor_order[item.factor_id])
         )
-        for poi in batch:
-            raw_values = samples.get(int(poi.id))
-            if raw_values is None:
-                raise RiskEngineInputError(f"Missing weather sample for poi={poi.id}")
-            try:
-                evaluation = rules.evaluate(raw_values)
-            except ValueError as exc:
-                raise RiskEngineInputError(str(exc)) from exc
-            reasons = [
-                POIRiskReason(
-                    factor_id=factor.id,
-                    factor_name=_factor_name(factor.id, locale=locale),
-                    value=float(factor.value),
-                    threshold=_selected_threshold(rule_lookup[factor.id], factor.value),
-                    contribution=float(factor.contribution),
-                )
-                for factor in evaluation.factors
-                if float(factor.contribution) > 0.0
-            ]
-            reasons.sort(
-                key=lambda item: (
-                    -float(item.contribution),
-                    factor_order[item.factor_id],
-                )
+        return POIRiskResult(
+            poi_id=poi_id,
+            level=int(evaluation.level),
+            score=float(evaluation.score),
+            factors=tuple(evaluation.factors),
+            reasons=tuple(reasons),
+        )
+
+    owns_executor = max_workers > 1
+    executor = ThreadPoolExecutor(max_workers=max_workers) if owns_executor else None
+
+    try:
+        for batch in _chunked(list(pois), batch_size=batch_size):
+            samples = sampler.sample(
+                product_id=int(product_id), valid_time=valid_time, pois=batch
             )
-            results.append(
-                POIRiskResult(
-                    poi_id=int(poi.id),
-                    level=int(evaluation.level),
-                    score=float(evaluation.score),
-                    factors=tuple(evaluation.factors),
-                    reasons=tuple(reasons),
-                )
-            )
+
+            payloads: list[tuple[int, Mapping[str | RiskFactorId, float]]] = []
+            for poi in batch:
+                raw_values = samples.get(int(poi.id))
+                if raw_values is None:
+                    continue
+                payloads.append((int(poi.id), raw_values))
+
+            if not payloads:
+                continue
+
+            if executor is None or len(payloads) == 1:
+                results.extend(_evaluate_one(item) for item in payloads)
+            else:
+                results.extend(executor.map(_evaluate_one, payloads, timeout=None))
+    finally:
+        if executor is not None:
+            executor.shutdown(wait=True)
 
     return results
