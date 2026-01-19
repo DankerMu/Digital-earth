@@ -7,6 +7,7 @@ import math
 import time
 from asyncio import to_thread
 from datetime import datetime, timezone
+from typing import TypedDict
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import Response
@@ -246,6 +247,145 @@ def _query_risk_pois(
     )
 
 
+RISK_POI_MAX_ZOOM = 22
+RISK_POI_CLUSTER_GRID_SIZE_PX = 64
+RISK_POI_UNCLUSTER_ZOOM = 14
+RISK_POI_MAX_MERCATOR_LAT = 85.05112878
+
+
+class RiskPOIClusterItemResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    lon: float
+    lat: float
+    count: int = Field(ge=1)
+    poi_ids: list[int] = Field(default_factory=list)
+
+
+class RiskPOIClusterResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    clusters: list[RiskPOIClusterItemResponse] = Field(default_factory=list)
+
+
+def _query_risk_poi_points(
+    *,
+    min_lon: float,
+    min_lat: float,
+    max_lon: float,
+    max_lat: float,
+) -> list[tuple[int, float, float]]:
+    stmt = (
+        select(RiskPOI.id, RiskPOI.lon, RiskPOI.lat)
+        .where(
+            RiskPOI.lon >= min_lon,
+            RiskPOI.lon <= max_lon,
+            RiskPOI.lat >= min_lat,
+            RiskPOI.lat <= max_lat,
+        )
+        .order_by(RiskPOI.id)
+    )
+    try:
+        with Session(db.get_engine()) as session:
+            rows = session.execute(stmt).all()
+    except SQLAlchemyError as exc:
+        logger.error("risk_pois_db_error", extra={"error": str(exc)})
+        raise HTTPException(
+            status_code=503, detail="Risk POI database unavailable"
+        ) from exc
+
+    return [(int(poi_id), float(lon), float(lat)) for poi_id, lon, lat in rows]
+
+
+def _mercator_normalized(lon: float, lat: float) -> tuple[float, float]:
+    lat = max(min(lat, RISK_POI_MAX_MERCATOR_LAT), -RISK_POI_MAX_MERCATOR_LAT)
+    x = (lon + 180.0) / 360.0
+
+    lat_rad = math.radians(lat)
+    y = (1.0 - math.log(math.tan(lat_rad) + 1.0 / math.cos(lat_rad)) / math.pi) / 2.0
+
+    epsilon = 1e-12
+    x = min(max(x, 0.0), 1.0 - epsilon)
+    y = min(max(y, 0.0), 1.0 - epsilon)
+    return x, y
+
+
+def _cluster_risk_poi_points(
+    points: list[tuple[int, float, float]],
+    *,
+    zoom: int,
+) -> list[RiskPOIClusterItemResponse]:
+    if not points:
+        return []
+
+    if zoom >= RISK_POI_UNCLUSTER_ZOOM:
+        return [
+            RiskPOIClusterItemResponse(
+                lon=float(lon),
+                lat=float(lat),
+                count=1,
+                poi_ids=[int(poi_id)],
+            )
+            for poi_id, lon, lat in points
+        ]
+
+    class _Bucket(TypedDict):
+        count: int
+        sum_lon: float
+        sum_lat: float
+        poi_ids: list[int]
+
+    world_px = 256 * (2**zoom)
+    cell_size = float(RISK_POI_CLUSTER_GRID_SIZE_PX) / float(world_px)
+    buckets: dict[tuple[int, int], _Bucket] = {}
+
+    for poi_id, lon, lat in points:
+        x, y = _mercator_normalized(lon, lat)
+        cell_x = int(x / cell_size)
+        cell_y = int(y / cell_size)
+        key = (cell_x, cell_y)
+
+        bucket = buckets.get(key)
+        if bucket is None:
+            bucket = {
+                "count": 0,
+                "sum_lon": 0.0,
+                "sum_lat": 0.0,
+                "poi_ids": [],
+            }
+            buckets[key] = bucket
+
+        bucket["count"] += 1
+        bucket["sum_lon"] += float(lon)
+        bucket["sum_lat"] += float(lat)
+        bucket["poi_ids"].append(int(poi_id))
+
+    clusters: list[RiskPOIClusterItemResponse] = []
+    for bucket in buckets.values():
+        count = bucket["count"]
+        sum_lon = bucket["sum_lon"]
+        sum_lat = bucket["sum_lat"]
+        poi_ids = sorted(bucket["poi_ids"])
+        clusters.append(
+            RiskPOIClusterItemResponse(
+                lon=sum_lon / count,
+                lat=sum_lat / count,
+                count=count,
+                poi_ids=poi_ids,
+            )
+        )
+
+    clusters.sort(
+        key=lambda item: (
+            -int(item.count),
+            float(item.lon),
+            float(item.lat),
+            int(item.poi_ids[0]) if item.poi_ids else 0,
+        )
+    )
+    return clusters
+
+
 @router.get("/pois", response_model=RiskPOIQueryResponse)
 async def get_risk_pois(
     request: Request,
@@ -284,6 +424,74 @@ async def get_risk_pois(
         fresh_key = f"risk:pois:fresh:{identity}"
         stale_key = f"risk:pois:stale:{identity}"
         lock_key = f"risk:pois:lock:{identity}"
+
+        try:
+            result = await get_or_compute_cached_bytes(
+                redis,
+                fresh_key=fresh_key,
+                stale_key=stale_key,
+                lock_key=lock_key,
+                fresh_ttl_seconds=CACHE_FRESH_TTL_SECONDS,
+                stale_ttl_seconds=CACHE_STALE_TTL_SECONDS,
+                lock_ttl_ms=CACHE_LOCK_TTL_MS,
+                wait_timeout_ms=CACHE_WAIT_TIMEOUT_MS,
+                compute=_compute,
+                cooldown_ttl_seconds=CACHE_COOLDOWN_TTL_SECONDS,
+            )
+            body = result.body
+        except TimeoutError as exc:
+            raise HTTPException(
+                status_code=503, detail="Risk POI cache warming timed out"
+            ) from exc
+        except HTTPException:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("risk_pois_cache_unavailable", extra={"error": str(exc)})
+            body = await _compute()
+
+    etag = f'"sha256-{hashlib.sha256(body).hexdigest()}"'
+    headers = {"Cache-Control": CACHE_CONTROL_HEADER, "ETag": etag}
+
+    if if_none_match_matches(request.headers.get("if-none-match"), etag):
+        return Response(status_code=304, headers=headers)
+
+    return Response(content=body, media_type="application/json", headers=headers)
+
+
+@router.get("/pois/cluster", response_model=RiskPOIClusterResponse)
+async def get_risk_poi_clusters(
+    request: Request,
+    bbox: str = Query(description="Bounding box: min_lon,min_lat,max_lon,max_lat"),
+    zoom: int = Query(ge=0, le=RISK_POI_MAX_ZOOM, description="Map zoom level"),
+) -> Response:
+    try:
+        min_lon, min_lat, max_lon, max_lat = _parse_bbox(bbox)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    redis: RedisLike | None = getattr(request.app.state, "redis_client", None)
+
+    async def _compute() -> bytes:
+        def _sync() -> bytes:
+            points = _query_risk_poi_points(
+                min_lon=min_lon,
+                min_lat=min_lat,
+                max_lon=max_lon,
+                max_lat=max_lat,
+            )
+            clusters = _cluster_risk_poi_points(points, zoom=int(zoom))
+            payload = RiskPOIClusterResponse(clusters=clusters)
+            return payload.model_dump_json().encode("utf-8")
+
+        return await to_thread(_sync)
+
+    if redis is None:
+        body = await _compute()
+    else:
+        identity = f"{min_lon!r},{min_lat!r},{max_lon!r},{max_lat!r}:zoom={zoom}"
+        fresh_key = f"risk:pois:cluster:fresh:{identity}"
+        stale_key = f"risk:pois:cluster:stale:{identity}"
+        lock_key = f"risk:pois:cluster:lock:{identity}"
 
         try:
             result = await get_or_compute_cached_bytes(
