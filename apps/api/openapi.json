@@ -1080,6 +1080,52 @@
         "title": "RiskLevel",
         "type": "string"
       },
+      "RiskPOIClusterItemResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "count": {
+            "minimum": 1.0,
+            "title": "Count",
+            "type": "integer"
+          },
+          "lat": {
+            "title": "Lat",
+            "type": "number"
+          },
+          "lon": {
+            "title": "Lon",
+            "type": "number"
+          },
+          "poi_ids": {
+            "items": {
+              "type": "integer"
+            },
+            "title": "Poi Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "lon",
+          "lat",
+          "count"
+        ],
+        "title": "RiskPOIClusterItemResponse",
+        "type": "object"
+      },
+      "RiskPOIClusterResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "clusters": {
+            "items": {
+              "$ref": "#/components/schemas/RiskPOIClusterItemResponse"
+            },
+            "title": "Clusters",
+            "type": "array"
+          }
+        },
+        "title": "RiskPOIClusterResponse",
+        "type": "object"
+      },
       "RiskPOIItemResponse": {
         "additionalProperties": false,
         "properties": {
@@ -2343,6 +2389,63 @@
           }
         },
         "summary": "Get Risk Pois",
+        "tags": [
+          "risk"
+        ]
+      }
+    },
+    "/api/v1/risk/pois/cluster": {
+      "get": {
+        "operationId": "get_risk_poi_clusters_api_v1_risk_pois_cluster_get",
+        "parameters": [
+          {
+            "description": "Bounding box: min_lon,min_lat,max_lon,max_lat",
+            "in": "query",
+            "name": "bbox",
+            "required": true,
+            "schema": {
+              "description": "Bounding box: min_lon,min_lat,max_lon,max_lat",
+              "title": "Bbox",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Map zoom level",
+            "in": "query",
+            "name": "zoom",
+            "required": true,
+            "schema": {
+              "description": "Map zoom level",
+              "maximum": 22,
+              "minimum": 0,
+              "title": "Zoom",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RiskPOIClusterResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Risk Poi Clusters",
         "tags": [
           "risk"
         ]

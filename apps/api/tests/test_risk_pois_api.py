@@ -115,6 +115,56 @@ def _seed_risk_pois(db_url: str) -> None:
     engine.dispose()
 
 
+def _seed_risk_pois_for_clustering(db_url: str) -> None:
+    from models import Base, RiskPOI
+
+    engine = create_engine(db_url)
+    Base.metadata.create_all(engine)
+    with Session(engine) as session:
+        session.add_all(
+            [
+                RiskPOI(
+                    name="poi-a",
+                    poi_type="fire",
+                    lon=110.0,
+                    lat=35.0,
+                    alt=None,
+                    weight=1.0,
+                    tags=None,
+                ),
+                RiskPOI(
+                    name="poi-b",
+                    poi_type="fire",
+                    lon=110.0001,
+                    lat=35.0001,
+                    alt=None,
+                    weight=1.0,
+                    tags=None,
+                ),
+                RiskPOI(
+                    name="poi-c",
+                    poi_type="fire",
+                    lon=110.0002,
+                    lat=35.0002,
+                    alt=None,
+                    weight=1.0,
+                    tags=None,
+                ),
+                RiskPOI(
+                    name="poi-d",
+                    poi_type="flood",
+                    lon=111.0,
+                    lat=36.0,
+                    alt=None,
+                    weight=1.0,
+                    tags=None,
+                ),
+            ]
+        )
+        session.commit()
+    engine.dispose()
+
+
 def test_risk_pois_bbox_filter_and_pagination(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -311,3 +361,167 @@ def test_risk_pois_http_exception_is_not_retried_after_cache_layer(
     response = client.get("/api/v1/risk/pois", params={"bbox": "109,34,112,36"})
     assert response.status_code == 503
     assert len(calls) == 1
+
+
+def test_risk_pois_cluster_low_zoom_groups_points(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    db_url = f"sqlite+pysqlite:///{tmp_path / 'risk.db'}"
+    _seed_risk_pois_for_clustering(db_url)
+    client, _redis = _make_client(monkeypatch, tmp_path, db_url=db_url)
+
+    response = client.get(
+        "/api/v1/risk/pois/cluster",
+        params={"bbox": "109,34,112,37", "zoom": 10},
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert set(payload) == {"clusters"}
+    clusters = payload["clusters"]
+    assert len(clusters) == 2
+
+    cluster_counts = sorted(item["count"] for item in clusters)
+    assert cluster_counts == [1, 3]
+
+    trio = next(item for item in clusters if item["count"] == 3)
+    assert trio["poi_ids"] == [1, 2, 3]
+    assert abs(trio["lon"] - 110.0001) < 1e-6
+    assert abs(trio["lat"] - 35.0001) < 1e-6
+
+
+def test_risk_pois_cluster_high_zoom_returns_singletons(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    db_url = f"sqlite+pysqlite:///{tmp_path / 'risk.db'}"
+    _seed_risk_pois_for_clustering(db_url)
+    client, _redis = _make_client(monkeypatch, tmp_path, db_url=db_url)
+
+    response = client.get(
+        "/api/v1/risk/pois/cluster",
+        params={"bbox": "109,34,112,37", "zoom": 14},
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    clusters = payload["clusters"]
+    assert len(clusters) == 4
+    assert [item["count"] for item in clusters] == [1, 1, 1, 1]
+    assert [item["poi_ids"] for item in clusters] == [[1], [2], [3], [4]]
+
+
+def test_risk_pois_cluster_without_redis_returns_payload(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    db_url = f"sqlite+pysqlite:///{tmp_path / 'risk.db'}"
+    _seed_risk_pois_for_clustering(db_url)
+    client, _redis = _make_client(monkeypatch, tmp_path, db_url=db_url)
+    client.app.state.redis_client = None
+
+    response = client.get(
+        "/api/v1/risk/pois/cluster",
+        params={"bbox": "109,34,112,37", "zoom": 10},
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["clusters"]
+
+
+def test_risk_pois_cluster_empty_result(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    db_url = f"sqlite+pysqlite:///{tmp_path / 'risk.db'}"
+    _seed_risk_pois_for_clustering(db_url)
+    client, _redis = _make_client(monkeypatch, tmp_path, db_url=db_url)
+
+    response = client.get(
+        "/api/v1/risk/pois/cluster",
+        params={"bbox": "0,0,1,1", "zoom": 10},
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["clusters"] == []
+
+
+def test_risk_pois_cluster_cache_hit_skips_db_queries(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    db_url = f"sqlite+pysqlite:///{tmp_path / 'risk.db'}"
+    _seed_risk_pois_for_clustering(db_url)
+    client, _redis = _make_client(monkeypatch, tmp_path, db_url=db_url)
+
+    first = client.get(
+        "/api/v1/risk/pois/cluster",
+        params={"bbox": "109,34,112,37", "zoom": 10},
+    )
+    assert first.status_code == 200
+    etag = first.headers.get("etag")
+    assert etag is not None
+
+    import db as db_module
+
+    def _boom() -> None:
+        raise AssertionError("db.get_engine() should not be called on cache hit")
+
+    monkeypatch.setattr(db_module, "get_engine", _boom)
+
+    cached = client.get(
+        "/api/v1/risk/pois/cluster",
+        params={"bbox": "109,34,112,37", "zoom": 10},
+    )
+    assert cached.status_code == 200
+    assert cached.headers.get("etag") == etag
+    assert cached.json() == first.json()
+
+
+def test_risk_pois_cluster_if_none_match_returns_304(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    db_url = f"sqlite+pysqlite:///{tmp_path / 'risk.db'}"
+    _seed_risk_pois_for_clustering(db_url)
+    client, _redis = _make_client(monkeypatch, tmp_path, db_url=db_url)
+
+    first = client.get(
+        "/api/v1/risk/pois/cluster",
+        params={"bbox": "109,34,112,37", "zoom": 10},
+    )
+    assert first.status_code == 200
+    etag = first.headers["etag"]
+
+    cached = client.get(
+        "/api/v1/risk/pois/cluster",
+        params={"bbox": "109,34,112,37", "zoom": 10},
+        headers={"If-None-Match": etag},
+    )
+    assert cached.status_code == 304
+    assert cached.headers["etag"] == etag
+    assert cached.text == ""
+
+
+def test_risk_pois_cluster_invalid_bbox_returns_400(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    db_url = f"sqlite+pysqlite:///{tmp_path / 'risk.db'}"
+    _seed_risk_pois_for_clustering(db_url)
+    client, _redis = _make_client(monkeypatch, tmp_path, db_url=db_url)
+
+    response = client.get(
+        "/api/v1/risk/pois/cluster",
+        params={"bbox": "bad", "zoom": 10},
+    )
+    assert response.status_code == 400
+    payload = response.json()
+    assert payload["error_code"] == 40000
+    assert "trace_id" in payload
+
+
+def test_risk_pois_cluster_zoom_upper_bound_is_enforced(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    db_url = f"sqlite+pysqlite:///{tmp_path / 'risk.db'}"
+    _seed_risk_pois_for_clustering(db_url)
+    client, _redis = _make_client(monkeypatch, tmp_path, db_url=db_url)
+
+    response = client.get(
+        "/api/v1/risk/pois/cluster",
+        params={"bbox": "109,34,112,37", "zoom": 23},
+    )
+    assert response.status_code == 400
