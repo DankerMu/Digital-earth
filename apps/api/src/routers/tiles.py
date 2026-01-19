@@ -73,7 +73,23 @@ def _find_cldas_index_item(index: Any, *, timestamp: str, variable: str) -> Any 
     return None
 
 
-@router.get("/cldas/{time_key}/{var}/{z}/{x}/{y}.png")
+@router.get(
+    "/cldas/{time_key}/{var}/{z}/{x}/{y}.png",
+    response_class=Response,
+    responses={
+        200: {
+            "description": "PNG tile image",
+            "content": {
+                "image/png": {"schema": {"type": "string", "format": "binary"}}
+            },
+        },
+        304: {"description": "Not Modified"},
+        400: {"description": "Bad Request"},
+        404: {"description": "Not Found"},
+        500: {"description": "Internal Server Error"},
+        503: {"description": "Service Unavailable"},
+    },
+)
 def get_cldas_tile(
     request: Request,
     time_key: str,
@@ -409,7 +425,25 @@ def _fetch_tile_bytes_from_s3(*, key: str) -> tuple[bytes, dict[str, Any]]:
     return bytes(data), obj
 
 
-@router.get("/{tile_path:path}")
+@router.get(
+    "/{tile_path:path}",
+    response_class=Response,
+    responses={
+        200: {
+            "description": "Tile bytes returned when redirect=false",
+            "content": {
+                "application/octet-stream": {
+                    "schema": {"type": "string", "format": "binary"}
+                }
+            },
+        },
+        302: {"description": "Redirect to object storage"},
+        304: {"description": "Not Modified"},
+        400: {"description": "Bad Request"},
+        404: {"description": "Not Found"},
+        500: {"description": "Internal Server Error"},
+    },
+)
 def get_tile(
     tile_path: str,
     request: Request,

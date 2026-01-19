@@ -1,0 +1,2312 @@
+{
+  "components": {
+    "schemas": {
+      "BBoxResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "max_x": {
+            "title": "Max X",
+            "type": "number"
+          },
+          "max_y": {
+            "title": "Max Y",
+            "type": "number"
+          },
+          "min_x": {
+            "title": "Min X",
+            "type": "number"
+          },
+          "min_y": {
+            "title": "Min Y",
+            "type": "number"
+          }
+        },
+        "required": [
+          "min_x",
+          "min_y",
+          "max_x",
+          "max_y"
+        ],
+        "title": "BBoxResponse",
+        "type": "object"
+      },
+      "CldasTimesResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "times": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Times",
+            "type": "array"
+          }
+        },
+        "title": "CldasTimesResponse",
+        "type": "object"
+      },
+      "EcmwfRunItemResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "run_time": {
+            "title": "Run Time",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "complete",
+              "partial"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "run_time",
+          "status"
+        ],
+        "title": "EcmwfRunItemResponse",
+        "type": "object"
+      },
+      "EcmwfRunTimesResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "missing": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Missing",
+            "type": "array"
+          },
+          "times": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Times",
+            "type": "array"
+          }
+        },
+        "title": "EcmwfRunTimesResponse",
+        "type": "object"
+      },
+      "EcmwfRunVarsResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "legend_version": {
+            "title": "Legend Version",
+            "type": "integer"
+          },
+          "levels": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Levels",
+            "type": "array"
+          },
+          "units": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Units",
+            "type": "object"
+          },
+          "vars": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Vars",
+            "type": "array"
+          }
+        },
+        "required": [
+          "legend_version"
+        ],
+        "title": "EcmwfRunVarsResponse",
+        "type": "object"
+      },
+      "EcmwfRunsResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "runs": {
+            "items": {
+              "$ref": "#/components/schemas/EcmwfRunItemResponse"
+            },
+            "title": "Runs",
+            "type": "array"
+          }
+        },
+        "title": "EcmwfRunsResponse",
+        "type": "object"
+      },
+      "EffectParams": {
+        "properties": {
+          "opacity": {
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Opacity",
+            "type": "number"
+          },
+          "particle_count": {
+            "minimum": 0.0,
+            "title": "Particle Count",
+            "type": "integer"
+          },
+          "speed": {
+            "minimum": 0.0,
+            "title": "Speed",
+            "type": "number"
+          }
+        },
+        "required": [
+          "particle_count",
+          "opacity",
+          "speed"
+        ],
+        "title": "EffectParams",
+        "type": "object"
+      },
+      "EffectPresetItem": {
+        "properties": {
+          "color_hint": {
+            "description": "RGBA hint, e.g. rgba(255, 255, 255, 0.8)",
+            "title": "Color Hint",
+            "type": "string"
+          },
+          "duration": {
+            "description": "Seconds; 0 means 'until disabled'",
+            "minimum": 0.0,
+            "title": "Duration",
+            "type": "number"
+          },
+          "effect_type": {
+            "$ref": "#/components/schemas/EffectType"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "intensity": {
+            "maximum": 5.0,
+            "minimum": 1.0,
+            "title": "Intensity",
+            "type": "integer"
+          },
+          "particle_size": {
+            "$ref": "#/components/schemas/ParticleSizeRange"
+          },
+          "risk_level": {
+            "$ref": "#/components/schemas/RiskLevel",
+            "readOnly": true
+          },
+          "spawn_rate": {
+            "description": "Particle spawn rate",
+            "minimum": 0.0,
+            "title": "Spawn Rate",
+            "type": "number"
+          },
+          "wind_influence": {
+            "description": "Wind field influence coefficient",
+            "minimum": 0.0,
+            "title": "Wind Influence",
+            "type": "number"
+          }
+        },
+        "required": [
+          "effect_type",
+          "intensity",
+          "duration",
+          "color_hint",
+          "spawn_rate",
+          "particle_size",
+          "wind_influence",
+          "id",
+          "risk_level"
+        ],
+        "title": "EffectPresetItem",
+        "type": "object"
+      },
+      "EffectType": {
+        "enum": [
+          "rain",
+          "snow",
+          "fog",
+          "wind",
+          "storm"
+        ],
+        "title": "EffectType",
+        "type": "string"
+      },
+      "ErrorReport": {
+        "additionalProperties": false,
+        "properties": {
+          "app_state": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "App State"
+          },
+          "browser_info": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Browser Info"
+          },
+          "error_code": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Error Code",
+            "type": "string"
+          },
+          "message": {
+            "maxLength": 1000,
+            "minLength": 1,
+            "title": "Message",
+            "type": "string"
+          },
+          "stack": {
+            "anyOf": [
+              {
+                "maxLength": 5000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stack"
+          },
+          "timestamp": {
+            "format": "date-time",
+            "title": "Timestamp",
+            "type": "string"
+          },
+          "trace_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Trace Id",
+            "type": "string"
+          },
+          "version": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "trace_id",
+          "error_code",
+          "message",
+          "version"
+        ],
+        "title": "ErrorReport",
+        "type": "object"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "title": "Detail",
+            "type": "array"
+          }
+        },
+        "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "IngestRun": {
+        "additionalProperties": false,
+        "properties": {
+          "attempts": {
+            "default": 1,
+            "minimum": 1.0,
+            "title": "Attempts",
+            "type": "integer"
+          },
+          "end_time": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "End Time"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "run_id": {
+            "title": "Run Id",
+            "type": "string"
+          },
+          "start_time": {
+            "format": "date-time",
+            "title": "Start Time",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "running",
+              "success",
+              "failed"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "run_id",
+          "status",
+          "start_time"
+        ],
+        "title": "IngestRun",
+        "type": "object"
+      },
+      "IngestRunsResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "generated_at": {
+            "title": "Generated At",
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/IngestRun"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "schema_version": {
+            "default": 1,
+            "title": "Schema Version",
+            "type": "integer"
+          }
+        },
+        "title": "IngestRunsResponse",
+        "type": "object"
+      },
+      "LocalIndexItemResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "enum": [
+              "cldas",
+              "ecmwf",
+              "town_forecast"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "meta": {
+            "additionalProperties": true,
+            "title": "Meta",
+            "type": "object"
+          },
+          "mtime_ns": {
+            "title": "Mtime Ns",
+            "type": "integer"
+          },
+          "relative_path": {
+            "title": "Relative Path",
+            "type": "string"
+          },
+          "size": {
+            "title": "Size",
+            "type": "integer"
+          },
+          "time": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Time"
+          },
+          "variable": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Variable"
+          }
+        },
+        "required": [
+          "kind",
+          "relative_path",
+          "size",
+          "mtime_ns"
+        ],
+        "title": "LocalIndexItemResponse",
+        "type": "object"
+      },
+      "LocalIndexResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "generated_at": {
+            "title": "Generated At",
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/LocalIndexItemResponse"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "schema_version": {
+            "title": "Schema Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "schema_version",
+          "generated_at"
+        ],
+        "title": "LocalIndexResponse",
+        "type": "object"
+      },
+      "ParticleSizeRange": {
+        "properties": {
+          "max": {
+            "exclusiveMinimum": 0.0,
+            "title": "Max",
+            "type": "number"
+          },
+          "min": {
+            "exclusiveMinimum": 0.0,
+            "title": "Min",
+            "type": "number"
+          }
+        },
+        "required": [
+          "min",
+          "max"
+        ],
+        "title": "ParticleSizeRange",
+        "type": "object"
+      },
+      "ProductHazardFeatureCollectionResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "features": {
+            "items": {
+              "$ref": "#/components/schemas/ProductHazardFeatureResponse"
+            },
+            "title": "Features",
+            "type": "array"
+          },
+          "type": {
+            "const": "FeatureCollection",
+            "default": "FeatureCollection",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "title": "ProductHazardFeatureCollectionResponse",
+        "type": "object"
+      },
+      "ProductHazardFeatureResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "geometry": {
+            "title": "Geometry"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "properties": {
+            "$ref": "#/components/schemas/ProductHazardPropertiesResponse"
+          },
+          "type": {
+            "const": "Feature",
+            "default": "Feature",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "geometry",
+          "properties"
+        ],
+        "title": "ProductHazardFeatureResponse",
+        "type": "object"
+      },
+      "ProductHazardPropertiesResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "product_id": {
+            "title": "Product Id",
+            "type": "integer"
+          },
+          "product_issued_at": {
+            "format": "date-time",
+            "title": "Product Issued At",
+            "type": "string"
+          },
+          "product_status": {
+            "title": "Product Status",
+            "type": "string"
+          },
+          "product_title": {
+            "title": "Product Title",
+            "type": "string"
+          },
+          "product_valid_from": {
+            "format": "date-time",
+            "title": "Product Valid From",
+            "type": "string"
+          },
+          "product_valid_to": {
+            "format": "date-time",
+            "title": "Product Valid To",
+            "type": "string"
+          },
+          "severity": {
+            "title": "Severity",
+            "type": "string"
+          }
+        },
+        "required": [
+          "product_id",
+          "product_title",
+          "product_status",
+          "product_issued_at",
+          "product_valid_from",
+          "product_valid_to",
+          "severity"
+        ],
+        "title": "ProductHazardPropertiesResponse",
+        "type": "object"
+      },
+      "ProductHazardResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "bbox": {
+            "$ref": "#/components/schemas/BBoxResponse"
+          },
+          "geometry": {
+            "title": "Geometry"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "severity": {
+            "title": "Severity",
+            "type": "string"
+          },
+          "valid_from": {
+            "format": "date-time",
+            "title": "Valid From",
+            "type": "string"
+          },
+          "valid_to": {
+            "format": "date-time",
+            "title": "Valid To",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "severity",
+          "geometry",
+          "valid_from",
+          "valid_to",
+          "bbox"
+        ],
+        "title": "ProductHazardResponse",
+        "type": "object"
+      },
+      "ProductResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "hazards": {
+            "items": {
+              "$ref": "#/components/schemas/ProductHazardResponse"
+            },
+            "title": "Hazards",
+            "type": "array"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "issued_at": {
+            "format": "date-time",
+            "title": "Issued At",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Text"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "valid_from": {
+            "format": "date-time",
+            "title": "Valid From",
+            "type": "string"
+          },
+          "valid_to": {
+            "format": "date-time",
+            "title": "Valid To",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "issued_at",
+          "valid_from",
+          "valid_to",
+          "version",
+          "status"
+        ],
+        "title": "ProductResponse",
+        "type": "object"
+      },
+      "ProductsResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ProductResponse"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "title": "ProductsResponse",
+        "type": "object"
+      },
+      "RiskIntensityMapping": {
+        "properties": {
+          "effect_params": {
+            "$ref": "#/components/schemas/EffectParams"
+          },
+          "intensity": {
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Intensity",
+            "type": "number"
+          },
+          "level": {
+            "maximum": 5.0,
+            "minimum": 1.0,
+            "title": "Level",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "level",
+          "intensity",
+          "effect_params"
+        ],
+        "title": "RiskIntensityMapping",
+        "type": "object"
+      },
+      "RiskIntensityMappingsResponse": {
+        "properties": {
+          "mappings": {
+            "items": {
+              "$ref": "#/components/schemas/RiskIntensityMapping"
+            },
+            "title": "Mappings",
+            "type": "array"
+          },
+          "merge_strategy": {
+            "description": "Rule for merging risk level with product severity",
+            "title": "Merge Strategy",
+            "type": "string"
+          }
+        },
+        "required": [
+          "merge_strategy",
+          "mappings"
+        ],
+        "title": "RiskIntensityMappingsResponse",
+        "type": "object"
+      },
+      "RiskLevel": {
+        "enum": [
+          "low",
+          "medium",
+          "high",
+          "extreme"
+        ],
+        "title": "RiskLevel",
+        "type": "string"
+      },
+      "RiskPOIItemResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "alt": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Alt"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "lat": {
+            "title": "Lat",
+            "type": "number"
+          },
+          "lon": {
+            "title": "Lon",
+            "type": "number"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "risk_level": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Risk level (1-5) when evaluated, otherwise null",
+            "title": "Risk Level"
+          },
+          "tags": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tags"
+          },
+          "type": {
+            "title": "Type",
+            "type": "string"
+          },
+          "weight": {
+            "title": "Weight",
+            "type": "number"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "type",
+          "lon",
+          "lat",
+          "weight"
+        ],
+        "title": "RiskPOIItemResponse",
+        "type": "object"
+      },
+      "RiskPOIQueryResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/RiskPOIItemResponse"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "page": {
+            "title": "Page",
+            "type": "integer"
+          },
+          "page_size": {
+            "title": "Page Size",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "page",
+          "page_size",
+          "total"
+        ],
+        "title": "RiskPOIQueryResponse",
+        "type": "object"
+      },
+      "SampleResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "qc": {
+            "default": "missing",
+            "enum": [
+              "ok",
+              "missing"
+            ],
+            "title": "Qc",
+            "type": "string"
+          },
+          "unit": {
+            "default": "",
+            "title": "Unit",
+            "type": "string"
+          },
+          "value": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Value"
+          }
+        },
+        "title": "SampleResponse",
+        "type": "object"
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "title": "Location",
+            "type": "array"
+          },
+          "msg": {
+            "title": "Message",
+            "type": "string"
+          },
+          "type": {
+            "title": "Error Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError",
+        "type": "object"
+      },
+      "WindVectorResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "lat": {
+            "items": {
+              "type": "number"
+            },
+            "title": "Lat",
+            "type": "array"
+          },
+          "lon": {
+            "items": {
+              "type": "number"
+            },
+            "title": "Lon",
+            "type": "array"
+          },
+          "u": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "title": "U",
+            "type": "array"
+          },
+          "v": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "title": "V",
+            "type": "array"
+          }
+        },
+        "title": "WindVectorResponse",
+        "type": "object"
+      }
+    }
+  },
+  "info": {
+    "title": "Digital Earth API",
+    "version": "0.1.0"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/api/v1/attribution": {
+      "get": {
+        "operationId": "attribution_api_v1_attribution_get",
+        "responses": {
+          "200": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Attribution",
+        "tags": [
+          "meta"
+        ]
+      }
+    },
+    "/api/v1/catalog/cldas/times": {
+      "get": {
+        "operationId": "get_cldas_times_api_v1_catalog_cldas_times_get",
+        "parameters": [
+          {
+            "description": "Filter by CLDAS variable",
+            "in": "query",
+            "name": "var",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by CLDAS variable",
+              "title": "Var"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CldasTimesResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Cldas Times",
+        "tags": [
+          "catalog"
+        ]
+      }
+    },
+    "/api/v1/catalog/ecmwf/runs": {
+      "get": {
+        "operationId": "get_ecmwf_runs_api_v1_catalog_ecmwf_runs_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "maximum": 500,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Return the latest N runs (alias for limit with offset=0)",
+            "in": "query",
+            "name": "latest",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maximum": 500,
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Return the latest N runs (alias for limit with offset=0)",
+              "title": "Latest"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EcmwfRunsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Ecmwf Runs",
+        "tags": [
+          "catalog"
+        ]
+      }
+    },
+    "/api/v1/catalog/ecmwf/runs/{run}/times": {
+      "get": {
+        "operationId": "get_ecmwf_run_times_api_v1_catalog_ecmwf_runs__run__times_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run",
+            "required": true,
+            "schema": {
+              "title": "Run",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Sampling policy (std)",
+            "in": "query",
+            "name": "policy",
+            "required": false,
+            "schema": {
+              "default": "std",
+              "description": "Sampling policy (std)",
+              "title": "Policy",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EcmwfRunTimesResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Ecmwf Run Times",
+        "tags": [
+          "catalog"
+        ]
+      }
+    },
+    "/api/v1/catalog/ecmwf/runs/{run}/vars": {
+      "get": {
+        "operationId": "get_ecmwf_run_vars_api_v1_catalog_ecmwf_runs__run__vars_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run",
+            "required": true,
+            "schema": {
+              "title": "Run",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EcmwfRunVarsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Ecmwf Run Vars",
+        "tags": [
+          "catalog"
+        ]
+      }
+    },
+    "/api/v1/effects/presets": {
+      "get": {
+        "operationId": "list_effect_presets_api_v1_effects_presets_get",
+        "parameters": [
+          {
+            "description": "Filter by type",
+            "in": "query",
+            "name": "effect_type",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/EffectType"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by type",
+              "title": "Effect Type"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/EffectPresetItem"
+                  },
+                  "title": "Response List Effect Presets Api V1 Effects Presets Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Effect Presets",
+        "tags": [
+          "effects"
+        ]
+      }
+    },
+    "/api/v1/errors": {
+      "post": {
+        "operationId": "report_frontend_error_api_v1_errors_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ErrorReport"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Report Frontend Error",
+        "tags": [
+          "errors"
+        ]
+      }
+    },
+    "/api/v1/ingest/runs": {
+      "get": {
+        "operationId": "list_ingest_runs_api_v1_ingest_runs_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IngestRunsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Ingest Runs",
+        "tags": [
+          "ingest"
+        ]
+      }
+    },
+    "/api/v1/local-data/cldas/summary": {
+      "get": {
+        "operationId": "get_cldas_summary_api_v1_local_data_cldas_summary_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "relative_path",
+            "required": true,
+            "schema": {
+              "minLength": 1,
+              "title": "Relative Path",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Get Cldas Summary Api V1 Local Data Cldas Summary Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Cldas Summary",
+        "tags": [
+          "local-data"
+        ]
+      }
+    },
+    "/api/v1/local-data/file": {
+      "get": {
+        "operationId": "get_local_file_api_v1_local_data_file_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "relative_path",
+            "required": true,
+            "schema": {
+              "minLength": 1,
+              "title": "Relative Path",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Local File",
+        "tags": [
+          "local-data"
+        ]
+      }
+    },
+    "/api/v1/local-data/index": {
+      "get": {
+        "operationId": "get_local_index_api_v1_local_data_index_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "kind",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "cldas",
+                    "ecmwf",
+                    "town_forecast"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Kind"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LocalIndexResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Local Index",
+        "tags": [
+          "local-data"
+        ]
+      }
+    },
+    "/api/v1/local-data/town-forecast": {
+      "get": {
+        "operationId": "get_town_forecast_api_v1_local_data_town_forecast_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "relative_path",
+            "required": true,
+            "schema": {
+              "minLength": 1,
+              "title": "Relative Path",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "max_stations",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 500,
+              "minimum": 1,
+              "title": "Max Stations",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Get Town Forecast Api V1 Local Data Town Forecast Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Town Forecast",
+        "tags": [
+          "local-data"
+        ]
+      }
+    },
+    "/api/v1/products": {
+      "get": {
+        "operationId": "list_products_api_v1_products_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": "published",
+              "title": "Status"
+            }
+          },
+          {
+            "in": "query",
+            "name": "start",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Start"
+            }
+          },
+          {
+            "in": "query",
+            "name": "end",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "End"
+            }
+          },
+          {
+            "in": "query",
+            "name": "bbox",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Bbox"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProductsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Products",
+        "tags": [
+          "products"
+        ]
+      }
+    },
+    "/api/v1/products/hazards": {
+      "get": {
+        "operationId": "list_product_hazards_geojson_api_v1_products_hazards_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": "published",
+              "title": "Status"
+            }
+          },
+          {
+            "in": "query",
+            "name": "start",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Start"
+            }
+          },
+          {
+            "in": "query",
+            "name": "end",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "End"
+            }
+          },
+          {
+            "in": "query",
+            "name": "bbox",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Bbox"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 1000,
+              "maximum": 5000,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProductHazardFeatureCollectionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Product Hazards Geojson",
+        "tags": [
+          "products"
+        ]
+      }
+    },
+    "/api/v1/risk/intensity-mapping": {
+      "get": {
+        "operationId": "get_risk_intensity_mapping_api_v1_risk_intensity_mapping_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RiskIntensityMappingsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Risk Intensity Mapping",
+        "tags": [
+          "risk"
+        ]
+      }
+    },
+    "/api/v1/risk/pois": {
+      "get": {
+        "operationId": "get_risk_pois_api_v1_risk_pois_get",
+        "parameters": [
+          {
+            "description": "Bounding box: min_lon,min_lat,max_lon,max_lat",
+            "in": "query",
+            "name": "bbox",
+            "required": true,
+            "schema": {
+              "description": "Bounding box: min_lon,min_lat,max_lon,max_lat",
+              "title": "Bbox",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "default": 1,
+              "maximum": 1000,
+              "minimum": 1,
+              "title": "Page",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page_size",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "maximum": 1000,
+              "minimum": 1,
+              "title": "Page Size",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RiskPOIQueryResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Risk Pois",
+        "tags": [
+          "risk"
+        ]
+      }
+    },
+    "/api/v1/sample": {
+      "get": {
+        "operationId": "sample_point_api_v1_sample_get",
+        "parameters": [
+          {
+            "description": "ECMWF run time",
+            "in": "query",
+            "name": "run",
+            "required": true,
+            "schema": {
+              "description": "ECMWF run time",
+              "minLength": 1,
+              "title": "Run",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Valid time",
+            "in": "query",
+            "name": "valid_time",
+            "required": true,
+            "schema": {
+              "description": "Valid time",
+              "minLength": 1,
+              "title": "Valid Time",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Pressure level (hPa) or sfc",
+            "in": "query",
+            "name": "level",
+            "required": true,
+            "schema": {
+              "description": "Pressure level (hPa) or sfc",
+              "minLength": 1,
+              "title": "Level",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Variable name",
+            "in": "query",
+            "name": "var",
+            "required": true,
+            "schema": {
+              "description": "Variable name",
+              "minLength": 1,
+              "title": "Var",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "lon",
+            "required": true,
+            "schema": {
+              "maximum": 360.0,
+              "minimum": -360.0,
+              "title": "Lon",
+              "type": "number"
+            }
+          },
+          {
+            "in": "query",
+            "name": "lat",
+            "required": true,
+            "schema": {
+              "maximum": 90.0,
+              "minimum": -90.0,
+              "title": "Lat",
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SampleResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Sample Point",
+        "tags": [
+          "sample"
+        ]
+      }
+    },
+    "/api/v1/tiles/cldas/{time_key}/{var}/{z}/{x}/{y}.png": {
+      "get": {
+        "operationId": "get_cldas_tile_api_v1_tiles_cldas__time_key___var___z___x___y__png_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "time_key",
+            "required": true,
+            "schema": {
+              "title": "Time Key",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "var",
+            "required": true,
+            "schema": {
+              "title": "Var",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "z",
+            "required": true,
+            "schema": {
+              "maximum": 22,
+              "minimum": 0,
+              "title": "Z",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "path",
+            "name": "x",
+            "required": true,
+            "schema": {
+              "minimum": 0,
+              "title": "X",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "path",
+            "name": "y",
+            "required": true,
+            "schema": {
+              "minimum": 0,
+              "title": "Y",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "image/png": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              }
+            },
+            "description": "PNG tile image"
+          },
+          "304": {
+            "description": "Not Modified"
+          },
+          "400": {
+            "description": "Bad Request"
+          },
+          "404": {
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          },
+          "503": {
+            "description": "Service Unavailable"
+          }
+        },
+        "summary": "Get Cldas Tile",
+        "tags": [
+          "tiles"
+        ]
+      }
+    },
+    "/api/v1/tiles/{tile_path}": {
+      "get": {
+        "operationId": "get_tile_api_v1_tiles__tile_path__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "tile_path",
+            "required": true,
+            "schema": {
+              "title": "Tile Path",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Return 302 redirect to object storage when possible",
+            "in": "query",
+            "name": "redirect",
+            "required": false,
+            "schema": {
+              "default": true,
+              "description": "Return 302 redirect to object storage when possible",
+              "title": "Redirect",
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Tile bytes returned when redirect=false"
+          },
+          "302": {
+            "description": "Redirect to object storage"
+          },
+          "304": {
+            "description": "Not Modified"
+          },
+          "400": {
+            "description": "Bad Request"
+          },
+          "404": {
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        },
+        "summary": "Get Tile",
+        "tags": [
+          "tiles"
+        ]
+      }
+    },
+    "/api/v1/vector/ecmwf/{run}/wind/{level}/{time}": {
+      "get": {
+        "operationId": "get_ecmwf_wind_vectors_api_v1_vector_ecmwf__run__wind__level___time__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run",
+            "required": true,
+            "schema": {
+              "title": "Run",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "level",
+            "required": true,
+            "schema": {
+              "title": "Level",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "time",
+            "required": true,
+            "schema": {
+              "title": "Time",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Bounding box: minLon,minLat,maxLon,maxLat",
+            "in": "query",
+            "name": "bbox",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Bounding box: minLon,minLat,maxLon,maxLat",
+              "title": "Bbox"
+            }
+          },
+          {
+            "in": "query",
+            "name": "stride",
+            "required": false,
+            "schema": {
+              "default": 1,
+              "maximum": 256,
+              "minimum": 1,
+              "title": "Stride",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WindVectorResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Ecmwf Wind Vectors",
+        "tags": [
+          "vector"
+        ]
+      }
+    },
+    "/health": {
+      "get": {
+        "operationId": "health_health_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "title": "Response Health Health Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Health"
+      }
+    }
+  }
+}
