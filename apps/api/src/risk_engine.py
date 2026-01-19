@@ -68,7 +68,9 @@ def _validate_bbox(value: BBox) -> BBox:
     return min_lon, min_lat, max_lon, max_lat
 
 
-def _chunked(items: Sequence[RiskPOI], *, batch_size: int) -> Iterable[Sequence[RiskPOI]]:
+def _chunked(
+    items: Sequence[RiskPOI], *, batch_size: int
+) -> Iterable[Sequence[RiskPOI]]:
     if batch_size <= 0:
         raise RiskEngineInputError("batch_size must be > 0")
     for offset in range(0, len(items), batch_size):

@@ -5,10 +5,14 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
+from redis_fakes import FakeRedis
 from risk_engine import (
+    RiskEngineDatabaseError,
     RiskEngineInputError,
     RiskEngineNotFoundError,
     RiskEvaluationEngine,
@@ -192,6 +196,36 @@ class _CountingSampler:
         }
 
 
+class _MissingSampleSampler:
+    def sample(self, *, product_id: int, valid_time: datetime, pois):  # type: ignore[no-untyped-def]
+        if not pois:
+            return {}
+        first = pois[0]
+        return {
+            int(first.id): {
+                "snowfall": 0.0,
+                "snow_depth": 0.0,
+                "wind": 0.0,
+                "temp": 5.0,
+            }
+        }
+
+
+class _InvalidSampleSampler:
+    def sample(self, *, product_id: int, valid_time: datetime, pois):  # type: ignore[no-untyped-def]
+        return {int(poi.id): {"snowfall": 0.0} for poi in pois}
+
+
+def _make_risk_client(*, redis: FakeRedis | None = None) -> TestClient:
+    from routers.risk import router as risk_router
+
+    app = FastAPI()
+    app.include_router(risk_router, prefix="/api/v1")
+    if redis is not None:
+        app.state.redis_client = redis
+    return TestClient(app)
+
+
 def test_risk_engine_evaluates_pois_with_mock_weather(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -318,13 +352,172 @@ def test_risk_engine_batches_sampling_for_1000_pois(
     assert max(sampler.batch_sizes) <= 128
 
 
-def test_risk_engine_invalid_bbox_raises_input_error() -> None:
+@pytest.mark.parametrize(
+    "bbox",
+    [
+        (10.0, 0.0, -10.0, 1.0),
+        (-181.0, 0.0, 0.0, 1.0),
+        (0.0, -91.0, 1.0, 0.0),
+        (0.0, 0.0, 1.0, float("nan")),
+        (0.0, 1.0, 1.0, 0.0),
+    ],
+)
+def test_risk_engine_invalid_bbox_raises_input_error(
+    bbox: tuple[float, float, float, float],
+) -> None:
     engine = RiskEvaluationEngine()
     with pytest.raises(RiskEngineInputError):
         engine.evaluate_pois(
             product_id=1,
             valid_time=datetime(2024, 1, 1, tzinfo=timezone.utc),
-            bbox=(10.0, 0.0, -10.0, 1.0),
+            bbox=bbox,
+        )
+
+
+def test_risk_engine_default_sampler_is_deterministic_and_accepts_naive_time(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    rules_path = tmp_path / "risk-rules.yaml"
+    _write_risk_rules_config(rules_path)
+    monkeypatch.setenv("DIGITAL_EARTH_RISK_RULES_CONFIG", str(rules_path))
+
+    from risk_rules_config import get_risk_rules_payload
+
+    get_risk_rules_payload.cache_clear()
+    _db_url, product_id = _setup_db(monkeypatch, tmp_path)
+
+    engine = RiskEvaluationEngine()
+    first = engine.evaluate_pois(
+        product_id=product_id,
+        valid_time=datetime(2024, 1, 1),
+        bbox=None,
+    )
+    second = engine.evaluate_pois(
+        product_id=product_id,
+        valid_time=datetime(2024, 1, 1),
+        bbox=None,
+    )
+    assert [item.model_dump() for item in first] == [
+        item.model_dump() for item in second
+    ]
+
+
+def test_risk_engine_missing_hazard_for_time_raises_not_found(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    rules_path = tmp_path / "risk-rules.yaml"
+    _write_risk_rules_config(rules_path)
+    monkeypatch.setenv("DIGITAL_EARTH_RISK_RULES_CONFIG", str(rules_path))
+
+    from risk_rules_config import get_risk_rules_payload
+
+    get_risk_rules_payload.cache_clear()
+    _db_url, product_id = _setup_db(monkeypatch, tmp_path)
+
+    engine = RiskEvaluationEngine()
+    with pytest.raises(RiskEngineNotFoundError):
+        engine.evaluate_pois(
+            product_id=product_id,
+            valid_time=datetime(2024, 1, 2, tzinfo=timezone.utc),
+            bbox=None,
+        )
+
+
+def test_risk_engine_batch_size_must_be_positive(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    rules_path = tmp_path / "risk-rules.yaml"
+    _write_risk_rules_config(rules_path)
+    monkeypatch.setenv("DIGITAL_EARTH_RISK_RULES_CONFIG", str(rules_path))
+
+    from risk_rules_config import get_risk_rules_payload
+
+    get_risk_rules_payload.cache_clear()
+    _db_url, product_id = _setup_db(monkeypatch, tmp_path)
+
+    engine = RiskEvaluationEngine(batch_size=0, sampler=_CountingSampler())
+    with pytest.raises(RiskEngineInputError):
+        engine.evaluate_pois(
+            product_id=product_id,
+            valid_time=datetime(2024, 1, 1, tzinfo=timezone.utc),
+            bbox=None,
+        )
+
+
+def test_risk_engine_poi_ids_filters_results_and_handles_empty(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    rules_path = tmp_path / "risk-rules.yaml"
+    _write_risk_rules_config(rules_path)
+    monkeypatch.setenv("DIGITAL_EARTH_RISK_RULES_CONFIG", str(rules_path))
+
+    from risk_rules_config import get_risk_rules_payload
+
+    get_risk_rules_payload.cache_clear()
+    _db_url, product_id = _setup_db(monkeypatch, tmp_path)
+
+    sampler = _StaticSampler(
+        {
+            2: {"snowfall": 0, "snow_depth": 0, "wind": 0, "temp": 5},
+        }
+    )
+    engine = RiskEvaluationEngine(sampler=sampler, batch_size=10)
+    filtered = engine.evaluate_pois(
+        product_id=product_id,
+        valid_time=datetime(2024, 1, 1, tzinfo=timezone.utc),
+        bbox=None,
+        poi_ids=[2],
+    )
+    assert [item.poi_id for item in filtered] == [2]
+
+    empty = engine.evaluate_pois(
+        product_id=product_id,
+        valid_time=datetime(2024, 1, 1, tzinfo=timezone.utc),
+        bbox=None,
+        poi_ids=[0, -1],
+    )
+    assert empty == []
+
+
+def test_risk_engine_missing_weather_sample_raises_input_error(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    rules_path = tmp_path / "risk-rules.yaml"
+    _write_risk_rules_config(rules_path)
+    monkeypatch.setenv("DIGITAL_EARTH_RISK_RULES_CONFIG", str(rules_path))
+
+    from risk_rules_config import get_risk_rules_payload
+
+    get_risk_rules_payload.cache_clear()
+    _db_url, product_id = _setup_db(monkeypatch, tmp_path)
+
+    engine = RiskEvaluationEngine(sampler=_MissingSampleSampler(), batch_size=10)
+    with pytest.raises(RiskEngineInputError, match="Missing weather sample"):
+        engine.evaluate_pois(
+            product_id=product_id,
+            valid_time=datetime(2024, 1, 1, tzinfo=timezone.utc),
+            bbox=None,
+        )
+
+
+def test_risk_engine_invalid_weather_payload_raises_input_error(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    rules_path = tmp_path / "risk-rules.yaml"
+    _write_risk_rules_config(rules_path)
+    monkeypatch.setenv("DIGITAL_EARTH_RISK_RULES_CONFIG", str(rules_path))
+
+    from risk_rules_config import get_risk_rules_payload
+
+    get_risk_rules_payload.cache_clear()
+    _db_url, product_id = _setup_db(monkeypatch, tmp_path)
+
+    engine = RiskEvaluationEngine(sampler=_InvalidSampleSampler(), batch_size=10)
+    with pytest.raises(RiskEngineInputError, match="Missing factor values"):
+        engine.evaluate_pois(
+            product_id=product_id,
+            valid_time=datetime(2024, 1, 1, tzinfo=timezone.utc),
+            bbox=None,
         )
 
 
@@ -356,3 +549,184 @@ def test_risk_engine_unknown_product_raises_not_found(
             valid_time=datetime(2024, 1, 1, tzinfo=timezone.utc),
             bbox=(100.0, 10.0, 101.0, 11.0),
         )
+
+
+def test_risk_evaluate_endpoint_without_redis_returns_results_and_summary(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    rules_path = tmp_path / "risk-rules.yaml"
+    _write_risk_rules_config(rules_path)
+    monkeypatch.setenv("DIGITAL_EARTH_RISK_RULES_CONFIG", str(rules_path))
+
+    from risk_rules_config import get_risk_rules_payload
+
+    get_risk_rules_payload.cache_clear()
+    _db_url, product_id = _setup_db(monkeypatch, tmp_path)
+
+    client = _make_risk_client(redis=None)
+    response = client.post(
+        "/api/v1/risk/evaluate",
+        json={"product_id": product_id, "valid_time": "2024-01-01T00:00:00"},
+    )
+    assert response.status_code == 200
+    assert response.headers.get("etag", "").startswith('"sha256-')
+    assert response.headers.get("x-risk-rules-etag", "").startswith('"sha256-')
+
+    payload = response.json()
+    assert payload["summary"]["total"] == 2
+    assert payload["summary"]["duration_ms"] >= 0
+    assert len(payload["results"]) == 2
+    assert [item["poi_id"] for item in payload["results"]] == [1, 2]
+    assert all(len(item["factors"]) == 4 for item in payload["results"])
+
+
+def test_risk_evaluate_endpoint_with_redis_uses_cache_on_repeat_request(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    rules_path = tmp_path / "risk-rules.yaml"
+    _write_risk_rules_config(rules_path)
+    monkeypatch.setenv("DIGITAL_EARTH_RISK_RULES_CONFIG", str(rules_path))
+
+    from risk_rules_config import get_risk_rules_payload
+
+    get_risk_rules_payload.cache_clear()
+    _db_url, product_id = _setup_db(monkeypatch, tmp_path)
+
+    redis = FakeRedis(use_real_time=False)
+    client = _make_risk_client(redis=redis)
+    first = client.post(
+        "/api/v1/risk/evaluate",
+        json={"product_id": product_id, "valid_time": "2024-01-01T00:00:00"},
+    )
+    assert first.status_code == 200
+    first_payload = first.json()
+
+    import routers.risk as risk_router_module
+
+    class _BoomEngine:
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            raise AssertionError("RiskEvaluationEngine should not run on cache hit")
+
+    monkeypatch.setattr(risk_router_module, "RiskEvaluationEngine", _BoomEngine)
+
+    second = client.post(
+        "/api/v1/risk/evaluate",
+        json={"product_id": product_id, "valid_time": "2024-01-01T00:00:00"},
+    )
+    assert second.status_code == 200
+    assert second.json() == first_payload
+
+
+def test_risk_evaluate_endpoint_cache_timeout_returns_503(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    rules_path = tmp_path / "risk-rules.yaml"
+    _write_risk_rules_config(rules_path)
+    monkeypatch.setenv("DIGITAL_EARTH_RISK_RULES_CONFIG", str(rules_path))
+
+    from risk_rules_config import get_risk_rules_payload
+
+    get_risk_rules_payload.cache_clear()
+    _db_url, product_id = _setup_db(monkeypatch, tmp_path)
+
+    import routers.risk as risk_router_module
+
+    async def _timeout(*args: object, **kwargs: object) -> object:
+        raise TimeoutError("boom")
+
+    monkeypatch.setattr(risk_router_module, "get_or_compute_cached_bytes", _timeout)
+
+    redis = FakeRedis(use_real_time=False)
+    client = _make_risk_client(redis=redis)
+    response = client.post(
+        "/api/v1/risk/evaluate",
+        json={"product_id": product_id, "valid_time": "2024-01-01T00:00:00"},
+    )
+    assert response.status_code == 503
+    assert response.json()["detail"] == "Risk evaluation cache warming timed out"
+
+
+def test_risk_evaluate_endpoint_cache_error_falls_back_to_compute(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    rules_path = tmp_path / "risk-rules.yaml"
+    _write_risk_rules_config(rules_path)
+    monkeypatch.setenv("DIGITAL_EARTH_RISK_RULES_CONFIG", str(rules_path))
+
+    from risk_rules_config import get_risk_rules_payload
+
+    get_risk_rules_payload.cache_clear()
+    _db_url, product_id = _setup_db(monkeypatch, tmp_path)
+
+    import routers.risk as risk_router_module
+
+    async def _boom(*args: object, **kwargs: object) -> object:
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(risk_router_module, "get_or_compute_cached_bytes", _boom)
+
+    redis = FakeRedis(use_real_time=False)
+    client = _make_risk_client(redis=redis)
+    response = client.post(
+        "/api/v1/risk/evaluate",
+        json={"product_id": product_id, "valid_time": "2024-01-01T00:00:00"},
+    )
+    assert response.status_code == 200
+    assert response.json()["summary"]["total"] == 2
+
+
+def test_risk_evaluate_endpoint_with_redis_returns_400_for_invalid_bbox(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    rules_path = tmp_path / "risk-rules.yaml"
+    _write_risk_rules_config(rules_path)
+    monkeypatch.setenv("DIGITAL_EARTH_RISK_RULES_CONFIG", str(rules_path))
+
+    from risk_rules_config import get_risk_rules_payload
+
+    get_risk_rules_payload.cache_clear()
+    _db_url, product_id = _setup_db(monkeypatch, tmp_path)
+
+    redis = FakeRedis(use_real_time=False)
+    client = _make_risk_client(redis=redis)
+    response = client.post(
+        "/api/v1/risk/evaluate",
+        json={
+            "product_id": product_id,
+            "valid_time": "2024-01-01T00:00:00Z",
+            "bbox": [10.0, 0.0, -10.0, 1.0],
+        },
+    )
+    assert response.status_code == 400
+
+
+def test_risk_evaluate_endpoint_returns_503_on_database_error(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    rules_path = tmp_path / "risk-rules.yaml"
+    _write_risk_rules_config(rules_path)
+    monkeypatch.setenv("DIGITAL_EARTH_RISK_RULES_CONFIG", str(rules_path))
+
+    from risk_rules_config import get_risk_rules_payload
+
+    get_risk_rules_payload.cache_clear()
+    _db_url, product_id = _setup_db(monkeypatch, tmp_path)
+
+    import routers.risk as risk_router_module
+
+    class _FailingEngine:
+        def evaluate_pois(self, *args: object, **kwargs: object):  # type: ignore[no-untyped-def]
+            raise RiskEngineDatabaseError("Database unavailable")
+
+    monkeypatch.setattr(
+        risk_router_module,
+        "RiskEvaluationEngine",
+        lambda *args, **kwargs: _FailingEngine(),
+    )
+
+    client = _make_risk_client(redis=None)
+    response = client.post(
+        "/api/v1/risk/evaluate",
+        json={"product_id": product_id, "valid_time": "2024-01-01T00:00:00Z"},
+    )
+    assert response.status_code == 503
