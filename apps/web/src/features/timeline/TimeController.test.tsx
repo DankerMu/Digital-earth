@@ -73,6 +73,29 @@ describe('TimeController', () => {
     });
   });
 
+  it('does not start playing if loadFrame fails', async () => {
+    const deferred = createDeferred<void>();
+    const loadFrame = vi.fn().mockReturnValue(deferred.promise);
+
+    render(
+      <TimeController frames={makeFrames()} initialIndex={2} loadFrame={loadFrame} />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: '播放' }));
+
+    expect(screen.getByText('2024-01-15 12:00')).toBeInTheDocument();
+    expect(loadFrame).toHaveBeenCalledTimes(1);
+    expect(screen.getByLabelText('加载中')).toBeInTheDocument();
+
+    deferred.reject(new Error('load failed'));
+
+    await waitFor(() => {
+      expect(screen.queryByLabelText('加载中')).not.toBeInTheDocument();
+    });
+
+    expect(screen.getByRole('button', { name: '播放' })).toBeInTheDocument();
+  });
+
   it('plays smoothly and respects speed', async () => {
     vi.useFakeTimers();
     const onTimeChange = vi.fn();

@@ -51,11 +51,11 @@ export function TimeController({
   }, [isLoading]);
 
   const goToIndex = useCallback(
-    async (nextIndex: number) => {
-      if (frames.length === 0) return;
+    async (nextIndex: number): Promise<boolean> => {
+      if (frames.length === 0) return false;
 
       const clamped = clampIndex(nextIndex, frames.length);
-      if (clamped === currentIndexRef.current) return;
+      if (clamped === currentIndexRef.current) return false;
 
       const nextTime = frames[clamped]!;
 
@@ -65,7 +65,7 @@ export function TimeController({
       onTimeChange?.(nextTime, clamped);
       onRefreshLayers?.(nextTime, clamped);
 
-      if (!loadFrame) return;
+      if (!loadFrame) return true;
 
       const requestId = (requestIdRef.current += 1);
       isLoadingRef.current = true;
@@ -73,6 +73,9 @@ export function TimeController({
 
       try {
         await loadFrame(nextTime, clamped);
+        return true;
+      } catch {
+        return false;
       } finally {
         if (requestIdRef.current === requestId) {
           isLoadingRef.current = false;
@@ -126,7 +129,9 @@ export function TimeController({
     if (frames.length <= 1) return;
 
     if (!isPlaying && currentIndexRef.current >= frames.length - 1) {
-      void goToIndex(0).then(() => setIsPlaying(true));
+      void goToIndex(0).then((didLoad) => {
+        if (didLoad) setIsPlaying(true);
+      });
       return;
     }
 
@@ -259,4 +264,3 @@ export function TimeController({
     </div>
   );
 }
-
