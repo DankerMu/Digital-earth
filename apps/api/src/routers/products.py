@@ -7,7 +7,7 @@ from typing import Any, Literal, Optional
 
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import desc, select
+from sqlalchemy import and_, desc, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, selectinload
 
@@ -143,11 +143,40 @@ def list_products(
         select(Product)
         .options(selectinload(Product.hazards))
         .order_by(desc(Product.issued_at))
-        .limit(limit)
-        .offset(offset)
     )
     if status is not None:
         stmt = stmt.where(Product.status == status)
+
+    hazard_filter_enabled = (
+        start is not None or end is not None or bbox_tuple is not None
+    )
+    if hazard_filter_enabled:
+        hazard_clauses: list[object] = []
+
+        if start is not None or end is not None:
+            if start is None:
+                start_norm = _normalize_time(end)
+                end_norm = start_norm
+            elif end is None:
+                start_norm = _normalize_time(start)
+                end_norm = start_norm
+            else:
+                start_norm = _normalize_time(start)
+                end_norm = _normalize_time(end)
+
+            hazard_clauses.append(ProductHazard.valid_from <= end_norm)
+            hazard_clauses.append(ProductHazard.valid_to >= start_norm)
+
+        if bbox_tuple is not None:
+            bbox_min_x, bbox_min_y, bbox_max_x, bbox_max_y = bbox_tuple
+            hazard_clauses.append(ProductHazard.bbox_min_x <= bbox_max_x)
+            hazard_clauses.append(ProductHazard.bbox_max_x >= bbox_min_x)
+            hazard_clauses.append(ProductHazard.bbox_min_y <= bbox_max_y)
+            hazard_clauses.append(ProductHazard.bbox_max_y >= bbox_min_y)
+
+        stmt = stmt.where(Product.hazards.any(and_(*hazard_clauses)))
+
+    stmt = stmt.limit(limit).offset(offset)
 
     try:
         with Session(db.get_engine()) as session:
@@ -168,9 +197,7 @@ def list_products(
                 bbox=bbox_tuple,
             )
         ]
-        if (
-            start is not None or end is not None or bbox_tuple is not None
-        ) and not hazards:
+        if hazard_filter_enabled and not hazards:
             continue
 
         items.append(

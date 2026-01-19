@@ -92,20 +92,18 @@ def upgrade() -> None:
         },
     ]
 
-    titles = [item["title"] for item in sample_products]
-    existing_titles = set(
-        conn.execute(
-            sa.select(products.c.title).where(products.c.title.in_(titles))
-        ).scalars()
+    marker_clause = products.c.text.like(f"%{_SAMPLE_MARKER}%")
+    existing_sample_titles = set(
+        conn.execute(sa.select(products.c.title).where(marker_clause)).scalars()
     )
     to_insert = [
-        item for item in sample_products if item["title"] not in existing_titles
+        item for item in sample_products if item["title"] not in existing_sample_titles
     ]
     if to_insert:
         op.bulk_insert(products, to_insert)
 
     id_rows = conn.execute(
-        sa.select(products.c.id, products.c.title).where(products.c.title.in_(titles))
+        sa.select(products.c.id, products.c.title).where(marker_clause)
     ).all()
     product_ids = {title: int(pid) for pid, title in id_rows}
 
