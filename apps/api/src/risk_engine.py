@@ -404,7 +404,9 @@ def _evaluate_pois(
         for batch in _chunked(poi_list, batch_size=batch_size):
             batch_sizes.append(len(batch))
             samples = _sample(batch)
-            results.extend([item for item in _evaluate_batch(batch, samples) if item is not None])
+            results.extend(
+                [item for item in _evaluate_batch(batch, samples) if item is not None]
+            )
 
         duration_ms = (time.perf_counter() - started) * 1000.0
         logger.info(
