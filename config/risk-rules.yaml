@@ -1,0 +1,74 @@
+schema_version: 1
+
+factors:
+  - id: snowfall
+    weight: 0.35
+    direction: ascending
+    thresholds:
+      - threshold: 0
+        score: 0
+      - threshold: 5
+        score: 1
+      - threshold: 10
+        score: 2
+      - threshold: 20
+        score: 3
+      - threshold: 30
+        score: 4
+
+  - id: snow_depth
+    weight: 0.35
+    direction: ascending
+    thresholds:
+      - threshold: 0
+        score: 0
+      - threshold: 5
+        score: 1
+      - threshold: 10
+        score: 2
+      - threshold: 20
+        score: 3
+      - threshold: 30
+        score: 4
+
+  - id: wind
+    weight: 0.2
+    direction: ascending
+    thresholds:
+      - threshold: 0
+        score: 0
+      - threshold: 5
+        score: 1
+      - threshold: 10
+        score: 2
+      - threshold: 15
+        score: 3
+      - threshold: 20
+        score: 4
+
+  - id: temp
+    weight: 0.1
+    direction: descending
+    thresholds:
+      - threshold: 5
+        score: 0
+      - threshold: 0
+        score: 1
+      - threshold: -5
+        score: 2
+      - threshold: -10
+        score: 3
+      - threshold: -20
+        score: 4
+
+final_levels:
+  - min_score: 0
+    level: 1
+  - min_score: 1
+    level: 2
+  - min_score: 2
+    level: 3
+  - min_score: 3
+    level: 4
+  - min_score: 4
+    level: 5

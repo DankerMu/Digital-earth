@@ -17,7 +17,9 @@ import db
 from http_cache import if_none_match_matches
 from models import RiskPOI
 from risk.intensity_mapping import RiskIntensityMapping
+from risk.rules import RiskEvaluationResult, RiskRuleModel
 from risk_intensity_config import get_risk_intensity_mappings_payload
+from risk_rules_config import get_risk_rules_payload
 
 router = APIRouter(prefix="/risk", tags=["risk"])
 logger = logging.getLogger("api.error")
@@ -61,6 +63,65 @@ def get_risk_intensity_mapping(
         merge_strategy="max",
         mappings=list(payload.mappings),
     )
+
+
+@router.get("/rules", response_model=RiskRuleModel)
+def get_risk_rules(
+    request: Request,
+    response: Response,
+) -> Response | RiskRuleModel:
+    try:
+        payload = get_risk_rules_payload()
+    except (FileNotFoundError, ValueError) as exc:
+        logger.error("risk_rules_config_error", extra={"error": str(exc)})
+        raise HTTPException(status_code=500, detail="Internal Server Error") from exc
+
+    headers = {
+        "Cache-Control": "public, max-age=0, must-revalidate",
+        "ETag": payload.etag,
+    }
+
+    if if_none_match_matches(request.headers.get("if-none-match"), payload.etag):
+        return Response(status_code=304, headers=headers)
+
+    response.headers.update(headers)
+    return payload.model
+
+
+class RiskRulesEvaluateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    snowfall: float
+    snow_depth: float
+    wind: float
+    temp: float
+
+
+@router.post("/rules/evaluate", response_model=RiskEvaluationResult)
+def evaluate_risk_rules(
+    payload: RiskRulesEvaluateRequest,
+    response: Response,
+) -> RiskEvaluationResult:
+    try:
+        rules_payload = get_risk_rules_payload()
+    except (FileNotFoundError, ValueError) as exc:
+        logger.error("risk_rules_config_error", extra={"error": str(exc)})
+        raise HTTPException(status_code=500, detail="Internal Server Error") from exc
+
+    try:
+        result = rules_payload.model.evaluate(
+            {
+                "snowfall": payload.snowfall,
+                "snow_depth": payload.snow_depth,
+                "wind": payload.wind,
+                "temp": payload.temp,
+            }
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    response.headers["X-Risk-Rules-Etag"] = rules_payload.etag
+    return result
 
 
 def _parse_bbox(value: str) -> tuple[float, float, float, float]:
