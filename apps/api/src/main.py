@@ -15,6 +15,7 @@ from routers.catalog import router as catalog_router
 from routers.errors import router as errors_router
 from routers.effects import router as effects_router
 from routers.ingest import router as ingest_router
+from routers.legends import router as legends_router
 from routers.local_data import router as local_data_router
 from routers.products import router as products_router
 from routers.risk import router as risk_router
@@ -71,6 +72,7 @@ def create_app() -> FastAPI:
     api_v1.include_router(sample_router)
     api_v1.include_router(products_router)
     api_v1.include_router(vector_router)
+    api_v1.include_router(legends_router)
     app.include_router(api_v1)
 
     return app

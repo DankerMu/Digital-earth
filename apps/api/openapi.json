@@ -429,6 +429,42 @@
         "title": "IngestRunsResponse",
         "type": "object"
       },
+      "LegendConfigItem": {
+        "additionalProperties": false,
+        "properties": {
+          "colors": {
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1,
+            "title": "Colors",
+            "type": "array"
+          },
+          "labels": {
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1,
+            "title": "Labels",
+            "type": "array"
+          },
+          "thresholds": {
+            "items": {
+              "type": "number"
+            },
+            "minItems": 1,
+            "title": "Thresholds",
+            "type": "array"
+          }
+        },
+        "required": [
+          "colors",
+          "thresholds",
+          "labels"
+        ],
+        "title": "LegendConfigItem",
+        "type": "object"
+      },
       "LocalIndexItemResponse": {
         "additionalProperties": false,
         "properties": {
@@ -1847,6 +1883,92 @@
         "summary": "List Ingest Runs",
         "tags": [
           "ingest"
+        ]
+      }
+    },
+    "/api/v1/legends": {
+      "get": {
+        "operationId": "get_legends_api_v1_legends_get",
+        "parameters": [
+          {
+            "description": "Layer type (temperature, cloud, precipitation, wind)",
+            "in": "query",
+            "name": "layer_type",
+            "required": true,
+            "schema": {
+              "description": "Layer type (temperature, cloud, precipitation, wind)",
+              "title": "Layer Type",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LegendConfigItem"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Legends",
+        "tags": [
+          "legends"
+        ]
+      }
+    },
+    "/api/v1/legends/{layer_type}": {
+      "get": {
+        "operationId": "get_legend_by_type_api_v1_legends__layer_type__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "layer_type",
+            "required": true,
+            "schema": {
+              "title": "Layer Type",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LegendConfigItem"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Legend By Type",
+        "tags": [
+          "legends"
         ]
       }
     },
