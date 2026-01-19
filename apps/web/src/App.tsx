@@ -3,6 +3,7 @@ import { useMemo, useState } from 'react';
 import ErrorBoundary from './components/ErrorBoundary';
 import { LegendPanel, type LayerSelection } from './features/legend/LegendPanel';
 import { SUPPORTED_LAYER_TYPES, type LayerType } from './features/legend/types';
+import { TimeController } from './features/timeline/TimeController';
 import { CesiumViewer } from './features/viewer/CesiumViewer';
 
 function buildDefaultLayers(): LayerSelection[] {
@@ -14,8 +15,25 @@ function buildDefaultLayers(): LayerSelection[] {
   }));
 }
 
+function makeHourlyFrames(baseUtcIso: string, count: number): Date[] {
+  const base = new Date(baseUtcIso);
+  if (Number.isNaN(base.getTime())) {
+    throw new Error(`Invalid baseUtcIso: ${baseUtcIso}`);
+  }
+
+  const frames: Date[] = [];
+  for (let i = 0; i < count; i += 1) {
+    frames.push(new Date(base.getTime() + i * 60 * 60 * 1000));
+  }
+  return frames;
+}
+
 function AppContent() {
   const [layers, setLayers] = useState<LayerSelection[]>(() => buildDefaultLayers());
+  const [activeTimeIndex, setActiveTimeIndex] = useState(0);
+  const [layerRefreshToken, setLayerRefreshToken] = useState(0);
+
+  const frames = useMemo(() => makeHourlyFrames('2024-01-15T00:00:00Z', 24), []);
 
   const visibleLayers = useMemo(
     () => layers.filter((layer) => layer.isVisible),
@@ -84,6 +102,29 @@ function AppContent() {
             ))}
           </select>
         </label>
+
+        <div className="control-row">
+          <span>Frame</span>
+          <span>
+            {frames.length > 0 ? `${activeTimeIndex + 1}/${frames.length}` : '--'}
+          </span>
+        </div>
+
+        <div className="control-row">
+          <span>Layer refresh</span>
+          <span>{layerRefreshToken}</span>
+        </div>
+
+        <TimeController
+          frames={frames}
+          baseIntervalMs={1000}
+          onTimeChange={(_, nextIndex) => {
+            setActiveTimeIndex(nextIndex);
+          }}
+          onRefreshLayers={() => {
+            setLayerRefreshToken((token) => token + 1);
+          }}
+        />
       </div>
 
       <div className="viewer-shell">
@@ -96,6 +137,7 @@ function AppContent() {
     </div>
   );
 }
+
 export default function App() {
   return (
     <ErrorBoundary>
