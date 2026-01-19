@@ -766,3 +766,234 @@ def test_risk_evaluate_endpoint_returns_503_on_database_error(
         json={"product_id": product_id, "valid_time": "2024-01-01T00:00:00Z"},
     )
     assert response.status_code == 503
+
+
+def test_risk_evaluate_endpoint_gzips_large_payload_when_accepted(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    rules_path = tmp_path / "risk-rules.yaml"
+    _write_risk_rules_config(rules_path)
+    monkeypatch.setenv("DIGITAL_EARTH_RISK_RULES_CONFIG", str(rules_path))
+
+    from risk_rules_config import get_risk_rules_payload
+
+    get_risk_rules_payload.cache_clear()
+    db_url, product_id = _setup_db(monkeypatch, tmp_path)
+
+    from models import Base, RiskPOI
+
+    engine = create_engine(db_url)
+    Base.metadata.create_all(engine)
+    with Session(engine) as session:
+        extra = 200
+        session.add_all(
+            [
+                RiskPOI(
+                    name=f"poi-extra-{idx}",
+                    poi_type="fire",
+                    lon=100.1 + (idx % 50) * 0.001,
+                    lat=10.1 + (idx // 50) * 0.001,
+                    alt=None,
+                    weight=1.0,
+                    tags=None,
+                )
+                for idx in range(extra)
+            ]
+        )
+        session.commit()
+    engine.dispose()
+
+    client = _make_risk_client(redis=None)
+    response = client.post(
+        "/api/v1/risk/evaluate",
+        json={"product_id": product_id, "valid_time": "2024-01-01T00:00:00Z"},
+        headers={"Accept-Encoding": "gzip"},
+    )
+    assert response.status_code == 200
+    assert response.headers["content-encoding"] == "gzip"
+    assert response.headers["vary"] == "Accept-Encoding"
+    assert int(response.headers["content-length"]) < len(response.content)
+    assert response.json()["summary"]["total"] == 2 + extra
+
+
+def test_risk_evaluate_endpoint_does_not_gzip_when_qvalue_zero(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    rules_path = tmp_path / "risk-rules.yaml"
+    _write_risk_rules_config(rules_path)
+    monkeypatch.setenv("DIGITAL_EARTH_RISK_RULES_CONFIG", str(rules_path))
+
+    from risk_rules_config import get_risk_rules_payload
+
+    get_risk_rules_payload.cache_clear()
+    db_url, product_id = _setup_db(monkeypatch, tmp_path)
+
+    from models import Base, RiskPOI
+
+    engine = create_engine(db_url)
+    Base.metadata.create_all(engine)
+    with Session(engine) as session:
+        extra = 200
+        session.add_all(
+            [
+                RiskPOI(
+                    name=f"poi-extra-{idx}",
+                    poi_type="fire",
+                    lon=100.1 + (idx % 50) * 0.001,
+                    lat=10.1 + (idx // 50) * 0.001,
+                    alt=None,
+                    weight=1.0,
+                    tags=None,
+                )
+                for idx in range(extra)
+            ]
+        )
+        session.commit()
+    engine.dispose()
+
+    client = _make_risk_client(redis=None)
+    response = client.post(
+        "/api/v1/risk/evaluate",
+        json={"product_id": product_id, "valid_time": "2024-01-01T00:00:00Z"},
+        headers={"Accept-Encoding": "gzip;q=0"},
+    )
+    assert response.status_code == 200
+    assert response.json()["summary"]["total"] == 2 + extra
+    assert "content-encoding" not in response.headers
+    assert "vary" not in response.headers
+
+
+def test_risk_engine_parallel_results_match_serial_for_large_batches(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    rules_path = tmp_path / "risk-rules.yaml"
+    _write_risk_rules_config(rules_path)
+    monkeypatch.setenv("DIGITAL_EARTH_RISK_RULES_CONFIG", str(rules_path))
+
+    from risk_rules_config import get_risk_rules_payload
+
+    get_risk_rules_payload.cache_clear()
+    db_url, product_id = _setup_db(monkeypatch, tmp_path)
+
+    from models import Base, RiskPOI
+
+    engine = create_engine(db_url)
+    Base.metadata.create_all(engine)
+    with Session(engine) as session:
+        extra = 600
+        session.add_all(
+            [
+                RiskPOI(
+                    name=f"poi-extra-{idx}",
+                    poi_type="fire",
+                    lon=100.1 + (idx % 50) * 0.001,
+                    lat=10.1 + (idx // 50) * 0.001,
+                    alt=None,
+                    weight=1.0,
+                    tags=None,
+                )
+                for idx in range(extra)
+            ]
+        )
+        session.commit()
+    engine.dispose()
+
+    valid_time = datetime(2024, 1, 1, tzinfo=timezone.utc)
+
+    parallel_engine = RiskEvaluationEngine(batch_size=1024, max_workers=4, parallel=True)
+    serial_engine = RiskEvaluationEngine(batch_size=1024, max_workers=1, parallel=False)
+
+    parallel_results = parallel_engine.evaluate_pois(
+        product_id=product_id,
+        valid_time=valid_time,
+        bbox=None,
+    )
+    serial_results = serial_engine.evaluate_pois(
+        product_id=product_id,
+        valid_time=valid_time,
+        bbox=None,
+    )
+
+    assert [item.model_dump() for item in parallel_results] == [
+        item.model_dump() for item in serial_results
+    ]
+
+
+def test_risk_engine_uses_prepare_sampler_when_available(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    rules_path = tmp_path / "risk-rules.yaml"
+    _write_risk_rules_config(rules_path)
+    monkeypatch.setenv("DIGITAL_EARTH_RISK_RULES_CONFIG", str(rules_path))
+
+    from risk_rules_config import get_risk_rules_payload
+
+    get_risk_rules_payload.cache_clear()
+    _db_url, product_id = _setup_db(monkeypatch, tmp_path)
+
+    class _PrepareSampler:
+        def __init__(self) -> None:
+            self.prepare_calls = 0
+            self.sample_calls = 0
+
+        def prepare(self, *, product_id: int, valid_time: datetime):  # type: ignore[no-untyped-def]
+            self.prepare_calls += 1
+            parent = self
+
+            class _Prepared:
+                def sample(self, *, pois):  # type: ignore[no-untyped-def]
+                    parent.sample_calls += 1
+                    return {
+                        int(poi.id): {
+                            "snowfall": 0.0,
+                            "snow_depth": 0.0,
+                            "wind": 0.0,
+                            "temp": 5.0,
+                        }
+                        for poi in pois
+                    }
+
+            return _Prepared()
+
+        def sample(self, *, product_id: int, valid_time: datetime, pois):  # type: ignore[no-untyped-def]
+            raise AssertionError("Sampler.sample should not be called when prepare exists")
+
+    sampler = _PrepareSampler()
+    risk_engine = RiskEvaluationEngine(sampler=sampler, batch_size=1, max_workers=1)
+    results = risk_engine.evaluate_pois(
+        product_id=product_id,
+        valid_time=datetime(2024, 1, 1, tzinfo=timezone.utc),
+        bbox=None,
+    )
+
+    assert [item.poi_id for item in results] == [1, 2]
+    assert sampler.prepare_calls == 1
+    assert sampler.sample_calls == 2
+
+
+def test_risk_engine_prepare_type_error_falls_back_to_sample(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    rules_path = tmp_path / "risk-rules.yaml"
+    _write_risk_rules_config(rules_path)
+    monkeypatch.setenv("DIGITAL_EARTH_RISK_RULES_CONFIG", str(rules_path))
+
+    from risk_rules_config import get_risk_rules_payload
+
+    get_risk_rules_payload.cache_clear()
+    _db_url, product_id = _setup_db(monkeypatch, tmp_path)
+
+    class _SamplerWithBadPrepare(_CountingSampler):
+        def prepare(self, *, product_id: int, valid_time: datetime):  # type: ignore[no-untyped-def]
+            raise TypeError("boom")
+
+    sampler = _SamplerWithBadPrepare()
+    risk_engine = RiskEvaluationEngine(sampler=sampler, batch_size=10, max_workers=1)
+    results = risk_engine.evaluate_pois(
+        product_id=product_id,
+        valid_time=datetime(2024, 1, 1, tzinfo=timezone.utc),
+        bbox=None,
+    )
+
+    assert [item.poi_id for item in results] == [1, 2]
+    assert sampler.calls == 1

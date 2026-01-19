@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import gzip
 import hashlib
 import json
 import logging
@@ -41,6 +42,52 @@ CACHE_STALE_TTL_SECONDS = 60 * 60
 CACHE_LOCK_TTL_MS = 30_000
 CACHE_WAIT_TIMEOUT_MS = 200
 CACHE_COOLDOWN_TTL_SECONDS: tuple[int, int] = (5, 30)
+RISK_EVAL_GZIP_MIN_BYTES = 1024
+
+
+def _accepts_gzip(header: str | None) -> bool:
+    if not header:
+        return False
+
+    gzip_q: float | None = None
+    star_q: float | None = None
+
+    for part in header.split(","):
+        token = part.strip()
+        if not token:
+            continue
+
+        coding, *param_parts = [p.strip() for p in token.split(";")]
+        coding_lower = coding.lower()
+
+        q = 1.0
+        for param in param_parts:
+            key, sep, value = param.partition("=")
+            if sep != "=":
+                continue
+            if key.strip().lower() != "q":
+                continue
+            try:
+                q = float(value.strip())
+            except ValueError:
+                q = 0.0
+            break
+
+        if q < 0:
+            q = 0.0
+        elif q > 1:
+            q = 1.0
+
+        if coding_lower == "gzip":
+            gzip_q = max(gzip_q, q) if gzip_q is not None else q
+        elif coding_lower == "*":
+            star_q = max(star_q, q) if star_q is not None else q
+
+    if gzip_q is not None:
+        return gzip_q > 0
+    if star_q is not None:
+        return star_q > 0
+    return False
 
 
 class RiskIntensityMappingsResponse(BaseModel):
@@ -614,6 +661,7 @@ async def evaluate_risk(
         raise HTTPException(status_code=500, detail="Internal Server Error") from exc
 
     valid_dt = _normalize_time(payload.valid_time)
+    wants_gzip = _accepts_gzip(request.headers.get("accept-encoding"))
 
     identity_payload = {
         "product_id": int(payload.product_id),
@@ -696,10 +744,20 @@ async def evaluate_risk(
             except RiskEngineDatabaseError as exc2:
                 raise HTTPException(status_code=503, detail=str(exc2)) from exc2
 
+    vary: set[str] = set()
+    if wants_gzip and len(body) >= RISK_EVAL_GZIP_MIN_BYTES:
+        body = gzip.compress(body, mtime=0)
+        vary.add("Accept-Encoding")
+
     etag = f'"sha256-{hashlib.sha256(body).hexdigest()}"'
     headers = {
         "Cache-Control": CACHE_CONTROL_HEADER,
         "ETag": etag,
         "X-Risk-Rules-Etag": rules_payload.etag,
     }
+
+    if vary:
+        headers["Content-Encoding"] = "gzip"
+        headers["Vary"] = ", ".join(sorted(vary))
+
     return Response(content=body, media_type="application/json", headers=headers)

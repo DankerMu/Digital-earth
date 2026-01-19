@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import math
+import os
+import time
 from collections.abc import Iterable, Mapping, Sequence
+from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Protocol
@@ -28,6 +32,15 @@ __all__ = [
     "RiskEvaluationEngine",
     "WeatherSampler",
 ]
+
+BATCH_EVAL_CHUNK_SIZE_ENV = "DIGITAL_EARTH_RISK_EVAL_CHUNK_SIZE"
+MAX_WORKERS_ENV = "DIGITAL_EARTH_RISK_EVAL_MAX_WORKERS"
+
+DEFAULT_BATCH_SIZE = 1024
+DEFAULT_EVAL_CHUNK_SIZE = 512
+DEFAULT_MAX_WORKERS_CAP = 8
+
+logger = logging.getLogger("api.request")
 
 
 class RiskEngineInputError(ValueError):
@@ -77,6 +90,44 @@ def _chunked(
         yield items[offset : offset + batch_size]
 
 
+def _resolve_max_workers(value: int | None) -> int:
+    if value is not None:
+        return max(1, int(value))
+
+    env_value = os.environ.get(MAX_WORKERS_ENV)
+    if env_value:
+        try:
+            parsed = int(env_value.strip())
+        except ValueError:
+            parsed = 0
+        if parsed > 0:
+            return parsed
+
+    cpu = os.cpu_count() or 1
+    return max(1, min(int(cpu), DEFAULT_MAX_WORKERS_CAP))
+
+
+def _resolve_eval_chunk_size() -> int:
+    env_value = os.environ.get(BATCH_EVAL_CHUNK_SIZE_ENV)
+    if env_value:
+        try:
+            parsed = int(env_value.strip())
+        except ValueError:
+            parsed = 0
+        if parsed > 0:
+            return parsed
+    return DEFAULT_EVAL_CHUNK_SIZE
+
+
+class PreparedWeatherSampler(Protocol):
+    def sample(
+        self,
+        *,
+        pois: Sequence[RiskPOI],
+    ) -> Mapping[int, Mapping[str | RiskFactorId, float]]:
+        raise NotImplementedError
+
+
 class WeatherSampler(Protocol):
     def sample(
         self,
@@ -90,6 +141,31 @@ class WeatherSampler(Protocol):
 
 @dataclass(frozen=True)
 class _MockWeatherSampler:
+    def prepare(
+        self,
+        *,
+        product_id: int,
+        valid_time: datetime,
+    ) -> PreparedWeatherSampler:
+        dt = _normalize_time(valid_time)
+
+        @dataclass(frozen=True)
+        class _Prepared:
+            product_id: int
+            valid_time: datetime
+            sampler: "_MockWeatherSampler"
+
+            def sample(
+                self, *, pois: Sequence[RiskPOI]
+            ) -> Mapping[int, Mapping[str | RiskFactorId, float]]:
+                return self.sampler.sample(
+                    product_id=int(self.product_id),
+                    valid_time=self.valid_time,
+                    pois=pois,
+                )
+
+        return _Prepared(product_id=int(product_id), valid_time=dt, sampler=self)
+
     def _hash_to_unit(self, payload: str) -> float:
         digest = hashlib.sha256(payload.encode("utf-8")).digest()
         value = int.from_bytes(digest[:8], "big")
@@ -133,10 +209,14 @@ class RiskEvaluationEngine:
         self,
         *,
         sampler: WeatherSampler | None = None,
-        batch_size: int = 256,
+        batch_size: int = DEFAULT_BATCH_SIZE,
+        max_workers: int | None = None,
+        parallel: bool = True,
     ) -> None:
         self._sampler = sampler or _MockWeatherSampler()
         self._batch_size = int(batch_size)
+        self._max_workers = max_workers
+        self._parallel = bool(parallel)
 
     def evaluate_pois(
         self,
@@ -145,6 +225,8 @@ class RiskEvaluationEngine:
         valid_time: datetime,
         bbox: BBox | None = None,
         poi_ids: Sequence[int] | None = None,
+        max_workers: int | None = None,
+        parallel: bool | None = None,
     ) -> list[POIRiskResult]:
         dt = _normalize_time(valid_time)
         requested_bbox = _validate_bbox(bbox) if bbox is not None else None
@@ -172,6 +254,11 @@ class RiskEvaluationEngine:
         except SQLAlchemyError as exc:
             raise RiskEngineDatabaseError("Database unavailable") from exc
 
+        effective_parallel = self._parallel if parallel is None else bool(parallel)
+        resolved_workers = _resolve_max_workers(
+            self._max_workers if max_workers is None else max_workers
+        )
+        started = time.perf_counter()
         return _evaluate_pois(
             rules=rules_payload.model,
             sampler=self._sampler,
@@ -179,6 +266,9 @@ class RiskEvaluationEngine:
             valid_time=dt,
             pois=pois,
             batch_size=self._batch_size,
+            max_workers=resolved_workers,
+            parallel=effective_parallel,
+            started=started,
         )
 
 
@@ -252,13 +342,41 @@ def _evaluate_pois(
     valid_time: datetime,
     pois: Sequence[RiskPOI],
     batch_size: int,
+    max_workers: int,
+    parallel: bool,
+    started: float,
 ) -> list[POIRiskResult]:
-    results: list[POIRiskResult] = []
+    if batch_size <= 0:
+        raise RiskEngineInputError("batch_size must be > 0")
 
-    for batch in _chunked(list(pois), batch_size=batch_size):
-        samples = sampler.sample(
-            product_id=int(product_id), valid_time=valid_time, pois=batch
+    poi_list = list(pois)
+    if not poi_list:
+        return []
+
+    prepared: PreparedWeatherSampler | None = None
+    prepare = getattr(sampler, "prepare", None)
+    if callable(prepare):
+        try:
+            prepared = prepare(product_id=int(product_id), valid_time=valid_time)
+        except TypeError:
+            prepared = None
+
+    def _sample(
+        batch: Sequence[RiskPOI],
+    ) -> Mapping[int, Mapping[str | RiskFactorId, float]]:
+        if prepared is not None:
+            return prepared.sample(pois=batch)
+        return sampler.sample(
+            product_id=int(product_id),
+            valid_time=valid_time,
+            pois=batch,
         )
+
+    def _evaluate_batch(
+        batch: Sequence[RiskPOI],
+        samples: Mapping[int, Mapping[str | RiskFactorId, float]],
+    ) -> list[POIRiskResult]:
+        out: list[POIRiskResult] = []
         for poi in batch:
             raw_values = samples.get(int(poi.id))
             if raw_values is None:
@@ -267,13 +385,109 @@ def _evaluate_pois(
                 evaluation = rules.evaluate(raw_values)
             except ValueError as exc:
                 raise RiskEngineInputError(str(exc)) from exc
-            results.append(
-                POIRiskResult(
+
+            out.append(
+                POIRiskResult.model_construct(
                     poi_id=int(poi.id),
                     level=int(evaluation.level),
                     score=float(evaluation.score),
                     factors=tuple(evaluation.factors),
                 )
             )
+        return out
 
-    return results
+    batch_sizes: list[int] = []
+
+    if not parallel or max_workers <= 1 or len(poi_list) <= 1:
+        results: list[POIRiskResult] = []
+        for batch in _chunked(poi_list, batch_size=batch_size):
+            batch_sizes.append(len(batch))
+            samples = _sample(batch)
+            results.extend(_evaluate_batch(batch, samples))
+
+        duration_ms = (time.perf_counter() - started) * 1000.0
+        logger.info(
+            "risk_engine.evaluate.completed",
+            extra={
+                "mode": "serial",
+                "sampler_prepared": prepared is not None,
+                "total_pois": len(poi_list),
+                "batch_size": int(batch_size),
+                "batches": len(batch_sizes),
+                "eval_tasks": len(batch_sizes),
+                "duration_ms": round(duration_ms, 3),
+            },
+        )
+        return results
+
+    eval_chunk_size = _resolve_eval_chunk_size()
+    max_in_flight = max(2, int(max_workers) * 4)
+
+    results: list[POIRiskResult | None] = [None] * len(poi_list)
+    futures: dict[Future[list[POIRiskResult]], tuple[int, int]] = {}
+    eval_tasks = 0
+
+    sampling_batches = (len(poi_list) + batch_size - 1) // batch_size
+    split_eval_chunks = sampling_batches < max_workers
+
+    def _drain_completed(*, return_when: str) -> None:
+        if not futures:
+            return
+        done, _pending = wait(futures.keys(), return_when=return_when)
+        for future in done:
+            start_index, expected_len = futures.pop(future)
+            chunk_results = future.result()
+            if len(chunk_results) != expected_len:
+                raise RuntimeError("Unexpected risk evaluation chunk size")
+            results[start_index : start_index + expected_len] = chunk_results
+
+    try:
+        with ThreadPoolExecutor(max_workers=int(max_workers)) as executor:
+            for batch_start in range(0, len(poi_list), batch_size):
+                batch = poi_list[batch_start : batch_start + batch_size]
+                batch_sizes.append(len(batch))
+                samples = _sample(batch)
+
+                chunk_size = len(batch)
+                if split_eval_chunks and len(batch) > eval_chunk_size:
+                    chunk_size = min(int(eval_chunk_size), len(batch))
+
+                for chunk_start in range(0, len(batch), chunk_size):
+                    chunk = batch[chunk_start : chunk_start + chunk_size]
+                    start_index = batch_start + chunk_start
+                    future = executor.submit(_evaluate_batch, chunk, samples)
+                    futures[future] = (start_index, len(chunk))
+                    eval_tasks += 1
+
+                while len(futures) >= max_in_flight:
+                    _drain_completed(return_when=FIRST_COMPLETED)
+
+            while futures:
+                _drain_completed(return_when=FIRST_COMPLETED)
+    except Exception:
+        for future in futures:
+            future.cancel()
+        raise
+
+    finalized = [item for item in results if item is not None]
+    if len(finalized) != len(poi_list):
+        raise RuntimeError("Missing risk evaluation results")
+
+    duration_ms = (time.perf_counter() - started) * 1000.0
+    logger.info(
+        "risk_engine.evaluate.completed",
+        extra={
+            "mode": "parallel",
+            "sampler_prepared": prepared is not None,
+            "total_pois": len(poi_list),
+            "batch_size": int(batch_size),
+            "batches": len(batch_sizes),
+            "max_workers": int(max_workers),
+            "eval_chunk_size": int(eval_chunk_size),
+            "eval_tasks": int(eval_tasks),
+            "split_eval_chunks": split_eval_chunks,
+            "duration_ms": round(duration_ms, 3),
+        },
+    )
+
+    return finalized

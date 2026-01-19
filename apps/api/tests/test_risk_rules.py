@@ -197,6 +197,40 @@ def test_risk_rules_cache_invalidation_on_update(
     assert second.json()["level"] == 2
 
 
+def test_risk_rules_evaluate_missing_config_returns_500(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    missing = tmp_path / "missing.yaml"
+    monkeypatch.setenv("DIGITAL_EARTH_RISK_RULES_CONFIG", str(missing))
+
+    client = _make_client(monkeypatch, tmp_path)
+    response = client.post(
+        "/api/v1/risk/rules/evaluate",
+        json={"snowfall": 0, "snow_depth": 0, "wind": 0, "temp": 0},
+    )
+    assert response.status_code == 500
+    payload = response.json()
+    assert payload["error_code"] == 50000
+    assert "trace_id" in payload
+
+
+def test_risk_rules_evaluate_invalid_values_returns_400(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    config_path = tmp_path / "config" / "risk-rules.yaml"
+    _write_risk_rules_config(config_path, snowfall_score_at_10=1)
+
+    client = _make_client(monkeypatch, tmp_path)
+    response = client.post(
+        "/api/v1/risk/rules/evaluate",
+        json={"snowfall": "nan", "snow_depth": 0, "wind": 0, "temp": 0},
+    )
+    assert response.status_code == 400
+    payload = response.json()
+    assert payload["error_code"] == 40000
+    assert payload["message"] == "snowfall must be a finite number"
+
+
 def test_risk_rules_missing_config_returns_500(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
