@@ -48,3 +48,29 @@ presets:
     particle_size: [1.0, 3.0]
     wind_influence: 1.0
 
+  debris_flow_low:
+    effect_type: debris_flow
+    intensity: 2
+    duration: 25
+    color_hint: "rgba(120, 85, 60, 0.85)"
+    spawn_rate: 120
+    particle_size: [1.0, 3.0]
+    wind_influence: 0.15
+
+  debris_flow_medium:
+    effect_type: debris_flow
+    intensity: 3
+    duration: 25
+    color_hint: "rgba(110, 75, 55, 0.9)"
+    spawn_rate: 200
+    particle_size: [1.0, 4.0]
+    wind_influence: 0.2
+
+  debris_flow_extreme:
+    effect_type: debris_flow
+    intensity: 5
+    duration: 0
+    color_hint: "rgba(90, 60, 40, 0.95)"
+    spawn_rate: 350
+    particle_size: [1.5, 5.0]
+    wind_influence: 0.25

@@ -25,6 +25,7 @@ class EffectType(str, Enum):
     fog = "fog"
     wind = "wind"
     storm = "storm"
+    debris_flow = "debris_flow"
 
 
 class RiskLevel(str, Enum):
