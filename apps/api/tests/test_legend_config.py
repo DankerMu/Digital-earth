@@ -5,7 +5,11 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from legend_config import LegendConfigItem, get_legend_config_payload, normalize_layer_type
+from legend_config import (
+    LegendConfigItem,
+    get_legend_config_payload,
+    normalize_layer_type,
+)
 from legend_config import _get_legend_payload_cached as get_legend_payload_cached
 
 
@@ -24,7 +28,11 @@ def test_legend_config_item_rejects_mismatched_lengths() -> None:
 def test_legend_config_item_rejects_non_increasing_thresholds() -> None:
     with pytest.raises(ValidationError):
         LegendConfigItem.model_validate(
-            {"colors": ["#000000", "#FFFFFF"], "thresholds": [0, 0], "labels": ["0", "0"]}
+            {
+                "colors": ["#000000", "#FFFFFF"],
+                "thresholds": [0, 0],
+                "labels": ["0", "0"],
+            }
         )
 
 
@@ -107,4 +115,3 @@ def test_get_legend_config_payload_rejects_invalid_payload(tmp_path: Path) -> No
     )
     with pytest.raises(ValueError, match="Invalid legend config"):
         get_legend_config_payload("temperature", legends_dir=legends_dir)
-

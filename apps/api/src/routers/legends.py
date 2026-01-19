@@ -34,11 +34,16 @@ def _legend_response(request: Request, layer_type: str) -> Response:
         logger.error("legend_config_error", extra={"error": str(exc)})
         raise HTTPException(status_code=500, detail="Internal Server Error") from exc
 
-    headers = {"Cache-Control": "public, max-age=0, must-revalidate", "ETag": payload.etag}
+    headers = {
+        "Cache-Control": "public, max-age=0, must-revalidate",
+        "ETag": payload.etag,
+    }
     if if_none_match_matches(request.headers.get("if-none-match"), payload.etag):
         return Response(status_code=304, headers=headers)
 
-    return Response(content=payload.body, media_type="application/json", headers=headers)
+    return Response(
+        content=payload.body, media_type="application/json", headers=headers
+    )
 
 
 @router.get("", response_model=LegendConfigItem)

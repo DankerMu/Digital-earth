@@ -42,7 +42,9 @@ def _make_client(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> TestClient:
     return TestClient(create_app())
 
 
-def _write_legend(path: Path, *, colors: list[str], thresholds: list[float], labels: list[str]) -> None:
+def _write_legend(
+    path: Path, *, colors: list[str], thresholds: list[float], labels: list[str]
+) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         json.dumps(
