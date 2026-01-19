@@ -230,7 +230,8 @@
           "snow",
           "fog",
           "wind",
-          "storm"
+          "storm",
+          "debris_flow"
         ],
         "title": "EffectType",
         "type": "string"
