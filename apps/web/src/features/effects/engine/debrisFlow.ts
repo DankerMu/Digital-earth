@@ -1,6 +1,7 @@
 import type { EffectPresetItem } from '../types';
 
 import { parseRgba, rgbaString, withAlpha } from './color';
+import type { Rgba } from './color';
 
 export type DebrisParticle = {
   x: number;
@@ -27,7 +28,7 @@ export class DebrisFlowEngine {
   private particles: DebrisParticle[] = [];
   private spawnCarry = 0;
   private elapsed = 0;
-  private baseColor;
+  private baseColor: Rgba;
 
   constructor(options: DebrisFlowEngineOptions) {
     this.preset = options.preset;
