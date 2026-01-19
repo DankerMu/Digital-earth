@@ -864,6 +864,14 @@
             ],
             "title": "Max Level"
           },
+          "reasons": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "description": "Summary of dominant risk factors across evaluated POIs",
+            "title": "Reasons",
+            "type": "object"
+          },
           "total": {
             "title": "Total",
             "type": "integer"
