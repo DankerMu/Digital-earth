@@ -205,3 +205,109 @@ def test_risk_pois_invalid_bbox_returns_400(
     payload = response.json()
     assert payload["error_code"] == 40000
     assert "trace_id" in payload
+
+
+@pytest.mark.parametrize(
+    "bbox",
+    [
+        "nan,0,1,1",
+        "0,nan,1,1",
+        "0,0,inf,1",
+        "0,0,1,inf",
+        "-inf,0,1,1",
+    ],
+)
+def test_risk_pois_bbox_rejects_non_finite_numbers(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, bbox: str
+) -> None:
+    db_url = f"sqlite+pysqlite:///{tmp_path / 'risk.db'}"
+    _seed_risk_pois(db_url)
+    client, _redis = _make_client(monkeypatch, tmp_path, db_url=db_url)
+
+    response = client.get("/api/v1/risk/pois", params={"bbox": bbox})
+    assert response.status_code == 400
+    payload = response.json()
+    assert payload["message"] == "bbox values must be finite numbers"
+
+
+@pytest.mark.parametrize(
+    "bbox,message",
+    [
+        ("-181,0,1,1", "bbox lon must be between -180 and 180"),
+        ("0,0,181,1", "bbox lon must be between -180 and 180"),
+        ("0,-91,1,1", "bbox lat must be between -90 and 90"),
+        ("0,0,1,91", "bbox lat must be between -90 and 90"),
+    ],
+)
+def test_risk_pois_bbox_rejects_out_of_range_coords(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, bbox: str, message: str
+) -> None:
+    db_url = f"sqlite+pysqlite:///{tmp_path / 'risk.db'}"
+    _seed_risk_pois(db_url)
+    client, _redis = _make_client(monkeypatch, tmp_path, db_url=db_url)
+
+    response = client.get("/api/v1/risk/pois", params={"bbox": bbox})
+    assert response.status_code == 400
+    payload = response.json()
+    assert payload["message"] == message
+
+
+def test_risk_pois_page_upper_bound_is_enforced(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    db_url = f"sqlite+pysqlite:///{tmp_path / 'risk.db'}"
+    _seed_risk_pois(db_url)
+    client, _redis = _make_client(monkeypatch, tmp_path, db_url=db_url)
+
+    ok = client.get(
+        "/api/v1/risk/pois",
+        params={"bbox": "109,34,112,36", "page": 1000, "page_size": 1},
+    )
+    assert ok.status_code == 200
+
+    too_high = client.get(
+        "/api/v1/risk/pois",
+        params={"bbox": "109,34,112,36", "page": 1001, "page_size": 1},
+    )
+    assert too_high.status_code == 400
+
+
+def test_risk_pois_http_exception_is_not_retried_after_cache_layer(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    db_url = f"sqlite+pysqlite:///{tmp_path / 'risk.db'}"
+    _seed_risk_pois(db_url)
+    client, _redis = _make_client(monkeypatch, tmp_path, db_url=db_url)
+
+    import routers.risk as risk_module
+
+    calls: list[object] = []
+
+    def _boom(
+        *,
+        min_lon: float,
+        min_lat: float,
+        max_lon: float,
+        max_lat: float,
+        page: int,
+        page_size: int,
+    ) -> None:
+        calls.append(
+            {
+                "min_lon": min_lon,
+                "min_lat": min_lat,
+                "max_lon": max_lon,
+                "max_lat": max_lat,
+                "page": page,
+                "page_size": page_size,
+            }
+        )
+        raise risk_module.HTTPException(
+            status_code=503, detail="Risk POI database unavailable"
+        )
+
+    monkeypatch.setattr(risk_module, "_query_risk_pois", _boom)
+
+    response = client.get("/api/v1/risk/pois", params={"bbox": "109,34,112,36"})
+    assert response.status_code == 503
+    assert len(calls) == 1

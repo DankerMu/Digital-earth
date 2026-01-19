@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import math
+from asyncio import to_thread
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import Response
@@ -74,6 +76,14 @@ def _parse_bbox(value: str) -> tuple[float, float, float, float]:
         min_lon, min_lat, max_lon, max_lat = (float(item) for item in parts)
     except ValueError as exc:
         raise ValueError("bbox values must be numbers") from exc
+
+    if not all(map(math.isfinite, (min_lon, min_lat, max_lon, max_lat))):
+        raise ValueError("bbox values must be finite numbers")
+
+    if not (-180 <= min_lon <= 180 and -180 <= max_lon <= 180):
+        raise ValueError("bbox lon must be between -180 and 180")
+    if not (-90 <= min_lat <= 90 and -90 <= max_lat <= 90):
+        raise ValueError("bbox lat must be between -90 and 90")
 
     if min_lon > max_lon:
         raise ValueError("bbox min_lon must be <= max_lon")
@@ -169,7 +179,7 @@ def _query_risk_pois(
 async def get_risk_pois(
     request: Request,
     bbox: str = Query(description="Bounding box: min_lon,min_lat,max_lon,max_lat"),
-    page: int = Query(default=1, ge=1),
+    page: int = Query(default=1, ge=1, le=1000),
     page_size: int = Query(default=100, ge=1, le=1000),
 ) -> Response:
     try:
@@ -180,15 +190,18 @@ async def get_risk_pois(
     redis: RedisLike | None = getattr(request.app.state, "redis_client", None)
 
     async def _compute() -> bytes:
-        payload = _query_risk_pois(
-            min_lon=min_lon,
-            min_lat=min_lat,
-            max_lon=max_lon,
-            max_lat=max_lat,
-            page=page,
-            page_size=page_size,
-        )
-        return payload.model_dump_json().encode("utf-8")
+        def _sync() -> bytes:
+            payload = _query_risk_pois(
+                min_lon=min_lon,
+                min_lat=min_lat,
+                max_lon=max_lon,
+                max_lat=max_lat,
+                page=page,
+                page_size=page_size,
+            )
+            return payload.model_dump_json().encode("utf-8")
+
+        return await to_thread(_sync)
 
     if redis is None:
         body = await _compute()
@@ -219,6 +232,8 @@ async def get_risk_pois(
             raise HTTPException(
                 status_code=503, detail="Risk POI cache warming timed out"
             ) from exc
+        except HTTPException:
+            raise
         except Exception as exc:  # noqa: BLE001
             logger.warning("risk_pois_cache_unavailable", extra={"error": str(exc)})
             body = await _compute()
