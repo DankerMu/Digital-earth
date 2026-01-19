@@ -5,10 +5,10 @@ import { fetchLegendConfig } from './legendsApi';
 import type { LayerType, LegendConfig } from './types';
 
 type LegendLoadState =
-  | { status: 'idle' }
-  | { status: 'loading' }
-  | { status: 'loaded'; config: LegendConfig }
-  | { status: 'error'; message: string };
+  | { status: 'idle'; layerType: null }
+  | { status: 'loading'; layerType: LayerType }
+  | { status: 'loaded'; layerType: LayerType; config: LegendConfig }
+  | { status: 'error'; layerType: LayerType; message: string };
 
 const legendCache = new Map<LayerType, LegendConfig>();
 
@@ -17,20 +17,33 @@ function errorMessage(error: unknown): string {
   return 'Unknown error';
 }
 
+function initialState(
+  layerType: LayerType | null,
+  cached?: LegendConfig,
+): LegendLoadState {
+  if (!layerType) return { status: 'idle', layerType: null };
+  if (cached) return { status: 'loaded', layerType, config: cached };
+  return { status: 'loading', layerType };
+}
+
 export function useLegendConfig(layerType: LayerType | null): LegendLoadState {
   const cached = useMemo(
     () => (layerType ? legendCache.get(layerType) : undefined),
     [layerType],
   );
 
-  const [state, setState] = useState<LegendLoadState>(() => {
-    if (cached) return { status: 'loaded', config: cached };
-    return layerType ? { status: 'loading' } : { status: 'idle' };
-  });
+  const [state, setState] = useState<LegendLoadState>(() =>
+    initialState(layerType, cached),
+  );
+
+  const visibleState = useMemo(() => {
+    if (state.layerType !== layerType) return initialState(layerType, cached);
+    return state;
+  }, [cached, layerType, state]);
 
   useEffect(() => {
     if (!layerType) {
-      setState({ status: 'idle' });
+      setState({ status: 'idle', layerType: null });
       return;
     }
 
@@ -38,9 +51,9 @@ export function useLegendConfig(layerType: LayerType | null): LegendLoadState {
 
     const existing = legendCache.get(layerType);
     if (existing) {
-      setState({ status: 'loaded', config: existing });
+      setState({ status: 'loaded', layerType, config: existing });
     } else {
-      setState({ status: 'loading' });
+      setState({ status: 'loading', layerType });
     }
 
     void (async () => {
@@ -51,17 +64,17 @@ export function useLegendConfig(layerType: LayerType | null): LegendLoadState {
           layerType,
           signal: controller.signal,
         });
+        if (controller.signal.aborted) return;
         legendCache.set(layerType, legend);
-        setState({ status: 'loaded', config: legend });
+        setState({ status: 'loaded', layerType, config: legend });
       } catch (error) {
         if (controller.signal.aborted) return;
-        setState({ status: 'error', message: errorMessage(error) });
+        setState({ status: 'error', layerType, message: errorMessage(error) });
       }
     })();
 
     return () => controller.abort();
   }, [layerType]);
 
-  return state;
+  return visibleState;
 }
-

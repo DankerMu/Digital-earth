@@ -1,4 +1,6 @@
-import { render, screen } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
+import { flushSync } from 'react-dom';
+import { createRoot } from 'react-dom/client';
 import { describe, expect, it, vi } from 'vitest';
 
 import { LegendPanel, type LayerSelection } from './LegendPanel';
@@ -72,6 +74,78 @@ describe('LegendPanel', () => {
       'http://api.test/api/v1/legends?layer_type=wind',
       expect.any(Object),
     );
+  });
+
+  it('resets legend state synchronously when primary changes', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      if (url === '/config.json') {
+        return jsonResponse({ apiBaseUrl: 'http://api.test' });
+      }
+
+      const layerType = new URL(url).searchParams.get('layer_type');
+
+      if (layerType === 'temperature') {
+        return jsonResponse({
+          colors: ['#0000ff', '#ffffff', '#ff0000'],
+          thresholds: [-20, 0, 40],
+          labels: ['-20', '0', '40'],
+        });
+      }
+
+      if (layerType === 'wind') {
+        return jsonResponse({
+          colors: ['#00ff00', '#ffff00'],
+          thresholds: [0, 20],
+          labels: ['0', '20'],
+        });
+      }
+
+      return new Response('Not Found', { status: 404 });
+    });
+
+    vi.stubGlobal('fetch', fetchMock);
+
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    const layersTemperaturePrimary: LayerSelection[] = [
+      { id: 'temperature', type: 'temperature', isVisible: true, isPrimary: true },
+      { id: 'wind', type: 'wind', isVisible: true },
+    ];
+
+    const layersWindPrimary: LayerSelection[] = [
+      { id: 'temperature', type: 'temperature', isVisible: true },
+      { id: 'wind', type: 'wind', isVisible: true, isPrimary: true },
+    ];
+
+    act(() => {
+      flushSync(() => root.render(<LegendPanel layers={layersTemperaturePrimary} />));
+    });
+
+    await waitFor(() => {
+      expect(container.textContent).toContain('温度');
+      expect(container.textContent).toContain('-20 °C');
+      expect(container.textContent).toContain('40 °C');
+    });
+
+    act(() => {
+      flushSync(() => root.render(<LegendPanel layers={layersWindPrimary} />));
+
+      expect(container.textContent).toContain('风速');
+      expect(container.textContent).not.toContain('-20 m/s');
+      expect(container.textContent).not.toContain('40 m/s');
+    });
+
+    await waitFor(() => {
+      expect(container.textContent).toContain('风速');
+      expect(container.textContent).toContain('0 m/s');
+      expect(container.textContent).toContain('20 m/s');
+    });
+
+    act(() => root.unmount());
+    container.remove();
   });
 
   it('positions tick labels at threshold percents (no off-by-one)', async () => {
