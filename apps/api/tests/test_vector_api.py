@@ -203,6 +203,18 @@ def test_vector_helpers_cover_edge_cases() -> None:
     )
     assert selected.tolist() == [0, 1, 2]
 
+    lon_180_full = np.array([-180.0, -90.0, 0.0, 90.0, 180.0], dtype=np.float64)
+    selected = vector_router._select_lon_indices(
+        lon_180_full, min_lon=-180.0, max_lon=180.0, stride=1
+    )
+    assert selected.tolist() == [0, 1, 2, 3, 4]
+
+    lon_360_full = np.array([0.0, 90.0, 180.0, 270.0, 359.0], dtype=np.float64)
+    selected = vector_router._select_lon_indices(
+        lon_360_full, min_lon=0.0, max_lon=360.0, stride=1
+    )
+    assert selected.tolist() == [0, 1, 2, 3, 4]
+
     assert vector_router._flatten_values(np.array([1.0, np.nan], dtype=np.float32)) == [
         1.0,
         None,
@@ -439,6 +451,50 @@ def test_vector_oob_bbox_returns_empty_payload(
     )
     assert resp.status_code == 200
     assert resp.json() == {"u": [], "v": [], "lat": [], "lon": []}
+
+
+def test_vector_guard_rejects_excessive_points(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    db_url = f"sqlite+pysqlite:///{tmp_path / 'catalog.db'}"
+    client, _redis = _make_client(monkeypatch, tmp_path, db_url=db_url)
+
+    cube_path = tmp_path / "Data" / "cubes" / "wind-850.nc"
+    lat = np.linspace(0.0, 100.0, 101, dtype=np.float32)
+    lon = np.linspace(0.0, 100.0, 101, dtype=np.float32)
+    level = xr.DataArray([850.0], dims=["level"], attrs={"units": "hPa"})
+
+    u_values = np.zeros((1, 1, lat.size, lon.size), dtype=np.float32)
+    v_values = np.ones((1, 1, lat.size, lon.size), dtype=np.float32)
+    _write_wind_datacube(
+        cube_path,
+        u_name="u",
+        v_name="v",
+        u_values=u_values,
+        v_values=v_values,
+        lat=lat,
+        lon=lon,
+        level=level,
+    )
+
+    run_time = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    valid_time = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    rel_path = str(cube_path.relative_to(tmp_path / "Data"))
+    _seed_asset(
+        db_url,
+        run_time=run_time,
+        valid_time=valid_time,
+        variable="wind",
+        level="850",
+        path=rel_path,
+    )
+
+    resp = client.get(
+        "/api/v1/vector/ecmwf/20260101T000000Z/wind/850/20260101T000000Z",
+        params={"stride": 1},
+    )
+    assert resp.status_code == 400
+    assert resp.json()["message"] == "reduce bbox or increase stride"
 
 
 def test_vector_invalid_bbox_returns_400(

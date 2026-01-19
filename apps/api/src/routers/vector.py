@@ -34,6 +34,7 @@ CACHE_STALE_TTL_SECONDS = 60 * 60
 CACHE_LOCK_TTL_MS = 30_000
 CACHE_WAIT_TIMEOUT_MS = 200
 CACHE_COOLDOWN_TTL_SECONDS: tuple[int, int] = (5, 30)
+MAX_VECTOR_POINTS = 10_000
 
 
 class WindVectorResponse(BaseModel):
@@ -279,6 +280,12 @@ def _select_lon_indices(
     lon_coord: np.ndarray, *, min_lon: float, max_lon: float, stride: int
 ) -> np.ndarray:
     lon_values = np.asarray(lon_coord, dtype=np.float64)
+    if abs(float(max_lon) - float(min_lon)) >= 360.0:
+        indices = np.arange(lon_values.size, dtype=int)
+        if stride <= 1:
+            return indices
+        return indices[:: int(stride)]
+
     lon_min = _normalize_lon(min_lon, lon_coord)
     lon_max = _normalize_lon(max_lon, lon_coord)
 
@@ -368,6 +375,12 @@ def _wind_vectors_from_datacube(
 
         if lat_indices.size == 0 or lon_indices.size == 0:
             return WindVectorResponse()
+
+        point_count = int(lat_indices.size) * int(lon_indices.size)
+        if point_count > MAX_VECTOR_POINTS:
+            raise HTTPException(
+                status_code=400, detail="reduce bbox or increase stride"
+            )
 
         u_sub = u_slice.isel(lat=lat_indices, lon=lon_indices)
         v_sub = v_slice.isel(lat=lat_indices, lon=lon_indices)
