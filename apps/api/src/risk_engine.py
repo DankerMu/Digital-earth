@@ -124,7 +124,7 @@ class PreparedWeatherSampler(Protocol):
         self,
         *,
         pois: Sequence[RiskPOI],
-    ) -> Mapping[int, Mapping[str | RiskFactorId, float]]:
+    ) -> Mapping[int, Mapping[str | RiskFactorId, float] | None]:
         raise NotImplementedError
 
 
@@ -135,7 +135,7 @@ class WeatherSampler(Protocol):
         product_id: int,
         valid_time: datetime,
         pois: Sequence[RiskPOI],
-    ) -> Mapping[int, Mapping[str | RiskFactorId, float]]:
+    ) -> Mapping[int, Mapping[str | RiskFactorId, float] | None]:
         raise NotImplementedError
 
 
@@ -363,7 +363,7 @@ def _evaluate_pois(
 
     def _sample(
         batch: Sequence[RiskPOI],
-    ) -> Mapping[int, Mapping[str | RiskFactorId, float]]:
+    ) -> Mapping[int, Mapping[str | RiskFactorId, float] | None]:
         if prepared is not None:
             return prepared.sample(pois=batch)
         return sampler.sample(
@@ -374,13 +374,14 @@ def _evaluate_pois(
 
     def _evaluate_batch(
         batch: Sequence[RiskPOI],
-        samples: Mapping[int, Mapping[str | RiskFactorId, float]],
-    ) -> list[POIRiskResult]:
-        out: list[POIRiskResult] = []
+        samples: Mapping[int, Mapping[str | RiskFactorId, float] | None],
+    ) -> list[POIRiskResult | None]:
+        out: list[POIRiskResult | None] = []
         for poi in batch:
             raw_values = samples.get(int(poi.id))
             if raw_values is None:
-                raise RiskEngineInputError(f"Missing weather sample for poi={poi.id}")
+                out.append(None)
+                continue
             try:
                 evaluation = rules.evaluate(raw_values)
             except ValueError as exc:
@@ -403,7 +404,7 @@ def _evaluate_pois(
         for batch in _chunked(poi_list, batch_size=batch_size):
             batch_sizes.append(len(batch))
             samples = _sample(batch)
-            results.extend(_evaluate_batch(batch, samples))
+            results.extend([item for item in _evaluate_batch(batch, samples) if item is not None])
 
         duration_ms = (time.perf_counter() - started) * 1000.0
         logger.info(
@@ -424,7 +425,7 @@ def _evaluate_pois(
     max_in_flight = max(2, int(max_workers) * 4)
 
     results: list[POIRiskResult | None] = [None] * len(poi_list)
-    futures: dict[Future[list[POIRiskResult]], tuple[int, int]] = {}
+    futures: dict[Future[list[POIRiskResult | None]], tuple[int, int]] = {}
     eval_tasks = 0
 
     sampling_batches = (len(poi_list) + batch_size - 1) // batch_size
@@ -470,8 +471,6 @@ def _evaluate_pois(
         raise
 
     finalized = [item for item in results if item is not None]
-    if len(finalized) != len(poi_list):
-        raise RuntimeError("Missing risk evaluation results")
 
     duration_ms = (time.perf_counter() - started) * 1000.0
     logger.info(

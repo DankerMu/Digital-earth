@@ -479,7 +479,7 @@ def test_risk_engine_poi_ids_filters_results_and_handles_empty(
     assert empty == []
 
 
-def test_risk_engine_missing_weather_sample_raises_input_error(
+def test_risk_engine_missing_weather_sample_is_skipped_in_parallel_and_serial(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     rules_path = tmp_path / "risk-rules.yaml"
@@ -491,13 +491,28 @@ def test_risk_engine_missing_weather_sample_raises_input_error(
     get_risk_rules_payload.cache_clear()
     _db_url, product_id = _setup_db(monkeypatch, tmp_path)
 
-    engine = RiskEvaluationEngine(sampler=_MissingSampleSampler(), batch_size=10)
-    with pytest.raises(RiskEngineInputError, match="Missing weather sample"):
-        engine.evaluate_pois(
-            product_id=product_id,
-            valid_time=datetime(2024, 1, 1, tzinfo=timezone.utc),
-            bbox=None,
-        )
+    sampler = _MissingSampleSampler()
+    parallel_engine = RiskEvaluationEngine(
+        sampler=sampler, batch_size=10, max_workers=4, parallel=True
+    )
+    serial_engine = RiskEvaluationEngine(
+        sampler=sampler, batch_size=10, max_workers=1, parallel=False
+    )
+    parallel_results = parallel_engine.evaluate_pois(
+        product_id=product_id,
+        valid_time=datetime(2024, 1, 1, tzinfo=timezone.utc),
+        bbox=None,
+    )
+    serial_results = serial_engine.evaluate_pois(
+        product_id=product_id,
+        valid_time=datetime(2024, 1, 1, tzinfo=timezone.utc),
+        bbox=None,
+    )
+
+    assert [item.poi_id for item in serial_results] == [1]
+    assert [item.model_dump() for item in parallel_results] == [
+        item.model_dump() for item in serial_results
+    ]
 
 
 def test_risk_engine_invalid_weather_payload_raises_input_error(
