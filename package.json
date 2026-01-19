@@ -1,0 +1,12 @@
+{
+  "name": "digital-earth",
+  "private": true,
+  "packageManager": "pnpm@9.15.4",
+  "scripts": {
+    "lint": "pnpm --filter web lint",
+    "typecheck": "pnpm --filter web typecheck",
+    "test": "pnpm --filter web test",
+    "build": "pnpm --filter web build"
+  }
+}
+
