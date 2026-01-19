@@ -866,9 +866,7 @@ def test_risk_evaluate_endpoint_cache_hit_emits_log(
         json={"product_id": product_id, "valid_time": "2024-01-01T00:00:00"},
     )
     assert second.status_code == 200
-    assert any(
-        record.message == "risk_evaluate_cache_hit" for record in caplog.records
-    )
+    assert any(record.message == "risk_evaluate_cache_hit" for record in caplog.records)
 
 
 def test_risk_evaluate_endpoint_cache_key_includes_bbox_and_valid_time(
