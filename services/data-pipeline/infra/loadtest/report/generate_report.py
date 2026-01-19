@@ -471,7 +471,7 @@ def _write(path: Path, content: str) -> None:
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="python infra/loadtest/report/generate_report.py",
+        prog="python services/data-pipeline/infra/loadtest/report/generate_report.py",
         description="Generate JSON/HTML/Markdown report from k6 --summary-export output.",
     )
     parser.add_argument(
@@ -502,7 +502,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     run_id = (
         str(args.run_id)
         if args.run_id
-        else dt.datetime.now(dt.UTC).strftime("%Y%m%dT%H%M%SZ")
+        else dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     )
     env_name = str(config.get("name") or "unknown")
     base_url = str(config.get("base_url") or "")
@@ -518,7 +518,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         "base_url": base_url,
         "tile_path_template": tile_path_template,
         "summary_json": str(summary_path),
-        "generated_at": dt.datetime.now(dt.UTC).isoformat(),
+        "generated_at": dt.datetime.now(dt.timezone.utc).isoformat(),
     }
 
     report = {

@@ -7,7 +7,7 @@ cd "$SCRIPT_DIR"
 usage() {
   cat <<'EOF'
 Usage:
-  infra/loadtest/run.sh --env <staging|production> --scenario <ramp|sustained|spike> [options]
+  services/data-pipeline/infra/loadtest/run.sh --env <staging|production> --scenario <ramp|sustained|spike> [options]
 
 Options:
   --config <path>         Use an explicit config file (default: config/<env>.json)
@@ -120,7 +120,7 @@ fi
 
 RUN_ID="$(python3 - <<'PY'
 import datetime as dt
-print(dt.datetime.now(dt.UTC).strftime("%Y%m%dT%H%M%SZ"))
+print(dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ"))
 PY
 )"
 

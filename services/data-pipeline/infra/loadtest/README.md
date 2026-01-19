@@ -16,11 +16,11 @@
 ## 依赖
 
 - 安装 k6：`https://k6.io/docs/get-started/installation/`
-- 本机 Python 3.11+（用于生成报告）
+- 本机 Python 3.9+（用于生成报告）
 
 ## 配置
 
-环境配置在 `infra/loadtest/config/`：
+环境配置在 `services/data-pipeline/infra/loadtest/config/`：
 
 - `staging.json`
 - `production.json`
@@ -37,16 +37,16 @@
 从仓库根目录执行：
 
 ```bash
-./infra/loadtest/run.sh --env staging --scenario ramp
+./services/data-pipeline/infra/loadtest/run.sh --env staging --scenario ramp
 ```
 
 生产环境必须显式允许：
 
 ```bash
-./infra/loadtest/run.sh --env production --scenario sustained --allow-production
+./services/data-pipeline/infra/loadtest/run.sh --env production --scenario sustained --allow-production
 ```
 
-输出目录默认在 `infra/loadtest/results/<env>/<timestamp>-<scenario>/`，包含：
+输出目录默认在 `services/data-pipeline/infra/loadtest/results/<env>/<timestamp>-<scenario>/`，包含：
 
 - `summary.json`：k6 `--summary-export` 原始结果
 - `report.json`：结构化汇总
@@ -59,4 +59,3 @@
 - **Origin Bandwidth (cons.)**：将 `MISS + UNKNOWN` 视作回源的保守估算
 
 > 注意：不同 CDN 的头部含义略有差异；如果大量 `UNKNOWN`，可在 config 中补充 `cdn.hit_header_name` 规则。
-
