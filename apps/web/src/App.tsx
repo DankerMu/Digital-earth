@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 
 import { LegendPanel, type LayerSelection } from './features/legend/LegendPanel';
 import { SUPPORTED_LAYER_TYPES, type LayerType } from './features/legend/types';
+import { CesiumViewer } from './features/viewer/CesiumViewer';
 
 function buildDefaultLayers(): LayerSelection[] {
   return SUPPORTED_LAYER_TYPES.map((type) => ({
@@ -82,6 +83,10 @@ export default function App() {
             ))}
           </select>
         </label>
+      </div>
+
+      <div className="viewer-shell">
+        <CesiumViewer />
       </div>
 
       <div className="legend-shell">
