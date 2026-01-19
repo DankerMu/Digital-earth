@@ -4,6 +4,10 @@ from fastapi import APIRouter, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from config import get_settings
+from editor_permissions import (
+    EditorPermissionsMiddleware,
+    get_editor_permissions_config,
+)
 from observability import (
     TraceIdMiddleware,
     configure_logging,
@@ -37,6 +41,13 @@ def create_app() -> FastAPI:
         RateLimitMiddleware,
         config=settings.api.rate_limit,
         redis_client=redis_client,
+    )
+
+    app.add_middleware(
+        EditorPermissionsMiddleware,
+        config=settings.api.rate_limit,
+        redis_client=redis_client,
+        permissions=get_editor_permissions_config(),
     )
 
     app.add_middleware(TraceIdMiddleware)
