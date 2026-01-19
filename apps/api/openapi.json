@@ -1340,6 +1340,66 @@
         "title": "ValidationError",
         "type": "object"
       },
+      "WindVectorPrewarmItem": {
+        "additionalProperties": false,
+        "properties": {
+          "bbox": {
+            "title": "Bbox",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "fresh",
+              "computed",
+              "stale"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "bbox",
+          "status"
+        ],
+        "title": "WindVectorPrewarmItem",
+        "type": "object"
+      },
+      "WindVectorPrewarmRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "bboxes": {
+            "description": "Bounding boxes to prewarm: minLon,minLat,maxLon,maxLat",
+            "items": {
+              "type": "string"
+            },
+            "title": "Bboxes",
+            "type": "array"
+          },
+          "stride": {
+            "default": 1,
+            "maximum": 256.0,
+            "minimum": 1.0,
+            "title": "Stride",
+            "type": "integer"
+          }
+        },
+        "title": "WindVectorPrewarmRequest",
+        "type": "object"
+      },
+      "WindVectorPrewarmResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "results": {
+            "items": {
+              "$ref": "#/components/schemas/WindVectorPrewarmItem"
+            },
+            "title": "Results",
+            "type": "array"
+          }
+        },
+        "title": "WindVectorPrewarmResponse",
+        "type": "object"
+      },
       "WindVectorResponse": {
         "additionalProperties": false,
         "properties": {
@@ -2766,6 +2826,76 @@
           }
         },
         "summary": "Get Ecmwf Wind Vectors",
+        "tags": [
+          "vector"
+        ]
+      }
+    },
+    "/api/v1/vector/ecmwf/{run}/wind/{level}/{time}/prewarm": {
+      "post": {
+        "operationId": "prewarm_ecmwf_wind_vectors_api_v1_vector_ecmwf__run__wind__level___time__prewarm_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run",
+            "required": true,
+            "schema": {
+              "title": "Run",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "level",
+            "required": true,
+            "schema": {
+              "title": "Level",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "time",
+            "required": true,
+            "schema": {
+              "title": "Time",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WindVectorPrewarmRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WindVectorPrewarmResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Prewarm Ecmwf Wind Vectors",
         "tags": [
           "vector"
         ]

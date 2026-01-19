@@ -3,10 +3,13 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
+import tempfile
+import time as time_module
 from asyncio import to_thread
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Callable, Literal, Optional
 
 import numpy as np
 import xarray as xr
@@ -35,6 +38,8 @@ CACHE_LOCK_TTL_MS = 30_000
 CACHE_WAIT_TIMEOUT_MS = 200
 CACHE_COOLDOWN_TTL_SECONDS: tuple[int, int] = (5, 30)
 MAX_VECTOR_POINTS = 10_000
+FILE_CACHE_DIR_ENV = "DIGITAL_EARTH_VECTOR_CACHE_DIR"
+WindVectorCacheStatus = Literal["fresh", "computed", "stale"]
 
 
 class WindVectorResponse(BaseModel):
@@ -44,6 +49,29 @@ class WindVectorResponse(BaseModel):
     v: list[float | None] = Field(default_factory=list)
     lat: list[float] = Field(default_factory=list)
     lon: list[float] = Field(default_factory=list)
+
+
+class WindVectorPrewarmRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    bboxes: list[str] = Field(
+        default_factory=list,
+        description="Bounding boxes to prewarm: minLon,minLat,maxLon,maxLat",
+    )
+    stride: int = Field(default=1, ge=1, le=256)
+
+
+class WindVectorPrewarmItem(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    bbox: str
+    status: WindVectorCacheStatus
+
+
+class WindVectorPrewarmResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    results: list[WindVectorPrewarmItem] = Field(default_factory=list)
 
 
 _SURFACE_LEVEL_ALIASES = {"sfc", "surface"}
@@ -159,6 +187,73 @@ def _resolve_time_index(ds: xr.Dataset, *, valid_time: datetime) -> int:
 
 def _cache_identity(payload: dict[str, object]) -> str:
     return json.dumps(payload, separators=(",", ":"), sort_keys=True, ensure_ascii=True)
+
+
+def _vector_file_cache_dir() -> Path:
+    override = os.environ.get(FILE_CACHE_DIR_ENV, "").strip()
+    if override != "":
+        return Path(override)
+    return Path(tempfile.gettempdir()) / "digital-earth" / "vector-cache"
+
+
+def _read_cached_file(path: Path, *, ttl_seconds: int, now: float) -> bytes | None:
+    try:
+        stat = path.stat()
+    except FileNotFoundError:
+        return None
+    except OSError:
+        return None
+
+    if ttl_seconds <= 0:
+        return None
+    if now - float(stat.st_mtime) > float(ttl_seconds):
+        return None
+
+    try:
+        return path.read_bytes()
+    except OSError:
+        return None
+
+
+def _write_cached_file(path: Path, body: bytes) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = path.with_suffix(path.suffix + ".tmp")
+    tmp_path.write_bytes(body)
+    tmp_path.replace(path)
+
+def _get_or_compute_file_cached_bytes(
+    *,
+    fresh_path: Path,
+    stale_path: Path,
+    fresh_ttl_seconds: int,
+    stale_ttl_seconds: int,
+    compute: Callable[[], bytes],
+    now: float | None = None,
+) -> tuple[bytes, WindVectorCacheStatus]:
+    timestamp = float(now if now is not None else time_module.time())
+    cached = _read_cached_file(fresh_path, ttl_seconds=fresh_ttl_seconds, now=timestamp)
+    if cached is not None:
+        return cached, "fresh"
+
+    stale = _read_cached_file(stale_path, ttl_seconds=stale_ttl_seconds, now=timestamp)
+    try:
+        computed = compute()
+    except Exception as exc:  # noqa: BLE001
+        if stale is not None:
+            logger.warning(
+                "vector_file_cache_compute_failed_serving_stale",
+                extra={"error": str(exc)},
+            )
+            return stale, "stale"
+        raise
+
+    try:
+        _write_cached_file(fresh_path, computed)
+        _write_cached_file(stale_path, computed)
+    except OSError as exc:
+        logger.warning("vector_file_cache_write_failed", extra={"error": str(exc)})
+
+    return computed, "computed"
 
 
 def _query_asset_path(*, run_time: datetime, valid_time: datetime, level: str) -> str:
@@ -420,9 +515,11 @@ async def get_ecmwf_wind_vectors(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
+    run_key = _time_key(run_dt)
+    time_key = _time_key(valid_dt)
     identity_payload: dict[str, object] = {
-        "run": _time_key(run_dt),
-        "time": _time_key(valid_dt),
+        "run": run_key,
+        "time": time_key,
         "level": level_key,
         "bbox": list(parsed_bbox) if parsed_bbox is not None else None,
         "stride": int(stride),
@@ -432,30 +529,44 @@ async def get_ecmwf_wind_vectors(
 
     redis: RedisLike | None = getattr(request.app.state, "redis_client", None)
 
-    async def _compute() -> bytes:
-        def _sync() -> bytes:
-            asset_path = _query_asset_path(
-                run_time=run_dt, valid_time=valid_dt, level=level_key
-            )
-            cube_path = _resolve_asset_path(asset_path)
-            response = _wind_vectors_from_datacube(
-                cube_path,
-                valid_time=valid_dt,
-                level_key=level_key,
-                level_numeric=level_numeric,
-                bbox=parsed_bbox,
-                stride=int(stride),
-            )
-            return response.model_dump_json().encode("utf-8")
+    def _compute_sync() -> bytes:
+        asset_path = _query_asset_path(
+            run_time=run_dt, valid_time=valid_dt, level=level_key
+        )
+        cube_path = _resolve_asset_path(asset_path)
+        response = _wind_vectors_from_datacube(
+            cube_path,
+            valid_time=valid_dt,
+            level_key=level_key,
+            level_numeric=level_numeric,
+            bbox=parsed_bbox,
+            stride=int(stride),
+        )
+        return response.model_dump_json().encode("utf-8")
 
-        return await to_thread(_sync)
+    async def _compute() -> bytes:
+        return await to_thread(_compute_sync)
 
     if redis is None:
-        body = await _compute()
+        cache_dir = _vector_file_cache_dir() / "ecmwf-wind" / run_key
+        fresh_path = cache_dir / f"{digest}.fresh"
+        stale_path = cache_dir / f"{digest}.stale"
+
+        def _sync_file_cache() -> bytes:
+            body, _status = _get_or_compute_file_cached_bytes(
+                fresh_path=fresh_path,
+                stale_path=stale_path,
+                fresh_ttl_seconds=CACHE_FRESH_TTL_SECONDS,
+                stale_ttl_seconds=CACHE_STALE_TTL_SECONDS,
+                compute=_compute_sync,
+            )
+            return body
+
+        body = await to_thread(_sync_file_cache)
     else:
-        fresh_key = f"vector:ecmwf:wind:fresh:{digest}"
-        stale_key = f"vector:ecmwf:wind:stale:{digest}"
-        lock_key = f"vector:ecmwf:wind:lock:{digest}"
+        fresh_key = f"vector:ecmwf:wind:run={run_key}:fresh:{digest}"
+        stale_key = f"vector:ecmwf:wind:run={run_key}:stale:{digest}"
+        lock_key = f"vector:ecmwf:wind:run={run_key}:lock:{digest}"
         try:
             result = await get_or_compute_cached_bytes(
                 redis,
@@ -481,3 +592,134 @@ async def get_ecmwf_wind_vectors(
     etag = f'"sha256-{hashlib.sha256(body).hexdigest()}"'
     headers = {"Cache-Control": SHORT_CACHE_CONTROL_HEADER, "ETag": etag}
     return Response(content=body, media_type="application/json", headers=headers)
+
+
+@router.post(
+    "/ecmwf/{run}/wind/{level}/{time}/prewarm", response_model=WindVectorPrewarmResponse
+)
+async def prewarm_ecmwf_wind_vectors(
+    request: Request,
+    run: str,
+    level: str,
+    time: str,
+    payload: WindVectorPrewarmRequest,
+) -> WindVectorPrewarmResponse:
+    if not payload.bboxes:
+        raise HTTPException(status_code=400, detail="bboxes must not be empty")
+    if len(payload.bboxes) > 50:
+        raise HTTPException(status_code=400, detail="too many bboxes to prewarm")
+
+    try:
+        run_dt = _parse_time(run, label="run")
+        valid_dt = _parse_time(time, label="time")
+        level_key, level_numeric = _normalize_level(level)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    run_key = _time_key(run_dt)
+    time_key = _time_key(valid_dt)
+
+    parsed_bboxes: list[tuple[str, tuple[float, float, float, float]]] = []
+    for bbox_value in payload.bboxes:
+        try:
+            parsed = _parse_bbox(bbox_value)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        if parsed is None:
+            raise HTTPException(status_code=400, detail="bbox must not be empty")
+        parsed_bboxes.append((bbox_value, parsed))
+
+    asset_path = _query_asset_path(
+        run_time=run_dt, valid_time=valid_dt, level=level_key
+    )
+    cube_path = _resolve_asset_path(asset_path)
+
+    cache_dir = _vector_file_cache_dir() / "ecmwf-wind" / run_key
+    redis: RedisLike | None = getattr(request.app.state, "redis_client", None)
+    results: list[WindVectorPrewarmItem] = []
+
+    for bbox_value, bbox_tuple in parsed_bboxes:
+        identity_payload: dict[str, object] = {
+            "run": run_key,
+            "time": time_key,
+            "level": level_key,
+            "bbox": list(bbox_tuple),
+            "stride": int(payload.stride),
+        }
+        identity = _cache_identity(identity_payload)
+        digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()
+
+        fresh_path = cache_dir / f"{digest}.fresh"
+        stale_path = cache_dir / f"{digest}.stale"
+
+        def _compute_bbox_sync(
+            *, bbox_for_compute: tuple[float, float, float, float] = bbox_tuple
+        ) -> bytes:
+            response = _wind_vectors_from_datacube(
+                cube_path,
+                valid_time=valid_dt,
+                level_key=level_key,
+                level_numeric=level_numeric,
+                bbox=bbox_for_compute,
+                stride=int(payload.stride),
+            )
+            return response.model_dump_json().encode("utf-8")
+
+        if redis is None:
+            def _sync_file_cache() -> WindVectorCacheStatus:
+                _body, file_status = _get_or_compute_file_cached_bytes(
+                    fresh_path=fresh_path,
+                    stale_path=stale_path,
+                    fresh_ttl_seconds=CACHE_FRESH_TTL_SECONDS,
+                    stale_ttl_seconds=CACHE_STALE_TTL_SECONDS,
+                    compute=_compute_bbox_sync,
+                )
+                return file_status
+
+            status = await to_thread(_sync_file_cache)
+            results.append(WindVectorPrewarmItem(bbox=bbox_value, status=status))
+            continue
+
+        fresh_key = f"vector:ecmwf:wind:run={run_key}:fresh:{digest}"
+        stale_key = f"vector:ecmwf:wind:run={run_key}:stale:{digest}"
+        lock_key = f"vector:ecmwf:wind:run={run_key}:lock:{digest}"
+
+        async def _compute_bbox() -> bytes:
+            return await to_thread(_compute_bbox_sync)
+
+        try:
+            cache_result = await get_or_compute_cached_bytes(
+                redis,
+                fresh_key=fresh_key,
+                stale_key=stale_key,
+                lock_key=lock_key,
+                fresh_ttl_seconds=CACHE_FRESH_TTL_SECONDS,
+                stale_ttl_seconds=CACHE_STALE_TTL_SECONDS,
+                lock_ttl_ms=CACHE_LOCK_TTL_MS,
+                wait_timeout_ms=CACHE_WAIT_TIMEOUT_MS,
+                compute=_compute_bbox,
+                cooldown_ttl_seconds=CACHE_COOLDOWN_TTL_SECONDS,
+            )
+            status = cache_result.status
+        except TimeoutError as exc:
+            raise HTTPException(
+                status_code=503, detail="Vector cache warming timed out"
+            ) from exc
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("vector_cache_unavailable", extra={"error": str(exc)})
+
+            def _sync_file_cache() -> WindVectorCacheStatus:
+                _body, file_status = _get_or_compute_file_cached_bytes(
+                    fresh_path=fresh_path,
+                    stale_path=stale_path,
+                    fresh_ttl_seconds=CACHE_FRESH_TTL_SECONDS,
+                    stale_ttl_seconds=CACHE_STALE_TTL_SECONDS,
+                    compute=_compute_bbox_sync,
+                )
+                return file_status
+
+            status = await to_thread(_sync_file_cache)
+
+        results.append(WindVectorPrewarmItem(bbox=bbox_value, status=status))
+
+    return WindVectorPrewarmResponse(results=results)

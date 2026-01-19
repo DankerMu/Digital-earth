@@ -359,6 +359,186 @@ def test_vector_cache_hit_skips_db_query(
     assert second.json() == first.json()
 
 
+def test_vector_cache_keys_include_run_prefix(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    db_url = f"sqlite+pysqlite:///{tmp_path / 'catalog.db'}"
+    client, redis = _make_client(monkeypatch, tmp_path, db_url=db_url)
+
+    cube_path = tmp_path / "Data" / "cubes" / "wind-850.nc"
+    lat = np.array([0.0, 1.0], dtype=np.float32)
+    lon = np.array([0.0, 1.0], dtype=np.float32)
+    level = xr.DataArray([850.0], dims=["level"], attrs={"units": "hPa"})
+
+    u_values = np.zeros((1, 1, 2, 2), dtype=np.float32)
+    v_values = np.ones((1, 1, 2, 2), dtype=np.float32)
+    _write_wind_datacube(
+        cube_path,
+        u_name="u",
+        v_name="v",
+        u_values=u_values,
+        v_values=v_values,
+        lat=lat,
+        lon=lon,
+        level=level,
+    )
+
+    run_time_1 = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    run_time_2 = datetime(2026, 1, 2, tzinfo=timezone.utc)
+    valid_time = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    rel_path = str(cube_path.relative_to(tmp_path / "Data"))
+    _seed_asset(
+        db_url,
+        run_time=run_time_1,
+        valid_time=valid_time,
+        variable="wind",
+        level="850",
+        path=rel_path,
+    )
+    _seed_asset(
+        db_url,
+        run_time=run_time_2,
+        valid_time=valid_time,
+        variable="wind",
+        level="850",
+        path=rel_path,
+    )
+
+    bbox = "0,0,1,1"
+    resp = client.get(
+        "/api/v1/vector/ecmwf/20260101T000000Z/wind/850/20260101T000000Z",
+        params={"bbox": bbox, "stride": 1},
+    )
+    assert resp.status_code == 200
+
+    resp2 = client.get(
+        "/api/v1/vector/ecmwf/20260102T000000Z/wind/850/20260101T000000Z",
+        params={"bbox": bbox, "stride": 1},
+    )
+    assert resp2.status_code == 200
+
+    keys = sorted(redis.values.keys())
+    assert any(
+        key.startswith("vector:ecmwf:wind:run=20260101T000000Z:fresh:") for key in keys
+    )
+    assert any(
+        key.startswith("vector:ecmwf:wind:run=20260102T000000Z:fresh:") for key in keys
+    )
+
+
+def test_vector_file_cache_hit_skips_db_query_when_redis_disabled(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    db_url = f"sqlite+pysqlite:///{tmp_path / 'catalog.db'}"
+    client, _redis = _make_client(monkeypatch, tmp_path, db_url=db_url)
+    client.app.state.redis_client = None
+    monkeypatch.setenv("DIGITAL_EARTH_VECTOR_CACHE_DIR", str(tmp_path / "vector-cache"))
+
+    cube_path = tmp_path / "Data" / "cubes" / "wind-850.nc"
+    lat = np.array([0.0, 1.0], dtype=np.float32)
+    lon = np.array([0.0, 1.0], dtype=np.float32)
+    level = xr.DataArray([850.0], dims=["level"], attrs={"units": "hPa"})
+
+    u_values = np.zeros((1, 1, 2, 2), dtype=np.float32)
+    v_values = np.ones((1, 1, 2, 2), dtype=np.float32)
+    _write_wind_datacube(
+        cube_path,
+        u_name="u",
+        v_name="v",
+        u_values=u_values,
+        v_values=v_values,
+        lat=lat,
+        lon=lon,
+        level=level,
+    )
+
+    run_time = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    valid_time = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    rel_path = str(cube_path.relative_to(tmp_path / "Data"))
+    _seed_asset(
+        db_url,
+        run_time=run_time,
+        valid_time=valid_time,
+        variable="wind",
+        level="850",
+        path=rel_path,
+    )
+
+    url = "/api/v1/vector/ecmwf/20260101T000000Z/wind/850/20260101T000000Z"
+    params = {"bbox": "0,0,1,1", "stride": 1}
+    first = client.get(url, params=params)
+    assert first.status_code == 200
+
+    from routers import vector as vector_router
+
+    def _boom(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("expected cached response (no DB query)")
+
+    monkeypatch.setattr(vector_router, "_query_asset_path", _boom)
+
+    second = client.get(url, params=params)
+    assert second.status_code == 200
+    assert second.json() == first.json()
+
+
+def test_vector_prewarm_endpoint_warms_cache(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    db_url = f"sqlite+pysqlite:///{tmp_path / 'catalog.db'}"
+    client, _redis = _make_client(monkeypatch, tmp_path, db_url=db_url)
+
+    cube_path = tmp_path / "Data" / "cubes" / "wind-850.nc"
+    lat = np.array([0.0, 1.0], dtype=np.float32)
+    lon = np.array([0.0, 1.0], dtype=np.float32)
+    level = xr.DataArray([850.0], dims=["level"], attrs={"units": "hPa"})
+
+    u_values = np.zeros((1, 1, 2, 2), dtype=np.float32)
+    v_values = np.ones((1, 1, 2, 2), dtype=np.float32)
+    _write_wind_datacube(
+        cube_path,
+        u_name="u",
+        v_name="v",
+        u_values=u_values,
+        v_values=v_values,
+        lat=lat,
+        lon=lon,
+        level=level,
+    )
+
+    run_time = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    valid_time = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    rel_path = str(cube_path.relative_to(tmp_path / "Data"))
+    _seed_asset(
+        db_url,
+        run_time=run_time,
+        valid_time=valid_time,
+        variable="wind",
+        level="850",
+        path=rel_path,
+    )
+
+    prewarm = client.post(
+        "/api/v1/vector/ecmwf/20260101T000000Z/wind/850/20260101T000000Z/prewarm",
+        json={"bboxes": ["0,0,1,1"], "stride": 1},
+    )
+    assert prewarm.status_code == 200
+    payload = prewarm.json()
+    assert payload["results"][0]["status"] == "computed"
+
+    from routers import vector as vector_router
+
+    def _boom(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("expected cached response (no DB query)")
+
+    monkeypatch.setattr(vector_router, "_query_asset_path", _boom)
+
+    resp = client.get(
+        "/api/v1/vector/ecmwf/20260101T000000Z/wind/850/20260101T000000Z",
+        params={"bbox": "0,0,1,1", "stride": 1},
+    )
+    assert resp.status_code == 200
+
+
 def test_vector_supports_surface_wind_10m_component_names(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -517,6 +697,7 @@ def test_vector_works_without_redis_and_with_absolute_asset_path(
     db_url = f"sqlite+pysqlite:///{tmp_path / 'catalog.db'}"
     client, _redis = _make_client(monkeypatch, tmp_path, db_url=db_url)
     client.app.state.redis_client = None
+    monkeypatch.setenv("DIGITAL_EARTH_VECTOR_CACHE_DIR", str(tmp_path / "vector-cache"))
 
     cube_path = tmp_path / "wind-850-abs.nc"
     lat = np.array([0.0, 1.0], dtype=np.float32)
