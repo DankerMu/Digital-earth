@@ -148,11 +148,15 @@ def test_products_endpoint_returns_seeded_products(
     assert response.status_code == 200
 
     payload = response.json()
+    assert payload["page"] == 1
+    assert payload["page_size"] == 50
+    assert payload["total"] == 3
     assert {item["title"] for item in payload["items"]} == {"降雪", "大风", "强降水"}
     assert all(len(item["hazards"]) == 1 for item in payload["items"])
     for item in payload["items"]:
         hazard = item["hazards"][0]
         assert hazard["geometry"]["type"] == "Polygon"
+        assert set(hazard["bbox"]) == {"min_x", "min_y", "max_x", "max_y"}
 
 
 def test_products_hazards_geojson_returns_features(
@@ -213,10 +217,12 @@ def test_products_endpoint_bbox_filter_excludes_non_matching_products(
     client = _make_client(monkeypatch, tmp_path, db_url=db_url)
     response = client.get("/api/v1/products", params={"bbox": "0,0,1,1"})
     assert response.status_code == 200
-    assert response.json()["items"] == []
+    payload = response.json()
+    assert payload["total"] == 0
+    assert payload["items"] == []
 
 
-def test_products_endpoint_time_filter_supports_start_only(
+def test_products_endpoint_valid_time_filter_excludes_out_of_range_products(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     db_url = f"sqlite+pysqlite:///{tmp_path / 'products.db'}"
@@ -225,13 +231,15 @@ def test_products_endpoint_time_filter_supports_start_only(
     client = _make_client(monkeypatch, tmp_path, db_url=db_url)
     response = client.get(
         "/api/v1/products",
-        params={"start": "2026-01-03T00:00:00Z"},
+        params={"valid_time": "2026-01-03T00:00:00Z"},
     )
     assert response.status_code == 200
-    assert response.json()["items"] == []
+    payload = response.json()
+    assert payload["total"] == 0
+    assert payload["items"] == []
 
 
-def test_products_endpoint_time_filter_supports_end_only(
+def test_products_endpoint_valid_time_filter_includes_in_range_products(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     db_url = f"sqlite+pysqlite:///{tmp_path / 'products.db'}"
@@ -240,13 +248,15 @@ def test_products_endpoint_time_filter_supports_end_only(
     client = _make_client(monkeypatch, tmp_path, db_url=db_url)
     response = client.get(
         "/api/v1/products",
-        params={"end": "2026-01-03T00:00:00Z"},
+        params={"valid_time": "2026-01-01T12:00:00Z"},
     )
     assert response.status_code == 200
-    assert response.json()["items"] == []
+    payload = response.json()
+    assert payload["total"] == 3
+    assert {item["title"] for item in payload["items"]} == {"降雪", "大风", "强降水"}
 
 
-def test_products_endpoint_time_filter_supports_start_and_end(
+def test_products_endpoint_type_filter_returns_matching_products(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     db_url = f"sqlite+pysqlite:///{tmp_path / 'products.db'}"
@@ -255,17 +265,12 @@ def test_products_endpoint_time_filter_supports_start_and_end(
     client = _make_client(monkeypatch, tmp_path, db_url=db_url)
     response = client.get(
         "/api/v1/products",
-        params={
-            "start": "2026-01-01T00:00:00Z",
-            "end": "2026-01-01T12:00:00Z",
-        },
+        params={"type": "降雪"},
     )
     assert response.status_code == 200
-    assert {item["title"] for item in response.json()["items"]} == {
-        "降雪",
-        "大风",
-        "强降水",
-    }
+    payload = response.json()
+    assert payload["total"] == 1
+    assert payload["items"][0]["title"] == "降雪"
 
 
 def test_products_endpoint_bbox_filter_can_exclude_by_y_overlap(
@@ -277,7 +282,75 @@ def test_products_endpoint_bbox_filter_can_exclude_by_y_overlap(
     client = _make_client(monkeypatch, tmp_path, db_url=db_url)
     response = client.get("/api/v1/products", params={"bbox": "126.2,0,126.8,1"})
     assert response.status_code == 200
-    assert response.json()["items"] == []
+    payload = response.json()
+    assert payload["total"] == 0
+    assert payload["items"] == []
+
+
+def test_products_endpoint_pagination_slices_results(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    db_url = f"sqlite+pysqlite:///{tmp_path / 'products.db'}"
+    _seed_products(db_url)
+
+    client = _make_client(monkeypatch, tmp_path, db_url=db_url)
+
+    page_1 = client.get("/api/v1/products", params={"page": 1, "page_size": 2})
+    assert page_1.status_code == 200
+    payload_1 = page_1.json()
+    assert payload_1["page"] == 1
+    assert payload_1["page_size"] == 2
+    assert payload_1["total"] == 3
+    assert len(payload_1["items"]) == 2
+
+    page_2 = client.get("/api/v1/products", params={"page": 2, "page_size": 2})
+    assert page_2.status_code == 200
+    payload_2 = page_2.json()
+    assert payload_2["page"] == 2
+    assert payload_2["page_size"] == 2
+    assert payload_2["total"] == 3
+    assert len(payload_2["items"]) == 1
+
+
+def test_products_endpoint_is_cached_between_requests(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    db_url = f"sqlite+pysqlite:///{tmp_path / 'products.db'}"
+    _seed_products(db_url)
+
+    client = _make_client(monkeypatch, tmp_path, db_url=db_url)
+    params = {"type": "降雪", "valid_time": "2026-01-01T12:00:00Z"}
+
+    first = client.get("/api/v1/products", params=params)
+    assert first.status_code == 200
+    assert first.json()["total"] == 1
+
+    from routers import products as products_router
+
+    def _boom(*_args: object, **_kwargs: object) -> None:
+        raise RuntimeError("db should not be hit on cache")
+
+    monkeypatch.setattr(products_router, "_query_product_summaries", _boom)
+
+    second = client.get("/api/v1/products", params=params)
+    assert second.status_code == 200
+    assert second.json()["total"] == 1
+
+
+def test_products_endpoint_etag_returns_304_on_match(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    db_url = f"sqlite+pysqlite:///{tmp_path / 'products.db'}"
+    _seed_products(db_url)
+
+    client = _make_client(monkeypatch, tmp_path, db_url=db_url)
+    response = client.get("/api/v1/products")
+    assert response.status_code == 200
+    etag = response.headers.get("etag")
+    assert etag
+
+    cached = client.get("/api/v1/products", headers={"if-none-match": etag})
+    assert cached.status_code == 304
 
 
 def test_products_hazards_time_filter_applies_to_query(
