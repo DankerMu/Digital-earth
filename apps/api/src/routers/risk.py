@@ -385,6 +385,15 @@ def _summarize_results(
     )
 
 
+def _poi_ids_cache_identity(poi_ids: list[int] | None) -> str | list[int]:
+    if poi_ids is None:
+        return "all"
+    ids = sorted({int(item) for item in poi_ids if int(item) > 0})
+    if not ids:
+        return "empty"
+    return ids
+
+
 @router.post("/evaluate", response_model=RiskEvaluateResponse)
 async def evaluate_risk(
     request: Request,
@@ -402,7 +411,7 @@ async def evaluate_risk(
         "product_id": int(payload.product_id),
         "valid_time": valid_dt.strftime("%Y%m%dT%H%M%SZ"),
         "bbox": list(payload.bbox) if payload.bbox is not None else None,
-        "poi_ids": sorted(set(int(item) for item in (payload.poi_ids or []))),
+        "poi_ids": _poi_ids_cache_identity(payload.poi_ids),
         "rules_etag": rules_payload.etag,
     }
     identity = json.dumps(identity_payload, separators=(",", ":"), sort_keys=True)

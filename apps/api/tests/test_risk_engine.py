@@ -617,6 +617,42 @@ def test_risk_evaluate_endpoint_with_redis_uses_cache_on_repeat_request(
     assert second.json() == first_payload
 
 
+def test_risk_evaluate_endpoint_cache_key_distinguishes_empty_poi_ids(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    rules_path = tmp_path / "risk-rules.yaml"
+    _write_risk_rules_config(rules_path)
+    monkeypatch.setenv("DIGITAL_EARTH_RISK_RULES_CONFIG", str(rules_path))
+
+    from risk_rules_config import get_risk_rules_payload
+
+    get_risk_rules_payload.cache_clear()
+    _db_url, product_id = _setup_db(monkeypatch, tmp_path)
+
+    redis = FakeRedis(use_real_time=False)
+    client = _make_risk_client(redis=redis)
+
+    all_pois = client.post(
+        "/api/v1/risk/evaluate",
+        json={"product_id": product_id, "valid_time": "2024-01-01T00:00:00"},
+    )
+    assert all_pois.status_code == 200
+    assert all_pois.json()["summary"]["total"] == 2
+
+    empty_pois = client.post(
+        "/api/v1/risk/evaluate",
+        json={
+            "product_id": product_id,
+            "valid_time": "2024-01-01T00:00:00",
+            "poi_ids": [],
+        },
+    )
+    assert empty_pois.status_code == 200
+    payload = empty_pois.json()
+    assert payload["summary"]["total"] == 0
+    assert payload["results"] == []
+
+
 def test_risk_evaluate_endpoint_cache_timeout_returns_503(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
