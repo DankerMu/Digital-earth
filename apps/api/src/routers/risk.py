@@ -546,6 +546,10 @@ class RiskEvaluateSummary(BaseModel):
 
     total: int
     level_counts: dict[str, int] = Field(default_factory=dict)
+    reasons: dict[str, int] = Field(
+        default_factory=dict,
+        description="Summary of dominant risk factors across evaluated POIs",
+    )
     max_level: int | None = None
     avg_score: float | None = None
     duration_ms: float
@@ -572,12 +576,32 @@ def _summarize_results(
 ) -> RiskEvaluateSummary:
     total = len(results)
     level_counts: dict[str, int] = {}
+    reasons: dict[str, int] = {}
     scores: list[float] = []
 
     for item in results:
         level_key = str(int(item.level))
         level_counts[level_key] = level_counts.get(level_key, 0) + 1
+        top_factor_id: str | None = None
+        top_contribution: float | None = None
+        for factor in item.factors:
+            contribution = float(factor.contribution)
+            factor_id = str(factor.id.value)
+            if top_factor_id is None:
+                top_factor_id = factor_id
+                top_contribution = contribution
+                continue
+
+            assert top_contribution is not None
+            if contribution > top_contribution:
+                top_factor_id = factor_id
+                top_contribution = contribution
+            elif contribution == top_contribution and factor_id < top_factor_id:
+                top_factor_id = factor_id
         scores.append(float(item.score))
+
+        if top_factor_id is not None:
+            reasons[top_factor_id] = reasons.get(top_factor_id, 0) + 1
 
     max_level = max((item.level for item in results), default=None)
     avg_score = None
@@ -587,6 +611,7 @@ def _summarize_results(
     return RiskEvaluateSummary(
         total=total,
         level_counts=level_counts,
+        reasons=reasons,
         max_level=max_level,
         avg_score=avg_score,
         duration_ms=float(duration_ms),
@@ -672,6 +697,15 @@ async def evaluate_risk(
                 compute=_compute,
                 cooldown_ttl_seconds=CACHE_COOLDOWN_TTL_SECONDS,
             )
+            if result.status == "fresh":
+                logger.info(
+                    "risk_evaluate_cache_hit",
+                    extra={
+                        "cache_key": digest,
+                        "product_id": int(payload.product_id),
+                        "valid_time": identity_payload["valid_time"],
+                    },
+                )
             body = result.body
         except TimeoutError as exc:
             raise HTTPException(
@@ -702,4 +736,6 @@ async def evaluate_risk(
         "ETag": etag,
         "X-Risk-Rules-Etag": rules_payload.etag,
     }
+    if if_none_match_matches(request.headers.get("if-none-match"), etag):
+        return Response(status_code=304, headers=headers)
     return Response(content=body, media_type="application/json", headers=headers)

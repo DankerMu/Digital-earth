@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import hashlib
+import json
+import logging
 import math
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -575,6 +578,10 @@ def test_risk_evaluate_endpoint_without_redis_returns_results_and_summary(
     payload = response.json()
     assert payload["summary"]["total"] == 2
     assert payload["summary"]["duration_ms"] >= 0
+    assert sum(payload["summary"]["reasons"].values()) == payload["summary"]["total"]
+    assert set(payload["summary"]["reasons"]).issubset(
+        {"snowfall", "snow_depth", "wind", "temp"}
+    )
     assert len(payload["results"]) == 2
     assert [item["poi_id"] for item in payload["results"]] == [1, 2]
     assert all(len(item["factors"]) == 4 for item in payload["results"])
@@ -766,3 +773,227 @@ def test_risk_evaluate_endpoint_returns_503_on_database_error(
         json={"product_id": product_id, "valid_time": "2024-01-01T00:00:00Z"},
     )
     assert response.status_code == 503
+
+
+def _risk_evaluate_cache_digest(
+    *,
+    product_id: int,
+    valid_time: datetime,
+    bbox: list[float] | None,
+    poi_ids: list[int] | None,
+    rules_etag: str,
+) -> str:
+    if poi_ids is None:
+        poi_identity: str | list[int] = "all"
+    else:
+        ids = sorted({int(item) for item in poi_ids if int(item) > 0})
+        poi_identity = ids if ids else "empty"
+
+    dt = valid_time
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    dt = dt.astimezone(timezone.utc)
+
+    identity_payload = {
+        "product_id": int(product_id),
+        "valid_time": dt.strftime("%Y%m%dT%H%M%SZ"),
+        "bbox": list(bbox) if bbox is not None else None,
+        "poi_ids": poi_identity,
+        "rules_etag": rules_etag,
+    }
+    identity = json.dumps(identity_payload, separators=(",", ":"), sort_keys=True)
+    return hashlib.sha256(identity.encode("utf-8")).hexdigest()
+
+
+def test_risk_evaluate_endpoint_if_none_match_returns_304(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    rules_path = tmp_path / "risk-rules.yaml"
+    _write_risk_rules_config(rules_path)
+    monkeypatch.setenv("DIGITAL_EARTH_RISK_RULES_CONFIG", str(rules_path))
+
+    from risk_rules_config import get_risk_rules_payload
+
+    get_risk_rules_payload.cache_clear()
+    _db_url, product_id = _setup_db(monkeypatch, tmp_path)
+
+    redis = FakeRedis(use_real_time=False)
+    client = _make_risk_client(redis=redis)
+    first = client.post(
+        "/api/v1/risk/evaluate",
+        json={"product_id": product_id, "valid_time": "2024-01-01T00:00:00"},
+    )
+    assert first.status_code == 200
+    etag = first.headers["etag"]
+    rules_etag = first.headers["x-risk-rules-etag"]
+
+    cached = client.post(
+        "/api/v1/risk/evaluate",
+        json={"product_id": product_id, "valid_time": "2024-01-01T00:00:00"},
+        headers={"If-None-Match": etag},
+    )
+    assert cached.status_code == 304
+    assert cached.headers["etag"] == etag
+    assert cached.headers["x-risk-rules-etag"] == rules_etag
+    assert cached.text == ""
+
+
+def test_risk_evaluate_endpoint_cache_hit_emits_log(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    rules_path = tmp_path / "risk-rules.yaml"
+    _write_risk_rules_config(rules_path)
+    monkeypatch.setenv("DIGITAL_EARTH_RISK_RULES_CONFIG", str(rules_path))
+
+    from risk_rules_config import get_risk_rules_payload
+
+    get_risk_rules_payload.cache_clear()
+    _db_url, product_id = _setup_db(monkeypatch, tmp_path)
+
+    redis = FakeRedis(use_real_time=False)
+    client = _make_risk_client(redis=redis)
+    first = client.post(
+        "/api/v1/risk/evaluate",
+        json={"product_id": product_id, "valid_time": "2024-01-01T00:00:00"},
+    )
+    assert first.status_code == 200
+
+    caplog.set_level(logging.INFO, logger="api.error")
+    caplog.clear()
+
+    second = client.post(
+        "/api/v1/risk/evaluate",
+        json={"product_id": product_id, "valid_time": "2024-01-01T00:00:00"},
+    )
+    assert second.status_code == 200
+    assert any(
+        record.message == "risk_evaluate_cache_hit" for record in caplog.records
+    )
+
+
+def test_risk_evaluate_endpoint_cache_key_includes_bbox_and_valid_time(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    rules_path = tmp_path / "risk-rules.yaml"
+    _write_risk_rules_config(rules_path)
+    monkeypatch.setenv("DIGITAL_EARTH_RISK_RULES_CONFIG", str(rules_path))
+
+    from risk_rules_config import get_risk_rules_payload
+
+    get_risk_rules_payload.cache_clear()
+    _db_url, product_id = _setup_db(monkeypatch, tmp_path)
+
+    redis = FakeRedis(use_real_time=False)
+    client = _make_risk_client(redis=redis)
+
+    base = client.post(
+        "/api/v1/risk/evaluate",
+        json={"product_id": product_id, "valid_time": "2024-01-01T00:00:00"},
+    )
+    assert base.status_code == 200
+    rules_etag = base.headers["x-risk-rules-etag"]
+
+    with_bbox = client.post(
+        "/api/v1/risk/evaluate",
+        json={
+            "product_id": product_id,
+            "valid_time": "2024-01-01T00:00:00",
+            "bbox": [100.0, 10.0, 101.0, 11.0],
+        },
+    )
+    assert with_bbox.status_code == 200
+
+    with_time = client.post(
+        "/api/v1/risk/evaluate",
+        json={"product_id": product_id, "valid_time": "2024-01-01T01:00:00"},
+    )
+    assert with_time.status_code == 200
+
+    digest_base = _risk_evaluate_cache_digest(
+        product_id=product_id,
+        valid_time=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+        bbox=None,
+        poi_ids=None,
+        rules_etag=rules_etag,
+    )
+    digest_bbox = _risk_evaluate_cache_digest(
+        product_id=product_id,
+        valid_time=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+        bbox=[100.0, 10.0, 101.0, 11.0],
+        poi_ids=None,
+        rules_etag=rules_etag,
+    )
+    digest_time = _risk_evaluate_cache_digest(
+        product_id=product_id,
+        valid_time=datetime(2024, 1, 1, 1, 0, tzinfo=timezone.utc),
+        bbox=None,
+        poi_ids=None,
+        rules_etag=rules_etag,
+    )
+
+    assert len({digest_base, digest_bbox, digest_time}) == 3
+    assert f"risk:evaluate:fresh:{digest_base}" in redis.values
+    assert f"risk:evaluate:stale:{digest_base}" in redis.values
+    assert f"risk:evaluate:fresh:{digest_bbox}" in redis.values
+    assert f"risk:evaluate:stale:{digest_bbox}" in redis.values
+    assert f"risk:evaluate:fresh:{digest_time}" in redis.values
+    assert f"risk:evaluate:stale:{digest_time}" in redis.values
+
+
+def test_risk_evaluate_endpoint_cache_key_includes_rules_etag(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    rules_v1 = tmp_path / "risk-rules-v1.yaml"
+    _write_risk_rules_config(rules_v1)
+
+    rules_v2 = tmp_path / "risk-rules-v2.yaml"
+    rules_v2.write_text(
+        rules_v1.read_text(encoding="utf-8").replace("threshold: 10", "threshold: 11"),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setenv("DIGITAL_EARTH_RISK_RULES_CONFIG", str(rules_v1))
+
+    from risk_rules_config import get_risk_rules_payload
+
+    get_risk_rules_payload.cache_clear()
+    _db_url, product_id = _setup_db(monkeypatch, tmp_path)
+
+    redis = FakeRedis(use_real_time=False)
+    client = _make_risk_client(redis=redis)
+
+    v1 = client.post(
+        "/api/v1/risk/evaluate",
+        json={"product_id": product_id, "valid_time": "2024-01-01T00:00:00"},
+    )
+    assert v1.status_code == 200
+    etag_v1 = v1.headers["x-risk-rules-etag"]
+
+    monkeypatch.setenv("DIGITAL_EARTH_RISK_RULES_CONFIG", str(rules_v2))
+    get_risk_rules_payload.cache_clear()
+
+    v2 = client.post(
+        "/api/v1/risk/evaluate",
+        json={"product_id": product_id, "valid_time": "2024-01-01T00:00:00"},
+    )
+    assert v2.status_code == 200
+    etag_v2 = v2.headers["x-risk-rules-etag"]
+    assert etag_v2 != etag_v1
+
+    digest_v1 = _risk_evaluate_cache_digest(
+        product_id=product_id,
+        valid_time=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+        bbox=None,
+        poi_ids=None,
+        rules_etag=etag_v1,
+    )
+    digest_v2 = _risk_evaluate_cache_digest(
+        product_id=product_id,
+        valid_time=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+        bbox=None,
+        poi_ids=None,
+        rules_etag=etag_v2,
+    )
+    assert digest_v1 != digest_v2
+    assert f"risk:evaluate:fresh:{digest_v1}" in redis.values
+    assert f"risk:evaluate:fresh:{digest_v2}" in redis.values
