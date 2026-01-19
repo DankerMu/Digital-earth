@@ -1,5 +1,6 @@
 import { HttpError } from './http';
 import { toUserFacingError } from './userFacingError';
+import { expect, test } from 'vitest';
 
 test('maps 5xx to service busy message', () => {
   const error = new HttpError('Request failed: 503', { status: 503, url: '/x' });
@@ -33,4 +34,3 @@ test('handles unknown values', () => {
     message: '发生未知错误，请稍后重试。',
   });
 });
-

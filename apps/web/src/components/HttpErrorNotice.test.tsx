@@ -1,4 +1,5 @@
 import { render, screen } from '@testing-library/react';
+import { expect, test } from 'vitest';
 
 import { HttpError } from '../lib/http';
 import HttpErrorNotice from './HttpErrorNotice';
@@ -25,4 +26,3 @@ test('renders 404 user message', () => {
   expect(screen.getByRole('alert', { name: 'error-404' })).toBeInTheDocument();
   expect(screen.getByText('资源不存在')).toBeInTheDocument();
 });
-

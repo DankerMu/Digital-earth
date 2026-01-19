@@ -1,4 +1,5 @@
 import { clearConfigCache, loadConfig } from './config';
+import { beforeEach, expect, test, vi } from 'vitest';
 
 beforeEach(() => {
   clearConfigCache();

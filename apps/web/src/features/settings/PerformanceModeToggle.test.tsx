@@ -1,4 +1,5 @@
 import { fireEvent, render, screen } from '@testing-library/react';
+import { beforeEach, expect, test } from 'vitest';
 
 import PerformanceModeToggle from './PerformanceModeToggle';
 import { usePerformanceModeStore } from '../../state/performanceMode';

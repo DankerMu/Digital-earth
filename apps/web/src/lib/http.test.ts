@@ -1,4 +1,5 @@
 import { fetchJson } from './http';
+import { beforeEach, expect, test, vi } from 'vitest';
 
 beforeEach(() => {
   vi.unstubAllGlobals();
