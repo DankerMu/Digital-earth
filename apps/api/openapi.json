@@ -313,6 +313,27 @@
         "title": "ErrorReport",
         "type": "object"
       },
+      "FinalLevelRule": {
+        "additionalProperties": false,
+        "properties": {
+          "level": {
+            "maximum": 5.0,
+            "minimum": 1.0,
+            "title": "Level",
+            "type": "integer"
+          },
+          "min_score": {
+            "title": "Min Score",
+            "type": "number"
+          }
+        },
+        "required": [
+          "min_score",
+          "level"
+        ],
+        "title": "FinalLevelRule",
+        "type": "object"
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -493,6 +514,38 @@
           "generated_at"
         ],
         "title": "LocalIndexResponse",
+        "type": "object"
+      },
+      "POIRiskResult": {
+        "additionalProperties": false,
+        "properties": {
+          "factors": {
+            "items": {
+              "$ref": "#/components/schemas/RiskFactorEvaluation"
+            },
+            "title": "Factors",
+            "type": "array"
+          },
+          "level": {
+            "title": "Level",
+            "type": "integer"
+          },
+          "poi_id": {
+            "title": "Poi Id",
+            "type": "integer"
+          },
+          "score": {
+            "title": "Score",
+            "type": "number"
+          }
+        },
+        "required": [
+          "poi_id",
+          "level",
+          "score",
+          "factors"
+        ],
+        "title": "POIRiskResult",
         "type": "object"
       },
       "ParticleSizeRange": {
@@ -728,6 +781,247 @@
         "title": "ProductsResponse",
         "type": "object"
       },
+      "RiskEvaluateRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "bbox": {
+            "anyOf": [
+              {
+                "maxItems": 4,
+                "minItems": 4,
+                "prefixItems": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "number"
+                  }
+                ],
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Bounding box [min_lon,min_lat,max_lon,max_lat]; defaults to product hazards at valid_time",
+            "title": "Bbox"
+          },
+          "poi_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "integer"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Optional POI ids to evaluate (filtered within bbox when provided)",
+            "title": "Poi Ids"
+          },
+          "product_id": {
+            "description": "Product id",
+            "exclusiveMinimum": 0.0,
+            "title": "Product Id",
+            "type": "integer"
+          },
+          "valid_time": {
+            "description": "Valid time (ISO8601)",
+            "format": "date-time",
+            "title": "Valid Time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "product_id",
+          "valid_time"
+        ],
+        "title": "RiskEvaluateRequest",
+        "type": "object"
+      },
+      "RiskEvaluateResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "results": {
+            "items": {
+              "$ref": "#/components/schemas/POIRiskResult"
+            },
+            "title": "Results",
+            "type": "array"
+          },
+          "summary": {
+            "$ref": "#/components/schemas/RiskEvaluateSummary"
+          }
+        },
+        "required": [
+          "summary"
+        ],
+        "title": "RiskEvaluateResponse",
+        "type": "object"
+      },
+      "RiskEvaluateSummary": {
+        "additionalProperties": false,
+        "properties": {
+          "avg_score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Avg Score"
+          },
+          "duration_ms": {
+            "title": "Duration Ms",
+            "type": "number"
+          },
+          "level_counts": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Level Counts",
+            "type": "object"
+          },
+          "max_level": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Level"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "total",
+          "duration_ms"
+        ],
+        "title": "RiskEvaluateSummary",
+        "type": "object"
+      },
+      "RiskEvaluationResult": {
+        "additionalProperties": false,
+        "properties": {
+          "factors": {
+            "items": {
+              "$ref": "#/components/schemas/RiskFactorEvaluation"
+            },
+            "title": "Factors",
+            "type": "array"
+          },
+          "level": {
+            "title": "Level",
+            "type": "integer"
+          },
+          "score": {
+            "title": "Score",
+            "type": "number"
+          }
+        },
+        "required": [
+          "score",
+          "level",
+          "factors"
+        ],
+        "title": "RiskEvaluationResult",
+        "type": "object"
+      },
+      "RiskFactorEvaluation": {
+        "additionalProperties": false,
+        "properties": {
+          "contribution": {
+            "title": "Contribution",
+            "type": "number"
+          },
+          "id": {
+            "$ref": "#/components/schemas/RiskFactorId"
+          },
+          "normalized_weight": {
+            "title": "Normalized Weight",
+            "type": "number"
+          },
+          "score": {
+            "title": "Score",
+            "type": "number"
+          },
+          "value": {
+            "title": "Value",
+            "type": "number"
+          },
+          "weight": {
+            "title": "Weight",
+            "type": "number"
+          }
+        },
+        "required": [
+          "id",
+          "value",
+          "score",
+          "weight",
+          "normalized_weight",
+          "contribution"
+        ],
+        "title": "RiskFactorEvaluation",
+        "type": "object"
+      },
+      "RiskFactorId": {
+        "enum": [
+          "snowfall",
+          "snow_depth",
+          "wind",
+          "temp"
+        ],
+        "title": "RiskFactorId",
+        "type": "string"
+      },
+      "RiskFactorRule": {
+        "additionalProperties": false,
+        "properties": {
+          "direction": {
+            "$ref": "#/components/schemas/ThresholdDirection",
+            "default": "ascending"
+          },
+          "id": {
+            "$ref": "#/components/schemas/RiskFactorId"
+          },
+          "thresholds": {
+            "items": {
+              "$ref": "#/components/schemas/ThresholdScore"
+            },
+            "minItems": 1,
+            "title": "Thresholds",
+            "type": "array"
+          },
+          "weight": {
+            "exclusiveMinimum": 0.0,
+            "title": "Weight",
+            "type": "number"
+          }
+        },
+        "required": [
+          "id",
+          "weight",
+          "thresholds"
+        ],
+        "title": "RiskFactorRule",
+        "type": "object"
+      },
       "RiskIntensityMapping": {
         "properties": {
           "effect_params": {
@@ -893,6 +1187,66 @@
         "title": "RiskPOIQueryResponse",
         "type": "object"
       },
+      "RiskRuleModel": {
+        "additionalProperties": false,
+        "properties": {
+          "factors": {
+            "items": {
+              "$ref": "#/components/schemas/RiskFactorRule"
+            },
+            "title": "Factors",
+            "type": "array"
+          },
+          "final_levels": {
+            "items": {
+              "$ref": "#/components/schemas/FinalLevelRule"
+            },
+            "minItems": 1,
+            "title": "Final Levels",
+            "type": "array"
+          },
+          "schema_version": {
+            "title": "Schema Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "schema_version",
+          "factors",
+          "final_levels"
+        ],
+        "title": "RiskRuleModel",
+        "type": "object"
+      },
+      "RiskRulesEvaluateRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "snow_depth": {
+            "title": "Snow Depth",
+            "type": "number"
+          },
+          "snowfall": {
+            "title": "Snowfall",
+            "type": "number"
+          },
+          "temp": {
+            "title": "Temp",
+            "type": "number"
+          },
+          "wind": {
+            "title": "Wind",
+            "type": "number"
+          }
+        },
+        "required": [
+          "snowfall",
+          "snow_depth",
+          "wind",
+          "temp"
+        ],
+        "title": "RiskRulesEvaluateRequest",
+        "type": "object"
+      },
       "SampleResponse": {
         "additionalProperties": false,
         "properties": {
@@ -923,6 +1277,34 @@
           }
         },
         "title": "SampleResponse",
+        "type": "object"
+      },
+      "ThresholdDirection": {
+        "enum": [
+          "ascending",
+          "descending"
+        ],
+        "title": "ThresholdDirection",
+        "type": "string"
+      },
+      "ThresholdScore": {
+        "additionalProperties": false,
+        "properties": {
+          "score": {
+            "minimum": 0.0,
+            "title": "Score",
+            "type": "number"
+          },
+          "threshold": {
+            "title": "Threshold",
+            "type": "number"
+          }
+        },
+        "required": [
+          "threshold",
+          "score"
+        ],
+        "title": "ThresholdScore",
         "type": "object"
       },
       "ValidationError": {
@@ -1836,6 +2218,47 @@
         ]
       }
     },
+    "/api/v1/risk/evaluate": {
+      "post": {
+        "operationId": "evaluate_risk_api_v1_risk_evaluate_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RiskEvaluateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RiskEvaluateResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Evaluate Risk",
+        "tags": [
+          "risk"
+        ]
+      }
+    },
     "/api/v1/risk/intensity-mapping": {
       "get": {
         "operationId": "get_risk_intensity_mapping_api_v1_risk_intensity_mapping_get",
@@ -1920,6 +2343,68 @@
           }
         },
         "summary": "Get Risk Pois",
+        "tags": [
+          "risk"
+        ]
+      }
+    },
+    "/api/v1/risk/rules": {
+      "get": {
+        "operationId": "get_risk_rules_api_v1_risk_rules_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RiskRuleModel"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Risk Rules",
+        "tags": [
+          "risk"
+        ]
+      }
+    },
+    "/api/v1/risk/rules/evaluate": {
+      "post": {
+        "operationId": "evaluate_risk_rules_api_v1_risk_rules_evaluate_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RiskRulesEvaluateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RiskEvaluationResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Evaluate Risk Rules",
         "tags": [
           "risk"
         ]
