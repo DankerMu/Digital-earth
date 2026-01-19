@@ -117,18 +117,15 @@ def test_helpers_cover_edge_cases(tmp_path: Path) -> None:
         )
         is None
     )
-    assert (
-        _legend_extreme_colors(
-            {
-                "stops": [
-                    {"value": 0, "color": "#GGGGGG"},
-                    {"value": 0, "color": "#000000"},
-                    {"value": 10, "color": "#ffffff"},
-                ]
-            }
-        )
-        == ((0, 0, 0), (255, 255, 255))
-    )
+    assert _legend_extreme_colors(
+        {
+            "stops": [
+                {"value": 0, "color": "#GGGGGG"},
+                {"value": 0, "color": "#000000"},
+                {"value": 10, "color": "#ffffff"},
+            ]
+        }
+    ) == ((0, 0, 0), (255, 255, 255))
 
     bad_relpaths = [
         Path("a/b/c.png"),  # too short
