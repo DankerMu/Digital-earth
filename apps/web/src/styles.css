@@ -126,3 +126,156 @@ body {
   font-weight: 700;
   line-height: 1;
 }
+
+.attributionBar {
+  position: fixed;
+  right: 1rem;
+  bottom: 6rem;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.5rem 0.75rem;
+  background: rgba(30, 41, 59, 0.7);
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  border-radius: 0.75rem;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+  backdrop-filter: blur(12px);
+  font-size: 12px;
+}
+
+.attributionSummary {
+  max-width: 360px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #94a3b8;
+}
+
+.attributionButton {
+  appearance: none;
+  background: transparent;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  color: #94a3b8;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.attributionButton:hover {
+  color: #e2e8f0;
+}
+
+.attributionButton:focus-visible {
+  outline: 2px solid rgba(96, 165, 250, 1);
+  outline-offset: 2px;
+  border-radius: 0.25rem;
+}
+
+.modalOverlay {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 1rem;
+  background: rgba(2, 6, 23, 0.7);
+}
+
+.modal {
+  width: min(760px, 100%);
+  max-height: min(84vh, 720px);
+  background: rgba(15, 23, 42, 0.98);
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  border-radius: 0.75rem;
+  box-shadow: 0 20px 70px rgba(0, 0, 0, 0.45);
+  display: flex;
+  flex-direction: column;
+}
+
+.modalHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.12);
+}
+
+.modalTitle {
+  font-size: 14px;
+  font-weight: 600;
+  margin: 0;
+}
+
+.modalMeta {
+  font-size: 12px;
+  color: #94a3b8;
+}
+
+.modalHeaderActions {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.modalButton {
+  appearance: none;
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  background: rgba(30, 41, 59, 0.5);
+  color: #e2e8f0;
+  border-radius: 0.5rem;
+  padding: 0.35rem 0.6rem;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.modalButton:hover {
+  background: rgba(30, 41, 59, 0.8);
+}
+
+.modalButton:focus-visible {
+  outline: 2px solid rgba(96, 165, 250, 1);
+  outline-offset: 2px;
+}
+
+.modalBody {
+  padding: 1rem;
+  overflow: auto;
+}
+
+.modalSectionTitle {
+  margin: 0 0 0.5rem;
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #94a3b8;
+}
+
+.modalList {
+  margin: 0;
+  padding-left: 1.25rem;
+  display: grid;
+  gap: 0.35rem;
+}
+
+.modalListItem {
+  color: #e2e8f0;
+}
+
+.modalError {
+  color: #fecaca;
+  font-size: 12px;
+  margin: 0 0 0.75rem;
+}
+
+.inlineLink {
+  color: rgba(96, 165, 250, 1);
+  text-decoration: underline;
+}
+
+.inlineLink:hover {
+  color: rgba(147, 197, 253, 1);
+}
