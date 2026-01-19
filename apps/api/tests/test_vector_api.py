@@ -485,6 +485,7 @@ def test_vector_prewarm_endpoint_warms_cache(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     db_url = f"sqlite+pysqlite:///{tmp_path / 'catalog.db'}"
+    monkeypatch.setenv("ENABLE_EDITOR", "true")
     client, _redis = _make_client(monkeypatch, tmp_path, db_url=db_url)
 
     cube_path = tmp_path / "Data" / "cubes" / "wind-850.nc"
@@ -537,6 +538,19 @@ def test_vector_prewarm_endpoint_warms_cache(
         params={"bbox": "0,0,1,1", "stride": 1},
     )
     assert resp.status_code == 200
+
+
+def test_vector_prewarm_requires_editor_permission(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    db_url = f"sqlite+pysqlite:///{tmp_path / 'catalog.db'}"
+    client, _redis = _make_client(monkeypatch, tmp_path, db_url=db_url)
+
+    prewarm = client.post(
+        "/api/v1/vector/ecmwf/20260101T000000Z/wind/850/20260101T000000Z/prewarm",
+        json={"bboxes": ["0,0,1,1"], "stride": 1},
+    )
+    assert prewarm.status_code == 403
 
 
 def test_vector_supports_surface_wind_10m_component_names(
