@@ -1,0 +1,67 @@
+{
+  "name": "production",
+  "base_url": "https://tiles.example.com",
+  "headers": {
+    "User-Agent": "digital-earth-loadtest/k6"
+  },
+  "request": {
+    "timeout_ms": 30000,
+    "sleep_seconds": 0,
+    "expected_statuses": [200],
+    "discard_response_bodies": true,
+    "insecure_skip_tls_verify": false
+  },
+  "tile": {
+    "path_template": "/tiles/{z}/{x}/{y}.png",
+    "zooms": [6],
+    "x_range": [0, 63],
+    "y_range": [0, 63],
+    "placeholders": {},
+    "query_params": {},
+    "cache_bust": false
+  },
+  "scenarios": {
+    "ramp": {
+      "executor": "ramping-vus",
+      "stages": [
+        { "duration": "30s", "target": 1 },
+        { "duration": "1m", "target": 3 },
+        { "duration": "2m", "target": 10 },
+        { "duration": "5m", "target": 10 },
+        { "duration": "1m", "target": 0 }
+      ],
+      "gracefulRampDown": "30s",
+      "gracefulStop": "30s"
+    },
+    "sustained": {
+      "executor": "constant-vus",
+      "vus": 10,
+      "duration": "10m",
+      "gracefulStop": "30s"
+    },
+    "spike": {
+      "executor": "ramping-vus",
+      "stages": [
+        { "duration": "1m", "target": 3 },
+        { "duration": "10s", "target": 25 },
+        { "duration": "1m", "target": 25 },
+        { "duration": "10s", "target": 3 },
+        { "duration": "1m", "target": 3 },
+        { "duration": "30s", "target": 0 }
+      ],
+      "gracefulRampDown": "30s",
+      "gracefulStop": "30s"
+    }
+  },
+  "cache": {
+    "content_is_immutable": true,
+    "update_interval_seconds": 3600,
+    "suggested_ttl_seconds": 86400,
+    "stale_while_revalidate_seconds": 300,
+    "stale_if_error_seconds": 86400
+  },
+  "rate_limit": {
+    "per_ip_rps": 30
+  }
+}
+

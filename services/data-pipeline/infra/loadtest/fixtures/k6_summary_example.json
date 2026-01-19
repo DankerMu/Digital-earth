@@ -1,0 +1,19 @@
+{
+  "state": { "testRunDurationMs": 600000 },
+  "metrics": {
+    "http_reqs": { "type": "counter", "values": { "count": 12000, "rate": 20.0 } },
+    "http_req_failed": { "type": "rate", "values": { "rate": 0.004 } },
+    "http_req_duration": {
+      "type": "trend",
+      "values": { "avg": 220.0, "min": 40.0, "max": 1800.0, "p(90)": 420.0, "p(95)": 520.0, "p(99)": 900.0 }
+    },
+    "cdn_hits": { "type": "counter", "values": { "count": 9800, "rate": 16.3333333333 } },
+    "cdn_misses": { "type": "counter", "values": { "count": 2000, "rate": 3.3333333333 } },
+    "cdn_unknown": { "type": "counter", "values": { "count": 200, "rate": 0.3333333333 } },
+    "bytes_total": { "type": "counter", "values": { "count": 960000000, "rate": 1600000.0 } },
+    "bytes_hit": { "type": "counter", "values": { "count": 740000000, "rate": 1233333.3333 } },
+    "bytes_miss": { "type": "counter", "values": { "count": 200000000, "rate": 333333.3333 } },
+    "bytes_unknown": { "type": "counter", "values": { "count": 20000000, "rate": 33333.3333 } }
+  }
+}
+
