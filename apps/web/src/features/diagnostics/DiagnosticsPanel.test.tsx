@@ -1,12 +1,10 @@
-import { render, screen } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { DiagnosticsPanel } from './DiagnosticsPanel';
 import type { DiagnosticsSnapshot } from './types';
 
 describe('DiagnosticsPanel', () => {
-  it('renders key metrics and supports export', async () => {
-    const user = userEvent.setup();
+  it('renders key metrics and supports export', () => {
     const onClose = vi.fn();
     const onExport = vi.fn();
 
@@ -49,10 +47,10 @@ describe('DiagnosticsPanel', () => {
     expect(screen.getByText('Errors').parentElement).toHaveTextContent('1');
     expect(screen.getByText('Tile Cache Hit').parentElement).toHaveTextContent('2/8');
 
-    await user.click(screen.getByRole('button', { name: /export/i }));
+    fireEvent.click(screen.getByRole('button', { name: /export/i }));
     expect(onExport).toHaveBeenCalledTimes(1);
 
-    await user.click(screen.getByRole('button', { name: /close/i }));
+    fireEvent.click(screen.getByRole('button', { name: /close/i }));
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 });
