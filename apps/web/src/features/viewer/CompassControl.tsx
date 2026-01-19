@@ -12,7 +12,7 @@ export function CompassControl({ viewer }: CompassControlProps) {
     const needleEl = needleRef.current!;
 
     const update = () => {
-      const degrees = CesiumMath.toDegrees(viewer.camera.heading);
+      const degrees = CesiumMath.toDegrees(-viewer.camera.heading);
       needleEl.style.transform = `rotate(${degrees}deg)`;
     };
 
