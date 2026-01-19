@@ -11,9 +11,11 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from redis_fakes import FakeRedis
+from risk.rules import RiskFactorId
 from risk_engine import (
     RiskEngineDatabaseError,
     RiskEngineInputError,
@@ -64,6 +66,118 @@ def _write_risk_rules_config(path: Path) -> None:
             "        score: 0",
             "      - threshold: 0",
             "        score: 4",
+            "",
+            "final_levels:",
+            "  - min_score: 0",
+            "    level: 1",
+            "  - min_score: 1",
+            "    level: 2",
+            "  - min_score: 2",
+            "    level: 3",
+            "  - min_score: 3",
+            "    level: 4",
+            "  - min_score: 4",
+            "    level: 5",
+            "",
+        ]
+    )
+    path.write_text(text, encoding="utf-8")
+
+
+def _write_risk_rules_config_all_positive(path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    text = "\n".join(
+        [
+            "schema_version: 1",
+            "",
+            "factors:",
+            "  - id: snowfall",
+            "    weight: 1.0",
+            "    direction: ascending",
+            "    thresholds:",
+            "      - threshold: 0",
+            "        score: 1",
+            "",
+            "  - id: snow_depth",
+            "    weight: 1.0",
+            "    direction: ascending",
+            "    thresholds:",
+            "      - threshold: 0",
+            "        score: 1",
+            "",
+            "  - id: wind",
+            "    weight: 1.0",
+            "    direction: ascending",
+            "    thresholds:",
+            "      - threshold: 0",
+            "        score: 1",
+            "",
+            "  - id: temp",
+            "    weight: 1.0",
+            "    direction: descending",
+            "    thresholds:",
+            "      - threshold: 5",
+            "        score: 1",
+            "",
+            "final_levels:",
+            "  - min_score: 0",
+            "    level: 1",
+            "  - min_score: 1",
+            "    level: 2",
+            "  - min_score: 2",
+            "    level: 3",
+            "  - min_score: 3",
+            "    level: 4",
+            "  - min_score: 4",
+            "    level: 5",
+            "",
+        ]
+    )
+    path.write_text(text, encoding="utf-8")
+
+
+def _write_risk_rules_config_intermediate_thresholds(path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    text = "\n".join(
+        [
+            "schema_version: 1",
+            "",
+            "factors:",
+            "  - id: snowfall",
+            "    weight: 1.0",
+            "    direction: ascending",
+            "    thresholds:",
+            "      - threshold: 0",
+            "        score: 0",
+            "      - threshold: 5",
+            "        score: 1",
+            "      - threshold: 10",
+            "        score: 2",
+            "",
+            "  - id: snow_depth",
+            "    weight: 1.0",
+            "    direction: ascending",
+            "    thresholds:",
+            "      - threshold: 0",
+            "        score: 0",
+            "",
+            "  - id: wind",
+            "    weight: 1.0",
+            "    direction: ascending",
+            "    thresholds:",
+            "      - threshold: 0",
+            "        score: 0",
+            "",
+            "  - id: temp",
+            "    weight: 1.0",
+            "    direction: descending",
+            "    thresholds:",
+            "      - threshold: 5",
+            "        score: 0",
+            "      - threshold: 0",
+            "        score: 1",
+            "      - threshold: -10",
+            "        score: 2",
             "",
             "final_levels:",
             "  - min_score: 0",
@@ -260,9 +374,20 @@ def test_risk_engine_evaluates_pois_with_mock_weather(
     assert results[0].level == 5
     assert results[0].score == pytest.approx(4.0)
     assert len(results[0].factors) == 4
+    assert [item.factor_id for item in results[0].reasons] == [
+        RiskFactorId.snowfall,
+        RiskFactorId.snow_depth,
+        RiskFactorId.wind,
+        RiskFactorId.temp,
+    ]
+    assert results[0].reasons[0].factor_name == "Snowfall"
+    assert results[0].reasons[0].value == pytest.approx(10.0)
+    assert results[0].reasons[0].threshold == pytest.approx(10.0)
+    assert results[0].reasons[0].contribution == pytest.approx(1.0)
 
     assert results[1].level == 1
     assert results[1].score == pytest.approx(0.0)
+    assert results[1].reasons == ()
 
 
 def test_risk_engine_batches_sampling_for_1000_pois(
@@ -585,6 +710,110 @@ def test_risk_evaluate_endpoint_without_redis_returns_results_and_summary(
     assert len(payload["results"]) == 2
     assert [item["poi_id"] for item in payload["results"]] == [1, 2]
     assert all(len(item["factors"]) == 4 for item in payload["results"])
+    assert all("reasons" in item for item in payload["results"])
+    assert all(isinstance(item["reasons"], list) for item in payload["results"])
+
+
+def test_risk_evaluate_endpoint_uses_locale_in_cache_key_for_reasons(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    rules_path = tmp_path / "risk-rules.yaml"
+    _write_risk_rules_config_all_positive(rules_path)
+    monkeypatch.setenv("DIGITAL_EARTH_RISK_RULES_CONFIG", str(rules_path))
+
+    from risk_rules_config import get_risk_rules_payload
+
+    get_risk_rules_payload.cache_clear()
+    _db_url, product_id = _setup_db(monkeypatch, tmp_path)
+
+    redis = FakeRedis(use_real_time=False)
+    client = _make_risk_client(redis=redis)
+
+    en = client.post(
+        "/api/v1/risk/evaluate",
+        json={"product_id": product_id, "valid_time": "2024-01-01T00:00:00Z"},
+        headers={"Accept-Language": "en"},
+    )
+    assert en.status_code == 200
+    en_payload = en.json()
+    assert en_payload["summary"]["total"] == 2
+    assert en_payload["results"][0]["reasons"][0]["factor_id"] == "snowfall"
+    assert en_payload["results"][0]["reasons"][0]["factor_name"] == "Snowfall"
+
+    zh = client.post(
+        "/api/v1/risk/evaluate",
+        json={"product_id": product_id, "valid_time": "2024-01-01T00:00:00Z"},
+        headers={"Accept-Language": "zh-CN"},
+    )
+    assert zh.status_code == 200
+    zh_payload = zh.json()
+    assert zh_payload["summary"]["total"] == 2
+    assert zh_payload["results"][0]["reasons"][0]["factor_id"] == "snowfall"
+    assert zh_payload["results"][0]["reasons"][0]["factor_name"] == "降雪量"
+
+
+def test_risk_engine_reasons_select_intermediate_threshold_and_supports_zh_cn(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    rules_path = tmp_path / "risk-rules.yaml"
+    _write_risk_rules_config_intermediate_thresholds(rules_path)
+    monkeypatch.setenv("DIGITAL_EARTH_RISK_RULES_CONFIG", str(rules_path))
+
+    from risk_rules_config import get_risk_rules_payload
+
+    get_risk_rules_payload.cache_clear()
+    _db_url, product_id = _setup_db(monkeypatch, tmp_path)
+
+    sampler = _StaticSampler(
+        {
+            1: {"snowfall": 7, "snow_depth": 0, "wind": 0, "temp": -5},
+            2: {"snowfall": 0, "snow_depth": 0, "wind": 0, "temp": 5},
+        }
+    )
+    engine = RiskEvaluationEngine(sampler=sampler, batch_size=2)
+
+    results = engine.evaluate_pois(
+        product_id=product_id,
+        valid_time=datetime(2024, 1, 1, tzinfo=timezone.utc),
+        bbox=None,
+        locale="zh-CN",
+    )
+    assert [item.poi_id for item in results] == [1, 2]
+    assert [item.factor_id for item in results[0].reasons] == [
+        RiskFactorId.snowfall,
+        RiskFactorId.temp,
+    ]
+    assert results[0].reasons[0].factor_name == "降雪量"
+    assert results[0].reasons[0].threshold == pytest.approx(5.0)
+    assert results[0].reasons[1].factor_name == "气温"
+    assert results[0].reasons[1].threshold == pytest.approx(0.0)
+
+
+def test_risk_engine_sqlalchemy_errors_are_wrapped_as_database_error(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    rules_path = tmp_path / "risk-rules.yaml"
+    _write_risk_rules_config(rules_path)
+    monkeypatch.setenv("DIGITAL_EARTH_RISK_RULES_CONFIG", str(rules_path))
+
+    from risk_rules_config import get_risk_rules_payload
+
+    get_risk_rules_payload.cache_clear()
+
+    import db as db_module
+
+    def _boom() -> None:
+        raise SQLAlchemyError("boom")
+
+    monkeypatch.setattr(db_module, "get_engine", _boom)
+
+    engine = RiskEvaluationEngine()
+    with pytest.raises(RiskEngineDatabaseError, match="Database unavailable"):
+        engine.evaluate_pois(
+            product_id=1,
+            valid_time=datetime(2024, 1, 1, tzinfo=timezone.utc),
+            bbox=(100.0, 10.0, 101.0, 11.0),
+        )
 
 
 def test_risk_evaluate_endpoint_with_redis_uses_cache_on_repeat_request(

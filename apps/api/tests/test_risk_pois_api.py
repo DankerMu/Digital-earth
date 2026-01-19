@@ -222,6 +222,21 @@ def test_risk_pois_cache_hit_skips_db_queries(
     assert cached.json() == first.json()
 
 
+def test_risk_pois_without_redis_returns_payload(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    db_url = f"sqlite+pysqlite:///{tmp_path / 'risk.db'}"
+    _seed_risk_pois(db_url)
+    client, _redis = _make_client(monkeypatch, tmp_path, db_url=db_url)
+    client.app.state.redis_client = None
+
+    response = client.get("/api/v1/risk/pois", params={"bbox": "109,34,112,36"})
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["total"] == 3
+    assert len(payload["items"]) == 3
+
+
 def test_risk_pois_if_none_match_returns_304(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
