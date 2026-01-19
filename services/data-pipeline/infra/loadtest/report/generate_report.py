@@ -314,7 +314,9 @@ def _recommendations(
         "scenario": scenario,
         "cache_control_suggestion": cache_control,
         "edge_rate_limit_rps_suggestion": edge_limit_rps,
-        "edge_rate_limit_burst_suggestion": (edge_limit_rps * 2 if edge_limit_rps else None),
+        "edge_rate_limit_burst_suggestion": (
+            edge_limit_rps * 2 if edge_limit_rps else None
+        ),
         "edge_per_ip_rps_suggestion": int(per_ip_rps),
         "edge_per_ip_burst_suggestion": int(per_ip_rps * 2),
         "origin_fetch_rps_estimate": origin_fetch_rps,
@@ -338,21 +340,21 @@ def _render_markdown(
 
     lines.append("## Summary")
     lines.append("")
-    lines.append(f"- duration: { _format_number(derived.duration_seconds) } s")
-    lines.append(f"- requests: { _format_number(derived.total_requests) }")
-    lines.append(f"- rps: { _format_number(derived.rps) }")
-    lines.append(f"- error_rate: { _format_percent(derived.error_rate) }")
+    lines.append(f"- duration: {_format_number(derived.duration_seconds)} s")
+    lines.append(f"- requests: {_format_number(derived.total_requests)}")
+    lines.append(f"- rps: {_format_number(derived.rps)}")
+    lines.append(f"- error_rate: {_format_percent(derived.error_rate)}")
     lines.append(
-        f"- latency: avg { _format_ms(derived.latency_avg_ms) }, p95 { _format_ms(derived.latency_p95_ms) }, p99 { _format_ms(derived.latency_p99_ms) }"
+        f"- latency: avg {_format_ms(derived.latency_avg_ms)}, p95 {_format_ms(derived.latency_p95_ms)}, p99 {_format_ms(derived.latency_p99_ms)}"
     )
     lines.append(
-        f"- cdn hit rate: { _format_percent(derived.cdn_hit_rate) } (unknown: { _format_number(derived.cdn_unknown) })"
+        f"- cdn hit rate: {_format_percent(derived.cdn_hit_rate)} (unknown: {_format_number(derived.cdn_unknown)})"
     )
     lines.append(
-        f"- bandwidth: client { _format_mbps(derived.bandwidth_client_bytes_per_s) }, origin(est) { _format_mbps(derived.bandwidth_origin_bytes_per_s) }"
+        f"- bandwidth: client {_format_mbps(derived.bandwidth_client_bytes_per_s)}, origin(est) {_format_mbps(derived.bandwidth_origin_bytes_per_s)}"
     )
     lines.append(
-        f"- origin bandwidth conservative(est): { _format_mbps(derived.bandwidth_origin_conservative_bytes_per_s) }"
+        f"- origin bandwidth conservative(est): {_format_mbps(derived.bandwidth_origin_conservative_bytes_per_s)}"
     )
     lines.append("")
 
@@ -363,7 +365,9 @@ def _render_markdown(
         for n in notes:
             lines.append(f"- {n}")
     else:
-        lines.append("- No issues detected by heuristics; verify with monitoring (CDN dashboards + origin metrics).")
+        lines.append(
+            "- No issues detected by heuristics; verify with monitoring (CDN dashboards + origin metrics)."
+        )
     lines.append("")
 
     lines.append("## Suggested Params")
@@ -381,7 +385,9 @@ def _render_markdown(
     return "\n".join(lines)
 
 
-def _render_html(meta: dict[str, Any], derived: DerivedMetrics, recs: dict[str, Any]) -> str:
+def _render_html(
+    meta: dict[str, Any], derived: DerivedMetrics, recs: dict[str, Any]
+) -> str:
     def esc(x: Any) -> str:
         return html.escape("" if x is None else str(x))
 
@@ -411,10 +417,7 @@ def _render_html(meta: dict[str, Any], derived: DerivedMetrics, recs: dict[str, 
 
     params = recs.get("suggested_params") or {}
     params_rows = "".join(
-        "<tr>"
-        f"<td><code>{esc(k)}</code></td>"
-        f"<td><code>{esc(v)}</code></td>"
-        "</tr>"
+        f"<tr><td><code>{esc(k)}</code></td><td><code>{esc(v)}</code></td></tr>"
         for k, v in params.items()
         if v is not None
     )
@@ -471,9 +474,15 @@ def _build_parser() -> argparse.ArgumentParser:
         prog="python infra/loadtest/report/generate_report.py",
         description="Generate JSON/HTML/Markdown report from k6 --summary-export output.",
     )
-    parser.add_argument("--summary", required=True, help="Path to k6 summary-export JSON.")
-    parser.add_argument("--config", required=True, help="Path to load test env config JSON.")
-    parser.add_argument("--scenario", required=True, help="Scenario name (ramp|sustained|spike).")
+    parser.add_argument(
+        "--summary", required=True, help="Path to k6 summary-export JSON."
+    )
+    parser.add_argument(
+        "--config", required=True, help="Path to load test env config JSON."
+    )
+    parser.add_argument(
+        "--scenario", required=True, help="Scenario name (ramp|sustained|spike)."
+    )
     parser.add_argument("--out-dir", required=True, help="Output directory.")
     parser.add_argument("--run-id", default=None, help="Optional run identifier.")
     return parser
