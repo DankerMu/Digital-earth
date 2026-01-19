@@ -264,3 +264,20 @@ def test_edit_endpoints_are_rate_limited() -> None:
 
     clock.now += 60_001
     assert client.post("/api/v1/vector/prewarm", headers=headers).status_code == 200
+
+
+def test_token_protected_edit_endpoints_are_rate_limited() -> None:
+    clock = Clock(now=1_000_000)
+    app = _make_app(
+        permissions=EditorPermissionsConfig(enabled=False, token="secret"),
+        rate_limit_enabled=True,
+        clock=clock,
+        requests_per_minute=1,
+    )
+    client = TestClient(app, client=("127.0.0.1", 12345))
+    headers = {"X-Forwarded-For": "203.0.113.10", "Authorization": "Bearer wrong"}
+
+    assert client.post("/api/v1/vector/prewarm", headers=headers).status_code == 403
+    blocked = client.post("/api/v1/vector/prewarm", headers=headers)
+    assert blocked.status_code == 429
+    assert blocked.headers["Retry-After"] == "60"

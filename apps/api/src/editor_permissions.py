@@ -234,36 +234,20 @@ class EditorPermissionsMiddleware:
             return
 
         headers = Headers(scope=scope)
-        if not self.permissions.enabled:
-            expected = self.permissions.token
-            if expected is None:
-                response = JSONResponse(
-                    status_code=403,
-                    content=_error_payload(status_code=403, message="Forbidden"),
-                )
-                await response(scope, receive, send)
-                return
+        should_rate_limit = self.rate_limit_enabled and (
+            self.permissions.enabled or self.permissions.token is not None
+        )
+        if should_rate_limit:
+            socket_ip = _client_ip_from_scope(scope)
+            client_ip = socket_ip
 
-            provided = _extract_token(headers)
-            if provided is None or not secrets.compare_digest(provided, expected):
-                response = JSONResponse(
-                    status_code=403,
-                    content=_error_payload(status_code=403, message="Forbidden"),
-                )
-                await response(scope, receive, send)
-                return
+            if self.trust_proxy_headers and _ip_in_networks(
+                socket_ip, self.trusted_proxies
+            ):
+                forwarded_ip = _client_ip_from_headers(headers)
+                if forwarded_ip is not None:
+                    client_ip = forwarded_ip
 
-        socket_ip = _client_ip_from_scope(scope)
-        client_ip = socket_ip
-
-        if self.trust_proxy_headers and _ip_in_networks(
-            socket_ip, self.trusted_proxies
-        ):
-            forwarded_ip = _client_ip_from_headers(headers)
-            if forwarded_ip is not None:
-                client_ip = forwarded_ip
-
-        if self.rate_limit_enabled:
             bucket = (
                 f"edit:{matched_prefix.strip('/').replace('/', ':') or 'root'}:"
                 f"{method.lower()}"
@@ -293,6 +277,25 @@ class EditorPermissionsMiddleware:
                         status_code=429, message="Too Many Requests"
                     ),
                     headers={"Retry-After": str(retry_after)},
+                )
+                await response(scope, receive, send)
+                return
+
+        if not self.permissions.enabled:
+            expected = self.permissions.token
+            if expected is None:
+                response = JSONResponse(
+                    status_code=403,
+                    content=_error_payload(status_code=403, message="Forbidden"),
+                )
+                await response(scope, receive, send)
+                return
+
+            provided = _extract_token(headers)
+            if provided is None or not secrets.compare_digest(provided, expected):
+                response = JSONResponse(
+                    status_code=403,
+                    content=_error_payload(status_code=403, message="Forbidden"),
                 )
                 await response(scope, receive, send)
                 return
