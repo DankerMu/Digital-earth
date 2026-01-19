@@ -439,7 +439,7 @@ def _render_html(meta: dict[str, Any], derived: DerivedMetrics, recs: dict[str, 
             "</style>",
             "</head>",
             "<body>",
-            f"<h1>Load Test Report</h1>",
+            "<h1>Load Test Report</h1>",
             f"<p><code>{esc(meta.get('run_id'))}</code></p>",
             '<div class="summary">',
             *[
