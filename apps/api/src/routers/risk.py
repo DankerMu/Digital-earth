@@ -294,9 +294,7 @@ def _query_risk_poi_points(
             status_code=503, detail="Risk POI database unavailable"
         ) from exc
 
-    return [
-        (int(poi_id), float(lon), float(lat)) for poi_id, lon, lat in rows
-    ]
+    return [(int(poi_id), float(lon), float(lat)) for poi_id, lon, lat in rows]
 
 
 def _mercator_normalized(lon: float, lat: float) -> tuple[float, float]:
