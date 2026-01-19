@@ -108,6 +108,20 @@ def test_wind_derivation_requires_matching_coordinates() -> None:
         derive_wind_speed(u, v)
 
 
+def test_wind_dir_derivation_requires_matching_coordinates() -> None:
+    from processing.wind import WindDerivationError, derive_wind_dir
+
+    u = xr.DataArray(
+        np.array([1.0, 2.0], dtype=np.float32), dims=["x"], coords={"x": [0, 1]}
+    )
+    v = xr.DataArray(
+        np.array([1.0, 2.0], dtype=np.float32), dims=["x"], coords={"x": [0, 2]}
+    )
+
+    with pytest.raises(WindDerivationError, match="identical coordinates"):
+        derive_wind_dir(u, v)
+
+
 def test_derive_wind_speed_omits_units_when_components_units_differ() -> None:
     from processing.wind import derive_wind_speed
 

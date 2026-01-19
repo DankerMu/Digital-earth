@@ -114,6 +114,24 @@ def test_precipitation_amount_from_accumulation_rejects_unknown_time_dim() -> No
         precipitation_amount_from_accumulation(da)
 
 
+def test_precipitation_amount_from_accumulation_rejects_missing_explicit_time_dim() -> (
+    None
+):
+    from datacube.precipitation import precipitation_amount_from_accumulation
+
+    ds = _tp_dataset(
+        times=[
+            "2026-01-01T00:00:00",
+            "2026-01-01T03:00:00",
+        ],
+        tp_mm=[0.0, 1.0],
+        dim="time",
+    )
+
+    with pytest.raises(ValueError, match="missing time_dim"):
+        precipitation_amount_from_accumulation(ds["tp"], time_dim="valid_time")
+
+
 def test_precipitation_amount_from_accumulation_handles_empty_time_axis() -> None:
     from datacube.precipitation import precipitation_amount_from_accumulation
 
@@ -130,6 +148,26 @@ def test_precipitation_amount_from_accumulation_handles_empty_time_axis() -> Non
     out = precipitation_amount_from_accumulation(da)
     assert out.dtype == np.float32
     assert out.sizes["time"] == 0
+
+
+def test_precipitation_amount_from_accumulation_propagates_missing_values() -> None:
+    from datacube.precipitation import precipitation_amount_from_accumulation
+
+    ds = _tp_dataset(
+        times=[
+            "2026-01-01T00:00:00",
+            "2026-01-01T03:00:00",
+            "2026-01-01T06:00:00",
+        ],
+        tp_mm=[0.0, float("nan"), 2.0],
+    )
+
+    out = precipitation_amount_from_accumulation(ds["tp"])
+    assert out.dtype == np.float32
+    assert out.attrs.get("units") == "mm"
+    assert out.values[0, 0, 0] == pytest.approx(0.0)
+    assert np.isnan(out.values[1, 0, 0])
+    assert np.isnan(out.values[2, 0, 0])
 
 
 def test_add_precipitation_amount_from_tp_is_noop_without_tp() -> None:

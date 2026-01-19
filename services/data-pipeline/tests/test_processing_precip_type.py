@@ -88,6 +88,30 @@ def test_derive_precip_type_supports_time_lat_lon_and_unit_inference() -> None:
     assert out.values[0, 0, 0] == pytest.approx(1.0)  # snow
 
 
+def test_derive_precip_type_converts_kelvin_units_to_celsius() -> None:
+    from processing.precip_type import derive_precip_type
+
+    ds = xr.Dataset(
+        {
+            "air_temperature": xr.DataArray(
+                np.array([[[272.15, 274.15]]], dtype=np.float32),  # -1°C, +1°C
+                dims=["time", "lat", "lon"],
+                attrs={"units": "K"},
+            )
+        },
+        coords={
+            "time": np.array(["2026-01-01T00:00:00"], dtype="datetime64[s]"),
+            "lat": np.array([10.0], dtype=np.float32),
+            "lon": np.array([100.0, 101.0], dtype=np.float32),
+        },
+    )
+
+    out = derive_precip_type(ds, temp_threshold_c=0.0)
+    assert out is not None
+    assert out.values[0, 0, 0] == pytest.approx(1.0)  # -1°C => snow
+    assert out.values[0, 0, 1] == pytest.approx(0.0)  # +1°C => rain
+
+
 def test_derive_precip_type_returns_none_for_missing_required_dims() -> None:
     from processing.precip_type import derive_precip_type
 
