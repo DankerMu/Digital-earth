@@ -16,6 +16,8 @@ vi.mock('cesium', () => {
     removeEventListener: vi.fn()
   };
 
+  const baseLayer = { baseLayer: true };
+
   const viewer = {
     camera,
     homeButton: {
@@ -25,9 +27,15 @@ vi.mock('cesium', () => {
         }
       }
     },
+    imageryLayers: {
+      get: vi.fn(() => baseLayer),
+      remove: vi.fn(),
+      addImageryProvider: vi.fn(() => baseLayer)
+    },
     scene: {
       requestRenderMode: false,
       maximumRenderTimeChange: 0,
+      requestRender: vi.fn(),
       screenSpaceCameraController: {
         minimumZoomDistance: 0,
         maximumZoomDistance: 0
@@ -51,7 +59,9 @@ vi.mock('cesium', () => {
       fromDegrees: vi.fn(() => ({ destination: true })),
       clone: vi.fn((value: unknown) => ({ ...(value as Record<string, unknown>), cloned: true }))
     },
-    OpenStreetMapImageryProvider: vi.fn(),
+    WebMapTileServiceImageryProvider: vi.fn(),
+    UrlTemplateImageryProvider: vi.fn(),
+    WebMercatorTilingScheme: vi.fn(),
     Math: {
       toDegrees: vi.fn((radians: number) => radians)
     }
@@ -59,11 +69,15 @@ vi.mock('cesium', () => {
 });
 
 import { Viewer } from 'cesium';
+import { DEFAULT_BASEMAP_ID } from '../../config/basemaps';
+import { useBasemapStore } from '../../state/basemap';
 import { CesiumViewer } from './CesiumViewer';
 
 describe('CesiumViewer', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    localStorage.removeItem('digital-earth.basemap');
+    useBasemapStore.setState({ basemapId: DEFAULT_BASEMAP_ID });
   });
 
   it('initializes and destroys Cesium Viewer', async () => {
@@ -135,5 +149,28 @@ describe('CesiumViewer', () => {
         duration: 0.3
       })
     );
+  });
+
+  it('switches basemap when selector changes', async () => {
+    const user = userEvent.setup();
+    render(<CesiumViewer />);
+
+    await waitFor(() => expect(vi.mocked(Viewer)).toHaveBeenCalledTimes(1));
+
+    const viewer = vi.mocked(Viewer).mock.results[0].value;
+    const select = screen.getByRole('combobox', { name: '底图' });
+
+    await user.selectOptions(select, 'nasa-gibs-blue-marble');
+
+    await waitFor(() => {
+      expect(viewer.imageryLayers.addImageryProvider).toHaveBeenCalledTimes(1);
+    });
+
+    expect(viewer.imageryLayers.get).toHaveBeenCalledWith(0);
+    expect(viewer.imageryLayers.remove).toHaveBeenCalledWith(
+      expect.objectContaining({ baseLayer: true }),
+      true,
+    );
+    expect(viewer.scene.requestRender).toHaveBeenCalledTimes(1);
   });
 });
