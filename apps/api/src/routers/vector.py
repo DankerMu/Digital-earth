@@ -221,6 +221,7 @@ def _write_cached_file(path: Path, body: bytes) -> None:
     tmp_path.write_bytes(body)
     tmp_path.replace(path)
 
+
 def _get_or_compute_file_cached_bytes(
     *,
     fresh_path: Path,
@@ -666,6 +667,7 @@ async def prewarm_ecmwf_wind_vectors(
             return response.model_dump_json().encode("utf-8")
 
         if redis is None:
+
             def _sync_file_cache() -> WindVectorCacheStatus:
                 _body, file_status = _get_or_compute_file_cached_bytes(
                     fresh_path=fresh_path,
