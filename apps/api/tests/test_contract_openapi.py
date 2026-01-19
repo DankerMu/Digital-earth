@@ -182,8 +182,11 @@ def test_contract_key_fields_exist(
         ),
     )
     assert products["type"] == "object"
+    assert set(products["properties"]) >= {"page", "page_size", "total", "items"}
     assert products["properties"]["items"]["type"] == "array"
-    assert products["properties"]["items"]["items"]["$ref"].endswith("/ProductResponse")
+    assert products["properties"]["items"]["items"]["$ref"].endswith(
+        "/ProductSummaryResponse"
+    )
 
     # Risk
     pois = _resolve_schema(

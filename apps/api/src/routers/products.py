@@ -1,22 +1,34 @@
 from __future__ import annotations
 
+import hashlib
 import logging
 import math
+from asyncio import to_thread
 from datetime import datetime, timezone
 from typing import Any, Literal, Optional
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi.responses import Response
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import and_, desc, select
+from sqlalchemy import and_, desc, func, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, selectinload
 
+from catalog_cache import RedisLike, get_or_compute_cached_bytes
 import db
+from http_cache import if_none_match_matches
 from models import Product, ProductHazard
 
 logger = logging.getLogger("api.error")
 
 router = APIRouter(prefix="/products", tags=["products"])
+
+CACHE_CONTROL_HEADER = "public, max-age=60"
+CACHE_FRESH_TTL_SECONDS = 60
+CACHE_STALE_TTL_SECONDS = 60 * 60
+CACHE_LOCK_TTL_MS = 30_000
+CACHE_WAIT_TIMEOUT_MS = 200
+CACHE_COOLDOWN_TTL_SECONDS: tuple[int, int] = (5, 30)
 
 
 def _normalize_time(value: datetime) -> datetime:
@@ -97,126 +109,125 @@ class BBoxResponse(BaseModel):
     max_y: float
 
 
-class ProductHazardResponse(BaseModel):
+class ProductHazardSummaryResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    id: int
     severity: str
     geometry: Any
-    valid_from: datetime
-    valid_to: datetime
     bbox: BBoxResponse
 
 
-class ProductResponse(BaseModel):
+class ProductSummaryResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     id: int
     title: str
-    text: Optional[str] = None
-    issued_at: datetime
-    valid_from: datetime
-    valid_to: datetime
-    version: int
-    status: str
-    hazards: list[ProductHazardResponse] = Field(default_factory=list)
+    hazards: list[ProductHazardSummaryResponse] = Field(default_factory=list)
 
 
-class ProductsResponse(BaseModel):
+class ProductsQueryResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    items: list[ProductResponse] = Field(default_factory=list)
+    page: int
+    page_size: int
+    total: int
+    items: list[ProductSummaryResponse] = Field(default_factory=list)
 
 
-@router.get("", response_model=ProductsResponse)
-def list_products(
-    status: Optional[str] = Query(default="published"),
-    start: datetime | None = Query(default=None),
-    end: datetime | None = Query(default=None),
-    bbox: Optional[str] = Query(default=None),
-    limit: int = Query(default=50, ge=1, le=200),
-    offset: int = Query(default=0, ge=0),
-) -> ProductsResponse:
-    bbox_tuple = _parse_bbox(bbox)
+def _parse_types(value: str | None) -> list[str] | None:
+    if value is None:
+        return None
+    raw = value.strip()
+    if raw == "":
+        return None
+
+    parts = [part.strip() for part in raw.split(",")]
+    cleaned = sorted({part for part in parts if part})
+    return cleaned or None
+
+
+def _cache_time_key(value: datetime) -> str:
+    return _normalize_time(value).strftime("%Y%m%dT%H%M%SZ")
+
+
+def _query_product_summaries(
+    *,
+    status: str | None,
+    types: list[str] | None,
+    valid_time: datetime | None,
+    bbox: tuple[float, float, float, float] | None,
+    page: int,
+    page_size: int,
+) -> ProductsQueryResponse:
+    offset = (page - 1) * page_size
 
     stmt = (
         select(Product)
         .options(selectinload(Product.hazards))
         .order_by(desc(Product.issued_at))
     )
+    count_stmt = select(func.count()).select_from(Product)
+
     if status is not None:
         stmt = stmt.where(Product.status == status)
+        count_stmt = count_stmt.where(Product.status == status)
 
-    hazard_filter_enabled = (
-        start is not None or end is not None or bbox_tuple is not None
-    )
+    if types is not None:
+        stmt = stmt.where(Product.title.in_(types))
+        count_stmt = count_stmt.where(Product.title.in_(types))
+
+    hazard_filter_enabled = valid_time is not None or bbox is not None
+    hazard_clauses: list[object] = []
+
+    if valid_time is not None:
+        time_norm = _normalize_time(valid_time)
+        hazard_clauses.append(ProductHazard.valid_from <= time_norm)
+        hazard_clauses.append(ProductHazard.valid_to >= time_norm)
+
+    if bbox is not None:
+        bbox_min_x, bbox_min_y, bbox_max_x, bbox_max_y = bbox
+        hazard_clauses.append(ProductHazard.bbox_min_x <= bbox_max_x)
+        hazard_clauses.append(ProductHazard.bbox_max_x >= bbox_min_x)
+        hazard_clauses.append(ProductHazard.bbox_min_y <= bbox_max_y)
+        hazard_clauses.append(ProductHazard.bbox_max_y >= bbox_min_y)
+
     if hazard_filter_enabled:
-        hazard_clauses: list[object] = []
-
-        if start is not None or end is not None:
-            if start is None:
-                start_norm = _normalize_time(end)
-                end_norm = start_norm
-            elif end is None:
-                start_norm = _normalize_time(start)
-                end_norm = start_norm
-            else:
-                start_norm = _normalize_time(start)
-                end_norm = _normalize_time(end)
-
-            hazard_clauses.append(ProductHazard.valid_from <= end_norm)
-            hazard_clauses.append(ProductHazard.valid_to >= start_norm)
-
-        if bbox_tuple is not None:
-            bbox_min_x, bbox_min_y, bbox_max_x, bbox_max_y = bbox_tuple
-            hazard_clauses.append(ProductHazard.bbox_min_x <= bbox_max_x)
-            hazard_clauses.append(ProductHazard.bbox_max_x >= bbox_min_x)
-            hazard_clauses.append(ProductHazard.bbox_min_y <= bbox_max_y)
-            hazard_clauses.append(ProductHazard.bbox_max_y >= bbox_min_y)
-
         stmt = stmt.where(Product.hazards.any(and_(*hazard_clauses)))
+        count_stmt = count_stmt.where(Product.hazards.any(and_(*hazard_clauses)))
 
-    stmt = stmt.limit(limit).offset(offset)
+    stmt = stmt.limit(page_size).offset(offset)
 
     try:
         with Session(db.get_engine()) as session:
+            total = int(session.execute(count_stmt).scalar_one())
             products = session.execute(stmt).scalars().unique().all()
     except SQLAlchemyError as exc:
         logger.error("products_db_error", extra={"error": str(exc)})
         raise HTTPException(status_code=500, detail="Internal Server Error") from exc
 
-    items: list[ProductResponse] = []
+    items: list[ProductSummaryResponse] = []
     for product in products:
         hazards = [
             hazard
             for hazard in product.hazards
             if _hazard_matches_filters(
                 hazard,
-                start=start,
-                end=end,
-                bbox=bbox_tuple,
+                start=valid_time,
+                end=valid_time,
+                bbox=bbox,
             )
         ]
         if hazard_filter_enabled and not hazards:
             continue
 
         items.append(
-            ProductResponse(
+            ProductSummaryResponse(
                 id=product.id,
                 title=product.title,
-                text=product.text,
-                issued_at=_normalize_time(product.issued_at),
-                valid_from=_normalize_time(product.valid_from),
-                valid_to=_normalize_time(product.valid_to),
-                version=product.version,
-                status=product.status,
                 hazards=[
-                    ProductHazardResponse(
-                        id=hazard.id,
+                    ProductHazardSummaryResponse(
                         severity=hazard.severity,
                         geometry=hazard.geometry,
-                        valid_from=_normalize_time(hazard.valid_from),
-                        valid_to=_normalize_time(hazard.valid_to),
                         bbox=BBoxResponse(
                             min_x=hazard.bbox_min_x,
                             min_y=hazard.bbox_min_y,
@@ -229,7 +240,95 @@ def list_products(
             )
         )
 
-    return ProductsResponse(items=items)
+    return ProductsQueryResponse(
+        page=page,
+        page_size=page_size,
+        total=total,
+        items=items,
+    )
+
+
+@router.get("", response_model=ProductsQueryResponse)
+async def list_products(
+    request: Request,
+    status: Optional[str] = Query(default="published"),
+    type: str | None = Query(default=None, description="Filter by product title"),
+    valid_time: datetime | None = Query(default=None),
+    bbox: Optional[str] = Query(default=None),
+    page: int = Query(default=1, ge=1, le=1000),
+    page_size: int = Query(default=50, ge=1, le=200),
+) -> Response:
+    bbox_tuple = _parse_bbox(bbox)
+    types = _parse_types(type)
+
+    redis: RedisLike | None = getattr(request.app.state, "redis_client", None)
+
+    async def _compute() -> bytes:
+        def _sync() -> bytes:
+            payload = _query_product_summaries(
+                status=status,
+                types=types,
+                valid_time=valid_time,
+                bbox=bbox_tuple,
+                page=page,
+                page_size=page_size,
+            )
+            return payload.model_dump_json().encode("utf-8")
+
+        return await to_thread(_sync)
+
+    if redis is None:
+        body = await _compute()
+    else:
+        status_identity = status or "all"
+        type_identity = "all" if types is None else ",".join(types)
+        time_identity = "all" if valid_time is None else _cache_time_key(valid_time)
+        bbox_identity = (
+            "all"
+            if bbox_tuple is None
+            else ",".join(f"{value!r}" for value in bbox_tuple)
+        )
+        identity = (
+            f"status={status_identity}:type={type_identity}:time={time_identity}:"
+            f"bbox={bbox_identity}:page={page}:size={page_size}"
+        )
+        identity_hash = hashlib.sha256(identity.encode("utf-8")).hexdigest()
+
+        fresh_key = f"products:list:fresh:{identity_hash}"
+        stale_key = f"products:list:stale:{identity_hash}"
+        lock_key = f"products:list:lock:{identity_hash}"
+
+        try:
+            result = await get_or_compute_cached_bytes(
+                redis,
+                fresh_key=fresh_key,
+                stale_key=stale_key,
+                lock_key=lock_key,
+                fresh_ttl_seconds=CACHE_FRESH_TTL_SECONDS,
+                stale_ttl_seconds=CACHE_STALE_TTL_SECONDS,
+                lock_ttl_ms=CACHE_LOCK_TTL_MS,
+                wait_timeout_ms=CACHE_WAIT_TIMEOUT_MS,
+                compute=_compute,
+                cooldown_ttl_seconds=CACHE_COOLDOWN_TTL_SECONDS,
+            )
+            body = result.body
+        except TimeoutError as exc:
+            raise HTTPException(
+                status_code=503, detail="Products cache warming timed out"
+            ) from exc
+        except HTTPException:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("products_cache_unavailable", extra={"error": str(exc)})
+            body = await _compute()
+
+    etag = f'"sha256-{hashlib.sha256(body).hexdigest()}"'
+    headers = {"Cache-Control": CACHE_CONTROL_HEADER, "ETag": etag}
+
+    if if_none_match_matches(request.headers.get("if-none-match"), etag):
+        return Response(status_code=304, headers=headers)
+
+    return Response(content=body, media_type="application/json", headers=headers)
 
 
 GeoJSONFeatureType = Literal["Feature"]

@@ -663,7 +663,7 @@
         "title": "ProductHazardPropertiesResponse",
         "type": "object"
       },
-      "ProductHazardResponse": {
+      "ProductHazardSummaryResponse": {
         "additionalProperties": false,
         "properties": {
           "bbox": {
@@ -672,42 +672,25 @@
           "geometry": {
             "title": "Geometry"
           },
-          "id": {
-            "title": "Id",
-            "type": "integer"
-          },
           "severity": {
             "title": "Severity",
-            "type": "string"
-          },
-          "valid_from": {
-            "format": "date-time",
-            "title": "Valid From",
-            "type": "string"
-          },
-          "valid_to": {
-            "format": "date-time",
-            "title": "Valid To",
             "type": "string"
           }
         },
         "required": [
-          "id",
           "severity",
           "geometry",
-          "valid_from",
-          "valid_to",
           "bbox"
         ],
-        "title": "ProductHazardResponse",
+        "title": "ProductHazardSummaryResponse",
         "type": "object"
       },
-      "ProductResponse": {
+      "ProductSummaryResponse": {
         "additionalProperties": false,
         "properties": {
           "hazards": {
             "items": {
-              "$ref": "#/components/schemas/ProductHazardResponse"
+              "$ref": "#/components/schemas/ProductHazardSummaryResponse"
             },
             "title": "Hazards",
             "type": "array"
@@ -716,69 +699,47 @@
             "title": "Id",
             "type": "integer"
           },
-          "issued_at": {
-            "format": "date-time",
-            "title": "Issued At",
-            "type": "string"
-          },
-          "status": {
-            "title": "Status",
-            "type": "string"
-          },
-          "text": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Text"
-          },
           "title": {
             "title": "Title",
             "type": "string"
-          },
-          "valid_from": {
-            "format": "date-time",
-            "title": "Valid From",
-            "type": "string"
-          },
-          "valid_to": {
-            "format": "date-time",
-            "title": "Valid To",
-            "type": "string"
-          },
-          "version": {
-            "title": "Version",
-            "type": "integer"
           }
         },
         "required": [
           "id",
-          "title",
-          "issued_at",
-          "valid_from",
-          "valid_to",
-          "version",
-          "status"
+          "title"
         ],
-        "title": "ProductResponse",
+        "title": "ProductSummaryResponse",
         "type": "object"
       },
-      "ProductsResponse": {
+      "ProductsQueryResponse": {
         "additionalProperties": false,
         "properties": {
           "items": {
             "items": {
-              "$ref": "#/components/schemas/ProductResponse"
+              "$ref": "#/components/schemas/ProductSummaryResponse"
             },
             "title": "Items",
             "type": "array"
+          },
+          "page": {
+            "title": "Page",
+            "type": "integer"
+          },
+          "page_size": {
+            "title": "Page Size",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
           }
         },
-        "title": "ProductsResponse",
+        "required": [
+          "page",
+          "page_size",
+          "total"
+        ],
+        "title": "ProductsQueryResponse",
         "type": "object"
       },
       "RiskEvaluateRequest": {
@@ -2040,25 +2001,26 @@
             }
           },
           {
+            "description": "Filter by product title",
             "in": "query",
-            "name": "start",
+            "name": "type",
             "required": false,
             "schema": {
               "anyOf": [
                 {
-                  "format": "date-time",
                   "type": "string"
                 },
                 {
                   "type": "null"
                 }
               ],
-              "title": "Start"
+              "description": "Filter by product title",
+              "title": "Type"
             }
           },
           {
             "in": "query",
-            "name": "end",
+            "name": "valid_time",
             "required": false,
             "schema": {
               "anyOf": [
@@ -2070,7 +2032,7 @@
                   "type": "null"
                 }
               ],
-              "title": "End"
+              "title": "Valid Time"
             }
           },
           {
@@ -2091,24 +2053,25 @@
           },
           {
             "in": "query",
-            "name": "limit",
+            "name": "page",
             "required": false,
             "schema": {
-              "default": 50,
-              "maximum": 200,
+              "default": 1,
+              "maximum": 1000,
               "minimum": 1,
-              "title": "Limit",
+              "title": "Page",
               "type": "integer"
             }
           },
           {
             "in": "query",
-            "name": "offset",
+            "name": "page_size",
             "required": false,
             "schema": {
-              "default": 0,
-              "minimum": 0,
-              "title": "Offset",
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Page Size",
               "type": "integer"
             }
           }
@@ -2118,7 +2081,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ProductsResponse"
+                  "$ref": "#/components/schemas/ProductsQueryResponse"
                 }
               }
             },
