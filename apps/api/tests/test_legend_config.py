@@ -90,7 +90,9 @@ def test_legends_dir_defaults_to_repo_files(
 
 def test_get_legend_payload_cached_raises_for_missing_file(tmp_path: Path) -> None:
     with pytest.raises(FileNotFoundError):
-        get_legend_payload_cached("temperature", str(tmp_path / "missing.json"), 0, 0, 0)
+        get_legend_payload_cached(
+            "temperature", str(tmp_path / "missing.json"), 0, 0, 0
+        )
 
 
 def test_get_legend_config_payload_rejects_invalid_json(tmp_path: Path) -> None:
