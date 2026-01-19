@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 
+import ErrorBoundary from './components/ErrorBoundary';
 import { LegendPanel, type LayerSelection } from './features/legend/LegendPanel';
 import { SUPPORTED_LAYER_TYPES, type LayerType } from './features/legend/types';
 
@@ -12,7 +13,7 @@ function buildDefaultLayers(): LayerSelection[] {
   }));
 }
 
-export default function App() {
+function AppContent() {
   const [layers, setLayers] = useState<LayerSelection[]>(() => buildDefaultLayers());
 
   const visibleLayers = useMemo(
@@ -88,5 +89,12 @@ export default function App() {
         <LegendPanel layers={layers} />
       </div>
     </div>
+  );
+}
+export default function App() {
+  return (
+    <ErrorBoundary>
+      <AppContent />
+    </ErrorBoundary>
   );
 }
