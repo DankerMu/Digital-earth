@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-import time
+import os
 from pathlib import Path
 
 import pytest
@@ -228,16 +228,20 @@ def test_legends_cache_invalidation_on_update(
     first = client.get("/api/v1/legends?layer_type=wind")
     assert first.status_code == 200
     first_etag = first.headers["etag"]
+    original_stat = legend_path.stat()
 
-    time.sleep(0.01)
     _write_legend(
         legend_path,
-        colors=["#FF0000", "#00FF00", "#0000FF"],
-        thresholds=[0, 5, 10],
-        labels=["0", "5", "10"],
+        colors=["#111111", "#222222"],
+        thresholds=[0, 11],
+        labels=["0", "11"],
     )
+    os.utime(legend_path, ns=(original_stat.st_atime_ns, original_stat.st_mtime_ns))
+    updated_stat = legend_path.stat()
+    assert updated_stat.st_mtime_ns == original_stat.st_mtime_ns
+    assert updated_stat.st_size == original_stat.st_size
 
     second = client.get("/api/v1/legends?layer_type=wind")
     assert second.status_code == 200
     assert second.headers["etag"] != first_etag
-    assert second.json()["colors"] == ["#FF0000", "#00FF00", "#0000FF"]
+    assert second.json()["colors"] == ["#111111", "#222222"]

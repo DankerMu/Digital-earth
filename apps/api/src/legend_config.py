@@ -101,7 +101,7 @@ def _legend_path(legends_dir: Path, layer_type: str) -> Path:
 
 @lru_cache(maxsize=32)
 def _get_legend_payload_cached(
-    layer_type: str, path: str, mtime_ns: int, size: int
+    layer_type: str, path: str, mtime_ns: int, ctime_ns: int, size: int
 ) -> LegendConfigPayload:
     config_path = Path(path)
     if not config_path.is_file():
@@ -137,7 +137,7 @@ def get_legend_config_payload(
     config_path = _legend_path(resolved_dir, normalized)
     stat = config_path.stat()
     return _get_legend_payload_cached(
-        normalized, str(config_path), stat.st_mtime_ns, stat.st_size
+        normalized, str(config_path), stat.st_mtime_ns, stat.st_ctime_ns, stat.st_size
     )
 
 
