@@ -1,7 +1,9 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import { expect, it, vi } from 'vitest';
 
-import App from './App';
+vi.mock('./features/viewer/CesiumViewer', () => ({
+  CesiumViewer: () => null,
+}));
 
 function jsonResponse(payload: unknown) {
   return new Response(JSON.stringify(payload), {
@@ -38,6 +40,7 @@ it('switches primary layer and updates legend', async () => {
 
   vi.stubGlobal('fetch', fetchMock);
 
+  const { default: App } = await import('./App');
   render(<App />);
 
   expect(await screen.findByText('温度')).toBeInTheDocument();
