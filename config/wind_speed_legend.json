@@ -1,0 +1,16 @@
+{
+  "title": "风速",
+  "unit": "m/s",
+  "type": "gradient",
+  "stops": [
+    { "value": 0, "color": "#ECFEFF", "label": "0" },
+    { "value": 5, "color": "#A5F3FC", "label": "5" },
+    { "value": 10, "color": "#22D3EE", "label": "10" },
+    { "value": 15, "color": "#0EA5E9", "label": "15" },
+    { "value": 20, "color": "#2563EB", "label": "20" },
+    { "value": 30, "color": "#1E3A8A", "label": "30" },
+    { "value": 40, "color": "#312E81", "label": "40" },
+    { "value": 50, "color": "#4C1D95", "label": "50" }
+  ]
+}
+
