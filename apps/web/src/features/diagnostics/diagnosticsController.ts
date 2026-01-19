@@ -42,6 +42,7 @@ export function createDiagnosticsController(): DiagnosticsController {
   let originalXhrOpen: typeof XMLHttpRequest.prototype.open | null = null;
   let originalXhrSend: typeof XMLHttpRequest.prototype.send | null = null;
   let perfObserver: PerformanceObserver | null = null;
+  let hasSeededResourceCacheHits = false;
 
   let fpsFrames = 0;
   let fpsLastTime = 0;
@@ -238,8 +239,46 @@ export function createDiagnosticsController(): DiagnosticsController {
     });
   }
 
+  function seedResourceCacheHitsFromPerformance() {
+    if (hasSeededResourceCacheHits) return;
+    hasSeededResourceCacheHits = true;
+
+    if (typeof performance.getEntriesByType !== 'function') return;
+
+    try {
+      const entries = performance.getEntriesByType('resource');
+      let cacheHits = 0;
+      let tileCacheHits = 0;
+
+      for (const entry of entries) {
+        if (entry.entryType !== 'resource') continue;
+        const resource = entry as PerformanceResourceTiming;
+        if (!isTileUrl(resource.name)) continue;
+        const isHit =
+          resource.transferSize === 0 &&
+          (resource.encodedBodySize > 0 || resource.decodedBodySize > 0);
+        if (!isHit) continue;
+        cacheHits += 1;
+        tileCacheHits += 1;
+      }
+
+      if (cacheHits === 0) return;
+
+      setSnapshot((prev) => {
+        const next = { ...prev.requests };
+        next.cacheHits += cacheHits;
+        next.tileCacheHits += tileCacheHits;
+        return buildSnapshot({ ...prev, requests: next });
+      });
+    } catch {
+      // ignore
+    }
+  }
+
   function startRequestTracking() {
     if (originalFetch || originalXhrOpen || originalXhrSend) return;
+
+    seedResourceCacheHitsFromPerformance();
 
     originalFetch = globalThis.fetch;
     globalThis.fetch = async (input, init) => {
@@ -340,7 +379,7 @@ export function createDiagnosticsController(): DiagnosticsController {
             if (isHit) bumpCacheHit(resource.name);
           }
         });
-        perfObserver.observe({ type: 'resource', buffered: true });
+        perfObserver.observe({ type: 'resource', buffered: false });
       } catch {
         perfObserver = null;
       }

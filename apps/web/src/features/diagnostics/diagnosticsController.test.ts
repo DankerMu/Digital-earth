@@ -6,6 +6,8 @@ describe('diagnosticsController', () => {
   const originalXhr = globalThis.XMLHttpRequest;
   const originalRaf = globalThis.requestAnimationFrame;
   const originalCaf = globalThis.cancelAnimationFrame;
+  const originalPerfObserver = (globalThis as unknown as { PerformanceObserver?: unknown })
+    .PerformanceObserver;
 
   beforeEach(() => {
     localStorage.clear();
@@ -16,6 +18,8 @@ describe('diagnosticsController', () => {
     globalThis.XMLHttpRequest = originalXhr;
     globalThis.requestAnimationFrame = originalRaf;
     globalThis.cancelAnimationFrame = originalCaf;
+    (globalThis as unknown as { PerformanceObserver?: unknown }).PerformanceObserver =
+      originalPerfObserver;
     vi.restoreAllMocks();
   });
 
@@ -80,6 +84,87 @@ describe('diagnosticsController', () => {
     const afterError = controller.getSnapshot();
     expect(afterError.errorsTotal).toBe(1);
     expect(afterError.errorLogs.at(-1)?.message).toBe('boom');
+
+    controller.setEnabled(false);
+  });
+
+  it('avoids double-counting cache hits when re-enabled', () => {
+    globalThis.requestAnimationFrame = () => 1;
+    globalThis.cancelAnimationFrame = vi.fn();
+
+    globalThis.fetch = vi.fn(async () => new Response('ok', { status: 200 }));
+
+    const seededResource = {
+      entryType: 'resource',
+      name: 'https://example.com/tiles/1/2/3.png',
+      transferSize: 0,
+      encodedBodySize: 10,
+      decodedBodySize: 10
+    } as unknown as PerformanceResourceTiming;
+
+    Object.defineProperty(performance, 'getEntriesByType', {
+      value: vi.fn(() => [seededResource]),
+      configurable: true
+    });
+
+    class FakePerformanceObserver {
+      static instances: FakePerformanceObserver[] = [];
+      private readonly cb: (list: { getEntries: () => PerformanceEntry[] }) => void;
+      observeArgs: PerformanceObserverInit | null = null;
+
+      constructor(cb: (list: { getEntries: () => PerformanceEntry[] }) => void) {
+        this.cb = cb;
+        FakePerformanceObserver.instances.push(this);
+      }
+
+      observe(args: PerformanceObserverInit) {
+        this.observeArgs = args;
+      }
+
+      disconnect() {
+        // noop
+      }
+
+      trigger(entries: PerformanceEntry[]) {
+        this.cb({ getEntries: () => entries });
+      }
+    }
+
+    (globalThis as unknown as { PerformanceObserver: unknown }).PerformanceObserver =
+      FakePerformanceObserver as unknown as PerformanceObserver;
+
+    const controller = createDiagnosticsController();
+
+    controller.setEnabled(true);
+    expect(performance.getEntriesByType).toHaveBeenCalledTimes(1);
+    expect(controller.getSnapshot().requests.cacheHits).toBe(1);
+    expect(controller.getSnapshot().requests.tileCacheHits).toBe(1);
+    expect(FakePerformanceObserver.instances.at(-1)?.observeArgs).toMatchObject({
+      type: 'resource',
+      buffered: false
+    });
+
+    controller.setEnabled(false);
+    controller.setEnabled(true);
+
+    expect(performance.getEntriesByType).toHaveBeenCalledTimes(1);
+    expect(controller.getSnapshot().requests.cacheHits).toBe(1);
+    expect(controller.getSnapshot().requests.tileCacheHits).toBe(1);
+
+    FakePerformanceObserver.instances
+      .at(-1)
+      ?.trigger([
+        {
+          entryType: 'resource',
+          name: 'https://example.com/tiles/4/5/6.png',
+          transferSize: 0,
+          encodedBodySize: 10,
+          decodedBodySize: 10
+        } as unknown as PerformanceResourceTiming
+      ]);
+
+    expect(controller.getSnapshot().requests.cacheHits).toBe(2);
+    expect(controller.getSnapshot().requests.tileCacheHits).toBe(2);
 
     controller.setEnabled(false);
   });
