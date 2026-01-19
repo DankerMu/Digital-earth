@@ -194,7 +194,11 @@ def _legend_extreme_colors(
             continue
         if not isinstance(color, str):
             continue
-        stops.append((float(value), _parse_hex_rgb(color)))
+        try:
+            parsed_color = _parse_hex_rgb(color)
+        except ValueError:
+            continue
+        stops.append((float(value), parsed_color))
 
     if len(stops) < 2:
         return None
@@ -652,7 +656,11 @@ def _legend_preview_base64(
             continue
         if not isinstance(color, str):
             continue
-        stops.append((float(value), _parse_hex_rgb(color)))
+        try:
+            parsed_color = _parse_hex_rgb(color)
+        except ValueError:
+            continue
+        stops.append((float(value), parsed_color))
     if len(stops) < 2:
         return None
     stops.sort(key=lambda item: item[0])
@@ -671,9 +679,12 @@ def _legend_preview_base64(
     row = np.clip(np.rint(rgb), 0, 255).astype(np.uint8)
     img_arr = np.tile(row[None, :, :], (int(height), 1, 1))
     img = Image.fromarray(img_arr, mode="RGB")
-    buf = io.BytesIO()
-    img.save(buf, format="PNG", optimize=True)
-    return base64.b64encode(buf.getvalue()).decode("ascii")
+    try:
+        buf = io.BytesIO()
+        img.save(buf, format="PNG", optimize=True)
+        return base64.b64encode(buf.getvalue()).decode("ascii")
+    finally:
+        img.close()
 
 
 def render_html_report(report: ValidationReport) -> str:
