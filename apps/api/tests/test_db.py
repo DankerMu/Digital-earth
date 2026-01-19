@@ -16,7 +16,9 @@ def test_get_engine_falls_back_to_settings_when_database_url_missing(
     monkeypatch.setattr(
         db_module,
         "get_settings",
-        lambda: SimpleNamespace(database=SimpleNamespace(dsn="sqlite+pysqlite:///:memory:")),
+        lambda: SimpleNamespace(
+            database=SimpleNamespace(dsn="sqlite+pysqlite:///:memory:")
+        ),
     )
 
     engine = db_module.get_engine()

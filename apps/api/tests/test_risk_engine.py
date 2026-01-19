@@ -900,7 +900,9 @@ def test_risk_engine_parallel_results_match_serial_for_large_batches(
 
     valid_time = datetime(2024, 1, 1, tzinfo=timezone.utc)
 
-    parallel_engine = RiskEvaluationEngine(batch_size=1024, max_workers=4, parallel=True)
+    parallel_engine = RiskEvaluationEngine(
+        batch_size=1024, max_workers=4, parallel=True
+    )
     serial_engine = RiskEvaluationEngine(batch_size=1024, max_workers=1, parallel=False)
 
     parallel_results = parallel_engine.evaluate_pois(
@@ -956,7 +958,9 @@ def test_risk_engine_uses_prepare_sampler_when_available(
             return _Prepared()
 
         def sample(self, *, product_id: int, valid_time: datetime, pois):  # type: ignore[no-untyped-def]
-            raise AssertionError("Sampler.sample should not be called when prepare exists")
+            raise AssertionError(
+                "Sampler.sample should not be called when prepare exists"
+            )
 
     sampler = _PrepareSampler()
     risk_engine = RiskEvaluationEngine(sampler=sampler, batch_size=1, max_workers=1)

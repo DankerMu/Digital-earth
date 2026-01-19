@@ -19,7 +19,9 @@ def test_resolve_max_workers_prefers_explicit_value() -> None:
     assert _resolve_max_workers(3) == 3
 
 
-def test_resolve_max_workers_supports_env_override(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_resolve_max_workers_supports_env_override(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setenv(MAX_WORKERS_ENV, "4")
     assert _resolve_max_workers(None) == 4
 
