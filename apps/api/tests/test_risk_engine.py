@@ -333,6 +333,11 @@ class _InvalidSampleSampler:
         return {int(poi.id): {"snowfall": 0.0} for poi in pois}
 
 
+class _SkipAllSampler:
+    def sample(self, *, product_id: int, valid_time: datetime, pois):  # type: ignore[no-untyped-def]
+        return {}
+
+
 def _make_risk_client(*, redis: FakeRedis | None = None) -> TestClient:
     from routers.risk import router as risk_router
 
@@ -572,6 +577,11 @@ def test_risk_engine_batch_size_must_be_positive(
         )
 
 
+def test_risk_engine_max_workers_must_be_positive() -> None:
+    with pytest.raises(RiskEngineInputError):
+        RiskEvaluationEngine(max_workers=0)
+
+
 def test_risk_engine_poi_ids_filters_results_and_handles_empty(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -607,7 +617,7 @@ def test_risk_engine_poi_ids_filters_results_and_handles_empty(
     assert empty == []
 
 
-def test_risk_engine_missing_weather_sample_raises_input_error(
+def test_risk_engine_missing_weather_sample_is_skipped(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     rules_path = tmp_path / "risk-rules.yaml"
@@ -620,12 +630,65 @@ def test_risk_engine_missing_weather_sample_raises_input_error(
     _db_url, product_id = _setup_db(monkeypatch, tmp_path)
 
     engine = RiskEvaluationEngine(sampler=_MissingSampleSampler(), batch_size=10)
-    with pytest.raises(RiskEngineInputError, match="Missing weather sample"):
-        engine.evaluate_pois(
-            product_id=product_id,
-            valid_time=datetime(2024, 1, 1, tzinfo=timezone.utc),
-            bbox=None,
-        )
+    results = engine.evaluate_pois(
+        product_id=product_id,
+        valid_time=datetime(2024, 1, 1, tzinfo=timezone.utc),
+        bbox=None,
+    )
+    assert [item.poi_id for item in results] == [1]
+
+
+def test_risk_engine_sampler_can_skip_all_pois(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    rules_path = tmp_path / "risk-rules.yaml"
+    _write_risk_rules_config(rules_path)
+    monkeypatch.setenv("DIGITAL_EARTH_RISK_RULES_CONFIG", str(rules_path))
+
+    from risk_rules_config import get_risk_rules_payload
+
+    get_risk_rules_payload.cache_clear()
+    _db_url, product_id = _setup_db(monkeypatch, tmp_path)
+
+    engine = RiskEvaluationEngine(sampler=_SkipAllSampler(), batch_size=10)
+    results = engine.evaluate_pois(
+        product_id=product_id,
+        valid_time=datetime(2024, 1, 1, tzinfo=timezone.utc),
+        bbox=None,
+    )
+    assert results == []
+
+
+def test_risk_engine_parallel_results_match_serial(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    rules_path = tmp_path / "risk-rules.yaml"
+    _write_risk_rules_config(rules_path)
+    monkeypatch.setenv("DIGITAL_EARTH_RISK_RULES_CONFIG", str(rules_path))
+
+    from risk_rules_config import get_risk_rules_payload
+
+    get_risk_rules_payload.cache_clear()
+    _db_url, product_id = _setup_db(monkeypatch, tmp_path)
+    valid_time = datetime(2024, 1, 1, tzinfo=timezone.utc)
+
+    serial_engine = RiskEvaluationEngine(batch_size=10, max_workers=1)
+    parallel_engine = RiskEvaluationEngine(batch_size=10, max_workers=4)
+
+    serial = serial_engine.evaluate_pois(
+        product_id=product_id,
+        valid_time=valid_time,
+        bbox=None,
+    )
+    parallel = parallel_engine.evaluate_pois(
+        product_id=product_id,
+        valid_time=valid_time,
+        bbox=None,
+    )
+
+    assert [item.model_dump() for item in parallel] == [
+        item.model_dump() for item in serial
+    ]
 
 
 def test_risk_engine_invalid_weather_payload_raises_input_error(
@@ -1011,6 +1074,7 @@ def _risk_evaluate_cache_digest(
     bbox: list[float] | None,
     poi_ids: list[int] | None,
     rules_etag: str,
+    reasons_locale: str = "en",
 ) -> str:
     if poi_ids is None:
         poi_identity: str | list[int] = "all"
@@ -1029,6 +1093,7 @@ def _risk_evaluate_cache_digest(
         "bbox": list(bbox) if bbox is not None else None,
         "poi_ids": poi_identity,
         "rules_etag": rules_etag,
+        "reasons_locale": reasons_locale,
     }
     identity = json.dumps(identity_payload, separators=(",", ":"), sort_keys=True)
     return hashlib.sha256(identity.encode("utf-8")).hexdigest()
