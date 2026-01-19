@@ -55,4 +55,3 @@ it('switches primary layer and updates legend', async () => {
     expect.any(Object),
   );
 });
-
