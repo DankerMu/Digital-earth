@@ -14,13 +14,20 @@ from sqlalchemy.orm import Session
 
 import db
 from models import Product, ProductHazard, RiskPOI
-from risk.rules import RiskFactorId, RiskFactorEvaluation, RiskRuleModel
+from risk.rules import (
+    RiskFactorEvaluation,
+    RiskFactorId,
+    RiskFactorRule,
+    RiskRuleModel,
+    ThresholdDirection,
+)
 from risk_rules_config import get_risk_rules_payload
 
 BBox = tuple[float, float, float, float]
 
 __all__ = [
     "BBox",
+    "POIRiskReason",
     "POIRiskResult",
     "RiskEngineDatabaseError",
     "RiskEngineInputError",
@@ -28,6 +35,67 @@ __all__ = [
     "RiskEvaluationEngine",
     "WeatherSampler",
 ]
+
+_FACTOR_NAME_TRANSLATIONS: dict[str, dict[RiskFactorId, str]] = {
+    "en": {
+        RiskFactorId.snowfall: "Snowfall",
+        RiskFactorId.snow_depth: "Snow depth",
+        RiskFactorId.wind: "Wind",
+        RiskFactorId.temp: "Temperature",
+    },
+    "zh": {
+        RiskFactorId.snowfall: "降雪量",
+        RiskFactorId.snow_depth: "积雪深度",
+        RiskFactorId.wind: "风速",
+        RiskFactorId.temp: "气温",
+    },
+}
+
+_DEFAULT_FACTOR_NAMES = _FACTOR_NAME_TRANSLATIONS["en"]
+
+
+def _factor_name(factor_id: RiskFactorId, *, locale: str | None) -> str:
+    language = (locale or "").strip().lower()
+    if language in _FACTOR_NAME_TRANSLATIONS:
+        return _FACTOR_NAME_TRANSLATIONS[language].get(
+            factor_id, _DEFAULT_FACTOR_NAMES.get(factor_id, factor_id.value)
+        )
+    if language.startswith("zh"):
+        return _FACTOR_NAME_TRANSLATIONS["zh"].get(
+            factor_id, _DEFAULT_FACTOR_NAMES.get(factor_id, factor_id.value)
+        )
+    return _DEFAULT_FACTOR_NAMES.get(factor_id, factor_id.value)
+
+
+def _selected_threshold(rule: RiskFactorRule, value: float) -> float:
+    numeric = float(value)
+    thresholds = rule.thresholds
+    selected = float(thresholds[0].threshold)
+
+    if rule.direction == ThresholdDirection.ascending:
+        for item in thresholds[1:]:
+            if numeric >= float(item.threshold):
+                selected = float(item.threshold)
+            else:
+                break
+    else:
+        for item in thresholds[1:]:
+            if numeric <= float(item.threshold):
+                selected = float(item.threshold)
+            else:
+                break
+
+    return selected
+
+
+class POIRiskReason(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    factor_id: RiskFactorId
+    factor_name: str
+    value: float
+    threshold: float
+    contribution: float
 
 
 class RiskEngineInputError(ValueError):
@@ -126,6 +194,7 @@ class POIRiskResult(BaseModel):
     level: int
     score: float
     factors: tuple[RiskFactorEvaluation, ...]
+    reasons: tuple[POIRiskReason, ...]
 
 
 class RiskEvaluationEngine:
@@ -145,6 +214,7 @@ class RiskEvaluationEngine:
         valid_time: datetime,
         bbox: BBox | None = None,
         poi_ids: Sequence[int] | None = None,
+        locale: str | None = None,
     ) -> list[POIRiskResult]:
         dt = _normalize_time(valid_time)
         requested_bbox = _validate_bbox(bbox) if bbox is not None else None
@@ -179,6 +249,7 @@ class RiskEvaluationEngine:
             valid_time=dt,
             pois=pois,
             batch_size=self._batch_size,
+            locale=locale,
         )
 
 
@@ -252,8 +323,15 @@ def _evaluate_pois(
     valid_time: datetime,
     pois: Sequence[RiskPOI],
     batch_size: int,
+    locale: str | None,
 ) -> list[POIRiskResult]:
     results: list[POIRiskResult] = []
+    rule_lookup: dict[RiskFactorId, RiskFactorRule] = {
+        factor.id: factor for factor in rules.factors
+    }
+    factor_order: dict[RiskFactorId, int] = {
+        factor_id: idx for idx, factor_id in enumerate(RiskFactorId)
+    }
 
     for batch in _chunked(list(pois), batch_size=batch_size):
         samples = sampler.sample(
@@ -267,12 +345,30 @@ def _evaluate_pois(
                 evaluation = rules.evaluate(raw_values)
             except ValueError as exc:
                 raise RiskEngineInputError(str(exc)) from exc
+            reasons = [
+                POIRiskReason(
+                    factor_id=factor.id,
+                    factor_name=_factor_name(factor.id, locale=locale),
+                    value=float(factor.value),
+                    threshold=_selected_threshold(rule_lookup[factor.id], factor.value),
+                    contribution=float(factor.contribution),
+                )
+                for factor in evaluation.factors
+                if float(factor.contribution) > 0.0
+            ]
+            reasons.sort(
+                key=lambda item: (
+                    -float(item.contribution),
+                    factor_order[item.factor_id],
+                )
+            )
             results.append(
                 POIRiskResult(
                     poi_id=int(poi.id),
                     level=int(evaluation.level),
                     score=float(evaluation.score),
                     factors=tuple(evaluation.factors),
+                    reasons=tuple(reasons),
                 )
             )
 

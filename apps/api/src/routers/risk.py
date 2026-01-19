@@ -565,6 +565,16 @@ def _normalize_time(value: datetime) -> datetime:
     return parsed.astimezone(timezone.utc)
 
 
+def _resolve_reasons_locale(request: Request) -> str:
+    header = (request.headers.get("accept-language") or "").strip().lower()
+    primary = header.split(",", 1)[0].strip()
+    if primary.startswith("zh"):
+        return "zh"
+    if primary.startswith("en"):
+        return "en"
+    return "en"
+
+
 def _summarize_results(
     results: list[POIRiskResult],
     *,
@@ -614,6 +624,7 @@ async def evaluate_risk(
         raise HTTPException(status_code=500, detail="Internal Server Error") from exc
 
     valid_dt = _normalize_time(payload.valid_time)
+    locale = _resolve_reasons_locale(request)
 
     identity_payload = {
         "product_id": int(payload.product_id),
@@ -621,6 +632,7 @@ async def evaluate_risk(
         "bbox": list(payload.bbox) if payload.bbox is not None else None,
         "poi_ids": _poi_ids_cache_identity(payload.poi_ids),
         "rules_etag": rules_payload.etag,
+        "reasons_locale": locale,
     }
     identity = json.dumps(identity_payload, separators=(",", ":"), sort_keys=True)
     digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()
@@ -636,6 +648,7 @@ async def evaluate_risk(
                 valid_time=valid_dt,
                 bbox=payload.bbox,
                 poi_ids=payload.poi_ids,
+                locale=locale,
             )
             duration_ms = (time.perf_counter() - started) * 1000.0
             response_payload = RiskEvaluateResponse(

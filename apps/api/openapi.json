@@ -516,6 +516,39 @@
         "title": "LocalIndexResponse",
         "type": "object"
       },
+      "POIRiskReason": {
+        "additionalProperties": false,
+        "properties": {
+          "contribution": {
+            "title": "Contribution",
+            "type": "number"
+          },
+          "factor_id": {
+            "$ref": "#/components/schemas/RiskFactorId"
+          },
+          "factor_name": {
+            "title": "Factor Name",
+            "type": "string"
+          },
+          "threshold": {
+            "title": "Threshold",
+            "type": "number"
+          },
+          "value": {
+            "title": "Value",
+            "type": "number"
+          }
+        },
+        "required": [
+          "factor_id",
+          "factor_name",
+          "value",
+          "threshold",
+          "contribution"
+        ],
+        "title": "POIRiskReason",
+        "type": "object"
+      },
       "POIRiskResult": {
         "additionalProperties": false,
         "properties": {
@@ -534,6 +567,13 @@
             "title": "Poi Id",
             "type": "integer"
           },
+          "reasons": {
+            "items": {
+              "$ref": "#/components/schemas/POIRiskReason"
+            },
+            "title": "Reasons",
+            "type": "array"
+          },
           "score": {
             "title": "Score",
             "type": "number"
@@ -543,7 +583,8 @@
           "poi_id",
           "level",
           "score",
-          "factors"
+          "factors",
+          "reasons"
         ],
         "title": "POIRiskResult",
         "type": "object"

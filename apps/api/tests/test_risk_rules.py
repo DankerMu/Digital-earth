@@ -258,4 +258,54 @@ def test_risk_rules_invalid_config_returns_500(
     assert response.status_code == 500
     payload = response.json()
     assert payload["error_code"] == 50000
+
+
+def test_risk_rules_evaluate_missing_config_returns_500(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    missing = tmp_path / "missing.yaml"
+    monkeypatch.setenv("DIGITAL_EARTH_RISK_RULES_CONFIG", str(missing))
+
+    client = _make_client(monkeypatch, tmp_path)
+    response = client.post(
+        "/api/v1/risk/rules/evaluate",
+        json={"snowfall": 0, "snow_depth": 0, "wind": 0, "temp": 0},
+    )
+    assert response.status_code == 500
+    payload = response.json()
+    assert payload["error_code"] == 50000
+    assert "trace_id" in payload
+
+
+def test_risk_rules_evaluate_returns_400_when_rule_evaluation_fails(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    config_path = tmp_path / "risk-rules.yaml"
+    _write_risk_rules_config(config_path, snowfall_score_at_10=1)
+    monkeypatch.setenv("DIGITAL_EARTH_RISK_RULES_CONFIG", str(config_path))
+
+    client = _make_client(monkeypatch, tmp_path)
+
+    import routers.risk as risk_router_module
+
+    class _BrokenModel:
+        def evaluate(self, values):  # type: ignore[no-untyped-def]
+            raise ValueError("boom")
+
+    class _BrokenRulesPayload:
+        etag = '"sha256-test"'
+        model = _BrokenModel()
+
+    monkeypatch.setattr(
+        risk_router_module, "get_risk_rules_payload", lambda: _BrokenRulesPayload()
+    )
+
+    response = client.post(
+        "/api/v1/risk/rules/evaluate",
+        json={"snowfall": 0, "snow_depth": 0, "wind": 0, "temp": 0},
+    )
+    assert response.status_code == 400
+    payload = response.json()
+    assert payload["error_code"] == 40000
+    assert payload["message"] == "boom"
     assert "trace_id" in payload
