@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { fetchAttribution } from './attributionApi';
 import { AttributionModal } from './AttributionModal';
@@ -27,12 +27,18 @@ export function AttributionBar({ apiBaseUrl }: Props) {
   const [modalSection, setModalSection] = useState<
     'sources' | 'disclaimer' | null
   >(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
 
   const refresh = useCallback(() => {
+    abortControllerRef.current?.abort();
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+
     setState((prev) => ({ ...prev, loading: true, error: null }));
 
-    void fetchAttribution(apiBaseUrl)
+    void fetchAttribution(apiBaseUrl, { signal: controller.signal })
       .then((payload) => {
+        if (controller.signal.aborted) return;
         setState({
           loading: false,
           error: null,
@@ -41,6 +47,7 @@ export function AttributionBar({ apiBaseUrl }: Props) {
         });
       })
       .catch((error: unknown) => {
+        if (controller.signal.aborted) return;
         setState((prev) => ({
           ...prev,
           loading: false,
@@ -51,6 +58,9 @@ export function AttributionBar({ apiBaseUrl }: Props) {
 
   useEffect(() => {
     refresh();
+    return () => {
+      abortControllerRef.current?.abort();
+    };
   }, [refresh]);
 
   const summary = useMemo(() => {
@@ -93,4 +103,3 @@ export function AttributionBar({ apiBaseUrl }: Props) {
     </div>
   );
 }
-

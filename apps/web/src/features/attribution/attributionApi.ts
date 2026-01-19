@@ -4,6 +4,10 @@ export type AttributionPayload = {
   version: string | null;
 };
 
+export type FetchAttributionOptions = {
+  signal?: AbortSignal;
+};
+
 let cached: AttributionPayload | null = null;
 
 function resolveAttributionUrl(apiBaseUrl: string): string {
@@ -12,18 +16,25 @@ function resolveAttributionUrl(apiBaseUrl: string): string {
 }
 
 export async function fetchAttribution(
-  apiBaseUrl: string
+  apiBaseUrl: string,
+  options: FetchAttributionOptions = {}
 ): Promise<AttributionPayload> {
   const headers: HeadersInit = {};
   if (cached?.etag) headers['If-None-Match'] = cached.etag;
 
-  const response = await fetch(resolveAttributionUrl(apiBaseUrl), { headers });
+  const response = await fetch(resolveAttributionUrl(apiBaseUrl), {
+    headers,
+    signal: options.signal,
+  });
   if (response.status === 304 && cached) return cached;
   if (!response.ok) {
     throw new Error(`Failed to fetch attribution: ${response.status}`);
   }
 
   const text = await response.text();
+  if (options.signal?.aborted) {
+    throw new DOMException('Aborted', 'AbortError');
+  }
   cached = {
     text,
     etag: response.headers.get('ETag'),
@@ -35,4 +46,3 @@ export async function fetchAttribution(
 export function clearAttributionCache(): void {
   cached = null;
 }
-
