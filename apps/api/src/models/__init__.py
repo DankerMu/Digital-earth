@@ -3,7 +3,7 @@ from __future__ import annotations
 from .base import Base
 from .catalog import EcmwfAsset, EcmwfRun, EcmwfTime
 from .effect_trigger_logs import EffectTriggerLog
-from .products import Product, ProductHazard
+from .products import Product, ProductHazard, ProductVersion
 from .risk_poi import RiskPOI
 
 __all__ = [
@@ -14,5 +14,6 @@ __all__ = [
     "EffectTriggerLog",
     "Product",
     "ProductHazard",
+    "ProductVersion",
     "RiskPOI",
 ]
