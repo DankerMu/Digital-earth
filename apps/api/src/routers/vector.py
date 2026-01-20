@@ -38,8 +38,13 @@ CACHE_LOCK_TTL_MS = 30_000
 CACHE_WAIT_TIMEOUT_MS = 200
 CACHE_COOLDOWN_TTL_SECONDS: tuple[int, int] = (5, 30)
 MAX_VECTOR_POINTS = 10_000
+MAX_STREAMLINE_SEEDS = 4_096
+MAX_STREAMLINE_TOTAL_POINTS = 200_000
 FILE_CACHE_DIR_ENV = "DIGITAL_EARTH_VECTOR_CACHE_DIR"
 WindVectorCacheStatus = Literal["fresh", "computed", "stale"]
+
+EARTH_RADIUS_M = 6_371_000.0
+_RAD_TO_DEG = 180.0 / float(np.pi)
 
 
 class WindVectorResponse(BaseModel):
@@ -72,6 +77,19 @@ class WindVectorPrewarmResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     results: list[WindVectorPrewarmItem] = Field(default_factory=list)
+
+
+class WindStreamline(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    lat: list[float] = Field(default_factory=list)
+    lon: list[float] = Field(default_factory=list)
+
+
+class WindStreamlinesResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    streamlines: list[WindStreamline] = Field(default_factory=list)
 
 
 _SURFACE_LEVEL_ALIASES = {"sfc", "surface"}
@@ -396,6 +414,290 @@ def _select_lon_indices(
     return indices[:: int(stride)]
 
 
+def _bbox_contains(
+    *,
+    lon: float,
+    lat: float,
+    bbox: tuple[float, float, float, float],
+    lon_coord: np.ndarray,
+) -> bool:
+    min_lon, min_lat, max_lon, max_lat = bbox
+    lat_lower = float(min(min_lat, max_lat))
+    lat_upper = float(max(min_lat, max_lat))
+    if float(lat) < lat_lower or float(lat) > lat_upper:
+        return False
+
+    if abs(float(max_lon) - float(min_lon)) >= 360.0:
+        return True
+
+    lon_min = _normalize_lon(min_lon, lon_coord)
+    lon_max = _normalize_lon(max_lon, lon_coord)
+    lon_norm = _normalize_lon(lon, lon_coord)
+    if lon_min <= lon_max:
+        return float(lon_norm) >= float(lon_min) and float(lon_norm) <= float(lon_max)
+    return float(lon_norm) >= float(lon_min) or float(lon_norm) <= float(lon_max)
+
+
+def _normalize_grid_axis(
+    coord: np.ndarray, values: np.ndarray, *, axis: int
+) -> tuple[np.ndarray, np.ndarray]:
+    coord_f = np.asarray(coord, dtype=np.float64)
+    if coord_f.size < 2:
+        return coord_f, np.asarray(values, dtype=np.float64)
+    if float(coord_f[0]) <= float(coord_f[-1]):
+        return coord_f, np.asarray(values, dtype=np.float64)
+    return coord_f[::-1], np.flip(np.asarray(values, dtype=np.float64), axis=axis)
+
+
+def _bilinear_sample_wind(
+    *,
+    lat: float,
+    lon: float,
+    lat_coord: np.ndarray,
+    lon_coord: np.ndarray,
+    u_grid: np.ndarray,
+    v_grid: np.ndarray,
+) -> tuple[float, float] | None:
+    if lat_coord.size < 2 or lon_coord.size < 2:
+        return None
+
+    lat_f = float(lat)
+    lon_f = float(lon)
+
+    lat_min = float(lat_coord[0])
+    lat_max = float(lat_coord[-1])
+    lon_min = float(lon_coord[0])
+    lon_max = float(lon_coord[-1])
+
+    if not (lat_min <= lat_f <= lat_max):
+        return None
+    if not (lon_min <= lon_f <= lon_max):
+        return None
+
+    lat_idx = int(np.searchsorted(lat_coord, lat_f, side="right"))
+    lon_idx = int(np.searchsorted(lon_coord, lon_f, side="right"))
+
+    i1 = min(max(lat_idx, 1), int(lat_coord.size - 1))
+    j1 = min(max(lon_idx, 1), int(lon_coord.size - 1))
+    i0 = i1 - 1
+    j0 = j1 - 1
+
+    lat0 = float(lat_coord[i0])
+    lat1 = float(lat_coord[i1])
+    lon0 = float(lon_coord[j0])
+    lon1 = float(lon_coord[j1])
+
+    lat_span = lat1 - lat0
+    lon_span = lon1 - lon0
+    if lat_span == 0.0 or lon_span == 0.0:
+        return None
+
+    t = (lat_f - lat0) / lat_span
+    s = (lon_f - lon0) / lon_span
+
+    u00 = float(u_grid[i0, j0])
+    u01 = float(u_grid[i0, j1])
+    u10 = float(u_grid[i1, j0])
+    u11 = float(u_grid[i1, j1])
+
+    v00 = float(v_grid[i0, j0])
+    v01 = float(v_grid[i0, j1])
+    v10 = float(v_grid[i1, j0])
+    v11 = float(v_grid[i1, j1])
+
+    if not (
+        np.isfinite(u00)
+        and np.isfinite(u01)
+        and np.isfinite(u10)
+        and np.isfinite(u11)
+        and np.isfinite(v00)
+        and np.isfinite(v01)
+        and np.isfinite(v10)
+        and np.isfinite(v11)
+    ):
+        return None
+
+    u0 = (1.0 - s) * u00 + s * u01
+    u1 = (1.0 - s) * u10 + s * u11
+    v0 = (1.0 - s) * v00 + s * v01
+    v1 = (1.0 - s) * v10 + s * v11
+
+    u = (1.0 - t) * u0 + t * u1
+    v = (1.0 - t) * v0 + t * v1
+
+    if not (np.isfinite(u) and np.isfinite(v)):
+        return None
+
+    return float(u), float(v)
+
+
+def _rk4_step(
+    *,
+    lat: float,
+    lon_unwrapped: float,
+    lon_coord: np.ndarray,
+    lat_coord: np.ndarray,
+    u_grid: np.ndarray,
+    v_grid: np.ndarray,
+    step_m: float,
+    min_speed: float,
+    direction: float,
+) -> tuple[float, float] | None:
+    lon_norm = _normalize_lon(lon_unwrapped, lon_coord)
+    sampled = _bilinear_sample_wind(
+        lat=float(lat),
+        lon=float(lon_norm),
+        lat_coord=lat_coord,
+        lon_coord=lon_coord,
+        u_grid=u_grid,
+        v_grid=v_grid,
+    )
+    if sampled is None:
+        return None
+
+    u0, v0 = sampled
+    speed = float(np.hypot(u0, v0))
+    if speed <= 0.0 or speed < float(min_speed):
+        return None
+
+    dt = float(step_m) / speed
+
+    def _derivatives(lat_deg: float, lon_deg: float) -> tuple[float, float] | None:
+        lon_eval = _normalize_lon(lon_deg, lon_coord)
+        sample = _bilinear_sample_wind(
+            lat=lat_deg,
+            lon=float(lon_eval),
+            lat_coord=lat_coord,
+            lon_coord=lon_coord,
+            u_grid=u_grid,
+            v_grid=v_grid,
+        )
+        if sample is None:
+            return None
+        u, v = sample
+        u *= float(direction)
+        v *= float(direction)
+        lat_rad = float(np.deg2rad(lat_deg))
+        cos_lat = float(np.cos(lat_rad))
+        if abs(cos_lat) < 1e-6:
+            return None
+        dlat_dt = (float(v) / EARTH_RADIUS_M) * _RAD_TO_DEG
+        dlon_dt = (float(u) / (EARTH_RADIUS_M * cos_lat)) * _RAD_TO_DEG
+        if not (np.isfinite(dlat_dt) and np.isfinite(dlon_dt)):
+            return None
+        return float(dlat_dt), float(dlon_dt)
+
+    k1 = _derivatives(float(lat), float(lon_unwrapped))
+    if k1 is None:
+        return None
+    k2 = _derivatives(
+        float(lat) + 0.5 * dt * k1[0], float(lon_unwrapped) + 0.5 * dt * k1[1]
+    )
+    if k2 is None:
+        return None
+    k3 = _derivatives(
+        float(lat) + 0.5 * dt * k2[0], float(lon_unwrapped) + 0.5 * dt * k2[1]
+    )
+    if k3 is None:
+        return None
+    k4 = _derivatives(float(lat) + dt * k3[0], float(lon_unwrapped) + dt * k3[1])
+    if k4 is None:
+        return None
+
+    lat_next = float(
+        float(lat) + (dt / 6.0) * (k1[0] + 2.0 * k2[0] + 2.0 * k3[0] + k4[0])
+    )
+    lon_next = float(
+        float(lon_unwrapped) + (dt / 6.0) * (k1[1] + 2.0 * k2[1] + 2.0 * k3[1] + k4[1])
+    )
+
+    if not (np.isfinite(lat_next) and np.isfinite(lon_next)):
+        return None
+
+    return lat_next, lon_next
+
+
+def _integrate_streamline(
+    *,
+    seed_lat: float,
+    seed_lon: float,
+    bbox: tuple[float, float, float, float],
+    lat_coord: np.ndarray,
+    lon_coord: np.ndarray,
+    u_grid: np.ndarray,
+    v_grid: np.ndarray,
+    step_km: float,
+    max_steps: int,
+    min_speed: float,
+) -> tuple[list[float], list[float]]:
+    lat0 = float(seed_lat)
+    lon0 = float(seed_lon)
+    if not _bbox_contains(lon=lon0, lat=lat0, bbox=bbox, lon_coord=lon_coord):
+        return [], []
+
+    step_m = float(step_km) * 1000.0
+
+    points_backward: list[tuple[float, float]] = []
+    lat_cursor = lat0
+    lon_cursor = lon0
+    for _ in range(int(max_steps)):
+        next_point = _rk4_step(
+            lat=lat_cursor,
+            lon_unwrapped=lon_cursor,
+            lon_coord=lon_coord,
+            lat_coord=lat_coord,
+            u_grid=u_grid,
+            v_grid=v_grid,
+            step_m=step_m,
+            min_speed=min_speed,
+            direction=-1.0,
+        )
+        if next_point is None:
+            break
+        lat_next, lon_next = next_point
+        if not _bbox_contains(
+            lon=lon_next, lat=lat_next, bbox=bbox, lon_coord=lon_coord
+        ):
+            break
+        points_backward.append((lon_next, lat_next))
+        lat_cursor = lat_next
+        lon_cursor = lon_next
+
+    points_forward: list[tuple[float, float]] = []
+    lat_cursor = lat0
+    lon_cursor = lon0
+    for _ in range(int(max_steps)):
+        next_point = _rk4_step(
+            lat=lat_cursor,
+            lon_unwrapped=lon_cursor,
+            lon_coord=lon_coord,
+            lat_coord=lat_coord,
+            u_grid=u_grid,
+            v_grid=v_grid,
+            step_m=step_m,
+            min_speed=min_speed,
+            direction=1.0,
+        )
+        if next_point is None:
+            break
+        lat_next, lon_next = next_point
+        if not _bbox_contains(
+            lon=lon_next, lat=lat_next, bbox=bbox, lon_coord=lon_coord
+        ):
+            break
+        points_forward.append((lon_next, lat_next))
+        lat_cursor = lat_next
+        lon_cursor = lon_next
+
+    combined = list(reversed(points_backward)) + [(lon0, lat0)] + points_forward
+    if len(combined) < 2:
+        return [], []
+
+    out_lon = [float(lon_val) for lon_val, _lat_val in combined]
+    out_lat = [float(lat_val) for _lon_val, lat_val in combined]
+    return out_lat, out_lon
+
+
 def _resolve_wind_components(ds: xr.Dataset) -> tuple[str, str]:
     available = {name.lower(): name for name in ds.data_vars}
     candidates: list[tuple[str, str]] = [
@@ -492,6 +794,108 @@ def _wind_vectors_from_datacube(
             lat=_flatten_values(np.asarray(lat_grid)),
             lon=_flatten_values(np.asarray(lon_grid)),
         )
+    finally:
+        ds.close()
+
+
+def _wind_streamlines_from_datacube(
+    cube_path: Path,
+    *,
+    valid_time: datetime,
+    level_key: str,
+    level_numeric: float | None,
+    bbox: tuple[float, float, float, float],
+    stride: int,
+    step_km: float,
+    max_steps: int,
+    min_speed: float,
+) -> WindStreamlinesResponse:
+    ds = open_datacube(cube_path)
+    try:
+        time_index = _resolve_time_index(ds, valid_time=valid_time)
+        level_index = _resolve_level_index(
+            ds, level_key=level_key, numeric=level_numeric
+        )
+
+        u_name, v_name = _resolve_wind_components(ds)
+        u_da = ds[u_name]
+        v_da = ds[v_name]
+
+        if "time" not in u_da.dims or "level" not in u_da.dims:
+            raise HTTPException(
+                status_code=500, detail="DataCube wind variable missing time/level dims"
+            )
+        if "time" not in v_da.dims or "level" not in v_da.dims:
+            raise HTTPException(
+                status_code=500, detail="DataCube wind variable missing time/level dims"
+            )
+
+        u_slice = u_da.isel(time=int(time_index), level=int(level_index)).transpose(
+            "lat", "lon"
+        )
+        v_slice = v_da.isel(time=int(time_index), level=int(level_index)).transpose(
+            "lat", "lon"
+        )
+
+        lat_raw = np.asarray(u_slice["lat"].values)
+        lon_raw = np.asarray(u_slice["lon"].values)
+        u_values = np.asarray(u_slice.values)
+        v_values = np.asarray(v_slice.values)
+
+        lat_coord, u_values = _normalize_grid_axis(lat_raw, u_values, axis=0)
+        _lat_coord_v, v_values = _normalize_grid_axis(lat_raw, v_values, axis=0)
+        lon_coord, u_values = _normalize_grid_axis(lon_raw, u_values, axis=1)
+        _lon_coord_v, v_values = _normalize_grid_axis(lon_raw, v_values, axis=1)
+
+        if lat_coord.size < 2 or lon_coord.size < 2:
+            return WindStreamlinesResponse()
+
+        min_lon, min_lat, max_lon, max_lat = bbox
+        lat_indices = _select_indices(
+            lat_coord, min_value=min_lat, max_value=max_lat, stride=stride
+        )
+        lon_indices = _select_lon_indices(
+            lon_coord, min_lon=min_lon, max_lon=max_lon, stride=stride
+        )
+        if lat_indices.size == 0 or lon_indices.size == 0:
+            return WindStreamlinesResponse()
+
+        seed_count = int(lat_indices.size) * int(lon_indices.size)
+        if seed_count > MAX_STREAMLINE_SEEDS:
+            raise HTTPException(
+                status_code=400, detail="reduce bbox or increase stride"
+            )
+
+        estimated_points = seed_count * (2 * int(max_steps) + 1)
+        if estimated_points > MAX_STREAMLINE_TOTAL_POINTS:
+            raise HTTPException(
+                status_code=400, detail="reduce bbox or increase stride"
+            )
+
+        u_grid = np.asarray(u_values, dtype=np.float64)
+        v_grid = np.asarray(v_values, dtype=np.float64)
+
+        streamlines: list[WindStreamline] = []
+        for lat_idx in lat_indices:
+            seed_lat = float(lat_coord[int(lat_idx)])
+            for lon_idx in lon_indices:
+                seed_lon = float(lon_coord[int(lon_idx)])
+                line_lat, line_lon = _integrate_streamline(
+                    seed_lat=seed_lat,
+                    seed_lon=seed_lon,
+                    bbox=bbox,
+                    lat_coord=lat_coord,
+                    lon_coord=lon_coord,
+                    u_grid=u_grid,
+                    v_grid=v_grid,
+                    step_km=step_km,
+                    max_steps=max_steps,
+                    min_speed=min_speed,
+                )
+                if line_lat and line_lon:
+                    streamlines.append(WindStreamline(lat=line_lat, lon=line_lon))
+
+        return WindStreamlinesResponse(streamlines=streamlines)
     finally:
         ds.close()
 
@@ -685,6 +1089,262 @@ async def prewarm_ecmwf_wind_vectors(
         fresh_key = f"vector:ecmwf:wind:run={run_key}:fresh:{digest}"
         stale_key = f"vector:ecmwf:wind:run={run_key}:stale:{digest}"
         lock_key = f"vector:ecmwf:wind:run={run_key}:lock:{digest}"
+
+        async def _compute_bbox() -> bytes:
+            return await to_thread(_compute_bbox_sync)
+
+        try:
+            cache_result = await get_or_compute_cached_bytes(
+                redis,
+                fresh_key=fresh_key,
+                stale_key=stale_key,
+                lock_key=lock_key,
+                fresh_ttl_seconds=CACHE_FRESH_TTL_SECONDS,
+                stale_ttl_seconds=CACHE_STALE_TTL_SECONDS,
+                lock_ttl_ms=CACHE_LOCK_TTL_MS,
+                wait_timeout_ms=CACHE_WAIT_TIMEOUT_MS,
+                compute=_compute_bbox,
+                cooldown_ttl_seconds=CACHE_COOLDOWN_TTL_SECONDS,
+            )
+            status = cache_result.status
+        except TimeoutError as exc:
+            raise HTTPException(
+                status_code=503, detail="Vector cache warming timed out"
+            ) from exc
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("vector_cache_unavailable", extra={"error": str(exc)})
+
+            def _sync_file_cache() -> WindVectorCacheStatus:
+                _body, file_status = _get_or_compute_file_cached_bytes(
+                    fresh_path=fresh_path,
+                    stale_path=stale_path,
+                    fresh_ttl_seconds=CACHE_FRESH_TTL_SECONDS,
+                    stale_ttl_seconds=CACHE_STALE_TTL_SECONDS,
+                    compute=_compute_bbox_sync,
+                )
+                return file_status
+
+            status = await to_thread(_sync_file_cache)
+
+        results.append(WindVectorPrewarmItem(bbox=bbox_value, status=status))
+
+    return WindVectorPrewarmResponse(results=results)
+
+
+@router.get(
+    "/ecmwf/{run}/wind/{level}/{time}/streamlines",
+    response_model=WindStreamlinesResponse,
+)
+async def get_ecmwf_wind_streamlines(
+    request: Request,
+    run: str,
+    level: str,
+    time: str,
+    bbox: str = Query(
+        ...,
+        description="Bounding box: minLon,minLat,maxLon,maxLat",
+    ),
+    stride: int = Query(default=1, ge=1, le=256),
+    step_km: float = Query(default=10.0, gt=0.0, le=500.0),
+    max_steps: int = Query(default=200, ge=1, le=2000),
+    min_speed: float = Query(default=0.0, ge=0.0, le=500.0),
+) -> Response:
+    try:
+        run_dt = _parse_time(run, label="run")
+        valid_dt = _parse_time(time, label="time")
+        level_key, level_numeric = _normalize_level(level)
+        parsed_bbox = _parse_bbox(bbox)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    if parsed_bbox is None:
+        raise HTTPException(status_code=400, detail="bbox must not be empty")
+
+    run_key = _time_key(run_dt)
+    time_key = _time_key(valid_dt)
+    identity_payload: dict[str, object] = {
+        "run": run_key,
+        "time": time_key,
+        "level": level_key,
+        "bbox": list(parsed_bbox),
+        "stride": int(stride),
+        "step_km": float(step_km),
+        "max_steps": int(max_steps),
+        "min_speed": float(min_speed),
+    }
+    identity = _cache_identity(identity_payload)
+    digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()
+
+    redis: RedisLike | None = getattr(request.app.state, "redis_client", None)
+
+    def _compute_sync() -> bytes:
+        asset_path = _query_asset_path(
+            run_time=run_dt, valid_time=valid_dt, level=level_key
+        )
+        cube_path = _resolve_asset_path(asset_path)
+        response = _wind_streamlines_from_datacube(
+            cube_path,
+            valid_time=valid_dt,
+            level_key=level_key,
+            level_numeric=level_numeric,
+            bbox=parsed_bbox,
+            stride=int(stride),
+            step_km=float(step_km),
+            max_steps=int(max_steps),
+            min_speed=float(min_speed),
+        )
+        return response.model_dump_json().encode("utf-8")
+
+    async def _compute() -> bytes:
+        return await to_thread(_compute_sync)
+
+    if redis is None:
+        cache_dir = _vector_file_cache_dir() / "ecmwf-wind-streamlines" / run_key
+        fresh_path = cache_dir / f"{digest}.fresh"
+        stale_path = cache_dir / f"{digest}.stale"
+
+        def _sync_file_cache() -> bytes:
+            body, _status = _get_or_compute_file_cached_bytes(
+                fresh_path=fresh_path,
+                stale_path=stale_path,
+                fresh_ttl_seconds=CACHE_FRESH_TTL_SECONDS,
+                stale_ttl_seconds=CACHE_STALE_TTL_SECONDS,
+                compute=_compute_sync,
+            )
+            return body
+
+        body = await to_thread(_sync_file_cache)
+    else:
+        fresh_key = f"vector:ecmwf:wind-streamlines:run={run_key}:fresh:{digest}"
+        stale_key = f"vector:ecmwf:wind-streamlines:run={run_key}:stale:{digest}"
+        lock_key = f"vector:ecmwf:wind-streamlines:run={run_key}:lock:{digest}"
+        try:
+            result = await get_or_compute_cached_bytes(
+                redis,
+                fresh_key=fresh_key,
+                stale_key=stale_key,
+                lock_key=lock_key,
+                fresh_ttl_seconds=CACHE_FRESH_TTL_SECONDS,
+                stale_ttl_seconds=CACHE_STALE_TTL_SECONDS,
+                lock_ttl_ms=CACHE_LOCK_TTL_MS,
+                wait_timeout_ms=CACHE_WAIT_TIMEOUT_MS,
+                compute=_compute,
+                cooldown_ttl_seconds=CACHE_COOLDOWN_TTL_SECONDS,
+            )
+            body = result.body
+        except TimeoutError as exc:
+            raise HTTPException(
+                status_code=503, detail="Vector cache warming timed out"
+            ) from exc
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("vector_cache_unavailable", extra={"error": str(exc)})
+            body = await _compute()
+
+    etag = f'"sha256-{hashlib.sha256(body).hexdigest()}"'
+    headers = {"Cache-Control": SHORT_CACHE_CONTROL_HEADER, "ETag": etag}
+    return Response(content=body, media_type="application/json", headers=headers)
+
+
+@router.post(
+    "/ecmwf/{run}/wind/{level}/{time}/streamlines/prewarm",
+    response_model=WindVectorPrewarmResponse,
+)
+async def prewarm_ecmwf_wind_streamlines(
+    request: Request,
+    run: str,
+    level: str,
+    time: str,
+    payload: WindVectorPrewarmRequest,
+    step_km: float = Query(default=10.0, gt=0.0, le=500.0),
+    max_steps: int = Query(default=200, ge=1, le=2000),
+    min_speed: float = Query(default=0.0, ge=0.0, le=500.0),
+) -> WindVectorPrewarmResponse:
+    if not payload.bboxes:
+        raise HTTPException(status_code=400, detail="bboxes must not be empty")
+    if len(payload.bboxes) > 50:
+        raise HTTPException(status_code=400, detail="too many bboxes to prewarm")
+
+    try:
+        run_dt = _parse_time(run, label="run")
+        valid_dt = _parse_time(time, label="time")
+        level_key, level_numeric = _normalize_level(level)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    run_key = _time_key(run_dt)
+    time_key = _time_key(valid_dt)
+
+    parsed_bboxes: list[tuple[str, tuple[float, float, float, float]]] = []
+    for bbox_value in payload.bboxes:
+        try:
+            parsed = _parse_bbox(bbox_value)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        if parsed is None:
+            raise HTTPException(status_code=400, detail="bbox must not be empty")
+        parsed_bboxes.append((bbox_value, parsed))
+
+    asset_path = _query_asset_path(
+        run_time=run_dt, valid_time=valid_dt, level=level_key
+    )
+    cube_path = _resolve_asset_path(asset_path)
+
+    cache_dir = _vector_file_cache_dir() / "ecmwf-wind-streamlines" / run_key
+    redis: RedisLike | None = getattr(request.app.state, "redis_client", None)
+    results: list[WindVectorPrewarmItem] = []
+
+    for bbox_value, bbox_tuple in parsed_bboxes:
+        identity_payload: dict[str, object] = {
+            "run": run_key,
+            "time": time_key,
+            "level": level_key,
+            "bbox": list(bbox_tuple),
+            "stride": int(payload.stride),
+            "step_km": float(step_km),
+            "max_steps": int(max_steps),
+            "min_speed": float(min_speed),
+        }
+        identity = _cache_identity(identity_payload)
+        digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()
+
+        fresh_path = cache_dir / f"{digest}.fresh"
+        stale_path = cache_dir / f"{digest}.stale"
+
+        def _compute_bbox_sync(
+            *, bbox_for_compute: tuple[float, float, float, float] = bbox_tuple
+        ) -> bytes:
+            response = _wind_streamlines_from_datacube(
+                cube_path,
+                valid_time=valid_dt,
+                level_key=level_key,
+                level_numeric=level_numeric,
+                bbox=bbox_for_compute,
+                stride=int(payload.stride),
+                step_km=float(step_km),
+                max_steps=int(max_steps),
+                min_speed=float(min_speed),
+            )
+            return response.model_dump_json().encode("utf-8")
+
+        if redis is None:
+
+            def _sync_file_cache() -> WindVectorCacheStatus:
+                _body, file_status = _get_or_compute_file_cached_bytes(
+                    fresh_path=fresh_path,
+                    stale_path=stale_path,
+                    fresh_ttl_seconds=CACHE_FRESH_TTL_SECONDS,
+                    stale_ttl_seconds=CACHE_STALE_TTL_SECONDS,
+                    compute=_compute_bbox_sync,
+                )
+                return file_status
+
+            status = await to_thread(_sync_file_cache)
+            results.append(WindVectorPrewarmItem(bbox=bbox_value, status=status))
+            continue
+
+        fresh_key = f"vector:ecmwf:wind-streamlines:run={run_key}:fresh:{digest}"
+        stale_key = f"vector:ecmwf:wind-streamlines:run={run_key}:stale:{digest}"
+        lock_key = f"vector:ecmwf:wind-streamlines:run={run_key}:lock:{digest}"
 
         async def _compute_bbox() -> bytes:
             return await to_thread(_compute_bbox_sync)

@@ -1926,6 +1926,41 @@
         "title": "ValidationError",
         "type": "object"
       },
+      "WindStreamline": {
+        "additionalProperties": false,
+        "properties": {
+          "lat": {
+            "items": {
+              "type": "number"
+            },
+            "title": "Lat",
+            "type": "array"
+          },
+          "lon": {
+            "items": {
+              "type": "number"
+            },
+            "title": "Lon",
+            "type": "array"
+          }
+        },
+        "title": "WindStreamline",
+        "type": "object"
+      },
+      "WindStreamlinesResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "streamlines": {
+            "items": {
+              "$ref": "#/components/schemas/WindStreamline"
+            },
+            "title": "Streamlines",
+            "type": "array"
+          }
+        },
+        "title": "WindStreamlinesResponse",
+        "type": "object"
+      },
       "WindVectorPrewarmItem": {
         "additionalProperties": false,
         "properties": {
@@ -3924,6 +3959,231 @@
           }
         },
         "summary": "Prewarm Ecmwf Wind Vectors",
+        "tags": [
+          "vector"
+        ]
+      }
+    },
+    "/api/v1/vector/ecmwf/{run}/wind/{level}/{time}/streamlines": {
+      "get": {
+        "operationId": "get_ecmwf_wind_streamlines_api_v1_vector_ecmwf__run__wind__level___time__streamlines_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run",
+            "required": true,
+            "schema": {
+              "title": "Run",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "level",
+            "required": true,
+            "schema": {
+              "title": "Level",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "time",
+            "required": true,
+            "schema": {
+              "title": "Time",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Bounding box: minLon,minLat,maxLon,maxLat",
+            "in": "query",
+            "name": "bbox",
+            "required": true,
+            "schema": {
+              "description": "Bounding box: minLon,minLat,maxLon,maxLat",
+              "title": "Bbox",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "stride",
+            "required": false,
+            "schema": {
+              "default": 1,
+              "maximum": 256,
+              "minimum": 1,
+              "title": "Stride",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "step_km",
+            "required": false,
+            "schema": {
+              "default": 10.0,
+              "exclusiveMinimum": 0.0,
+              "maximum": 500.0,
+              "title": "Step Km",
+              "type": "number"
+            }
+          },
+          {
+            "in": "query",
+            "name": "max_steps",
+            "required": false,
+            "schema": {
+              "default": 200,
+              "maximum": 2000,
+              "minimum": 1,
+              "title": "Max Steps",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "min_speed",
+            "required": false,
+            "schema": {
+              "default": 0.0,
+              "maximum": 500.0,
+              "minimum": 0.0,
+              "title": "Min Speed",
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WindStreamlinesResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Ecmwf Wind Streamlines",
+        "tags": [
+          "vector"
+        ]
+      }
+    },
+    "/api/v1/vector/ecmwf/{run}/wind/{level}/{time}/streamlines/prewarm": {
+      "post": {
+        "operationId": "prewarm_ecmwf_wind_streamlines_api_v1_vector_ecmwf__run__wind__level___time__streamlines_prewarm_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run",
+            "required": true,
+            "schema": {
+              "title": "Run",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "level",
+            "required": true,
+            "schema": {
+              "title": "Level",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "time",
+            "required": true,
+            "schema": {
+              "title": "Time",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "step_km",
+            "required": false,
+            "schema": {
+              "default": 10.0,
+              "exclusiveMinimum": 0.0,
+              "maximum": 500.0,
+              "title": "Step Km",
+              "type": "number"
+            }
+          },
+          {
+            "in": "query",
+            "name": "max_steps",
+            "required": false,
+            "schema": {
+              "default": 200,
+              "maximum": 2000,
+              "minimum": 1,
+              "title": "Max Steps",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "min_speed",
+            "required": false,
+            "schema": {
+              "default": 0.0,
+              "maximum": 500.0,
+              "minimum": 0.0,
+              "title": "Min Speed",
+              "type": "number"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WindVectorPrewarmRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WindVectorPrewarmResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Prewarm Ecmwf Wind Streamlines",
         "tags": [
           "vector"
         ]
