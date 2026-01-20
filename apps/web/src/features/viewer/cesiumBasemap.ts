@@ -35,14 +35,17 @@ export function createImageryProviderForBasemap(basemap: BasemapConfig): Imagery
   });
 }
 
-export function setViewerBasemap(viewer: Viewer, basemap: BasemapConfig): void {
+export function setViewerImageryProvider(viewer: Viewer, provider: ImageryProvider): void {
   const baseLayer = viewer.imageryLayers.get(0);
   if (baseLayer) {
     viewer.imageryLayers.remove(baseLayer, true);
   }
 
-  const provider = createImageryProviderForBasemap(basemap);
   viewer.imageryLayers.addImageryProvider(provider, 0);
   viewer.scene.requestRender();
 }
 
+export function setViewerBasemap(viewer: Viewer, basemap: BasemapConfig): void {
+  const provider = createImageryProviderForBasemap(basemap);
+  setViewerImageryProvider(viewer, provider);
+}
