@@ -1,0 +1,42 @@
+schema_version: 1
+
+# Historical statistics batch configuration.
+
+output:
+  # Root directory for computed statistics NetCDF artifacts.
+  # Relative paths resolve from repo root.
+  root_dir: Data/statistics
+
+  # Default output version tag (may be overridden by CLI).
+  version: v1
+
+sources:
+  cldas:
+    # Optional override for CLDAS input root directory.
+    # If unset, the pipeline uses DIGITAL_EARTH_LOCAL_DATA_* config.
+    root_dir:
+    engine:
+
+  archive:
+    # Optional path to a historical archive dataset (NetCDF/Zarr).
+    dataset_path:
+    engine:
+
+statistics:
+  # Percentiles to compute (in (0, 100)).
+  percentiles: [10, 50, 90]
+
+  # If the number of samples in a window is <= this threshold, percentiles are
+  # computed exactly via numpy.nanpercentile (useful for small windows/tests).
+  exact_percentiles_max_samples: 64
+
+tiles:
+  # Root directory for generated tiles (statistics output).
+  root_dir: Data/tiles
+  # Default tile formats.
+  formats: ["png"]
+  # Base layer prefix for output tiles (e.g., statistics/...).
+  layer_prefix: statistics
+  # Default legend filename inside the Digital Earth config dir.
+  legend_filename: legend.json
+
