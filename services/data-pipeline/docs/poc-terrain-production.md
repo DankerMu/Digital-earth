@@ -152,6 +152,19 @@ viewer.camera.flyTo({
 - LOD 切换无明显裂缝/闪烁（PoC 为规则网格，极端情况下可能出现接缝，可通过 skirt/改进采样降低）
 - 网络请求仅发生在 `available` 指定的瓦片范围内
 
+## 7.1 Cesium for Unreal Loading（验证）
+
+Cesium for Unreal 的 `ACesium3DTileset` 支持旧的 `layer.json / quantized-mesh` 格式（官方文档说明见 Cesium for Unreal ref-doc）。
+
+建议最小验证步骤：
+
+1. 在 UE 场景中添加 `CesiumGeoreference`
+2. 添加一个 `Cesium3DTileset`（Actor：`ACesium3DTileset`）
+3. 将 Tileset 的 `Url` 指向你的 `layer.json`（示例：`https://YOUR_DOMAIN/terrain/beijing/layer.json`）
+4. 将相机/玩家移动到北京区域（约 `116.4E, 39.9N`）观察地形起伏与 LOD
+
+> 提示：当 tileset 使用 `layer.json / quantized-mesh` 而不是 3D Tiles 时，`MaximumScreenSpaceError` 等 LOD 参数的解释可能与 3D Tiles 有比例差异（见 Cesium for Unreal 文档说明）。PoC 阶段优先观察“能加载 + LOD 切换合理 + 性能可接受”。
+
 ## 8. Performance Notes（PoC）
 
 该 PoC 使用“规则网格”生成 quantized-mesh：
@@ -210,4 +223,3 @@ viewer.camera.flyTo({
 - 引入 mesh simplification（减少顶点与文件大小）
 - 研究并实现扩展：vertex normals / watermask / metadata（按 UE/Web 需求）
 - 若目标为对外/商用发布：重新评估 DEM 数据源与授权路径（Copernicus DEM 存在再分发/商用限制）
-
