@@ -1,5 +1,14 @@
 [run]
+branch = False
+source =
+    src
+relative_files = True
 omit =
     */tests/*
     */packages/config/*
+    */packages/shared/*
     */.venv/*
+
+[report]
+fail_under = 90
+show_missing = True

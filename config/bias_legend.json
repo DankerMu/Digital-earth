@@ -1,0 +1,11 @@
+{
+  "title": "监测-预报差值（Bias）",
+  "unit": "°C",
+  "type": "gradient",
+  "stops": [
+    { "value": -10, "color": "#3B82F6", "label": "-10" },
+    { "value": 0, "color": "#FFFFFF", "label": "0" },
+    { "value": 10, "color": "#EF4444", "label": "10" }
+  ]
+}
+
