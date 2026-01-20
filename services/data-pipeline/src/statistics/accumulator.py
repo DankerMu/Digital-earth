@@ -131,7 +131,7 @@ class _P2State:
                         q_j_lin[up_lin] + (q_jp1[lin][up_lin] - q_j_lin[up_lin]) / denom
                     )
                 if down_lin.any():
-                    denom = n_jm1[lin][down_lin] - n_j[lin][down_lin]
+                    denom = n_j[lin][down_lin] - n_jm1[lin][down_lin]
                     denom = np.where(denom == 0, 1.0, denom)
                     q_lin[down_lin] = (
                         q_j_lin[down_lin]
@@ -165,12 +165,15 @@ class P2Quantiles:
         # Fill init buffer for cells that have not yet collected 5 samples.
         needs_init = (~self._initialized) & finite
         if needs_init.any():
-            for row in range(5):
-                mask = needs_init & (self._init_count == row)
-                if not mask.any():
-                    continue
-                self._init_buf[row, mask] = x_f[mask]
-                self._init_count[mask] += 1
+            indices = np.where(needs_init)[0]
+            if indices.size:
+                rows = self._init_count[indices]
+                pending = rows < 5
+                if pending.any():
+                    indices = indices[pending]
+                    rows = rows[pending]
+                    self._init_buf[rows, indices] = x_f[indices]
+                    self._init_count[indices] += 1
 
             newly = (~self._initialized) & (self._init_count >= 5)
             if newly.any():

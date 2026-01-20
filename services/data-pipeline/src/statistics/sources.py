@@ -153,7 +153,7 @@ class ArchiveDatasetSource(StatisticsDataSource):
         start = start.astimezone(timezone.utc)
         end = end.astimezone(timezone.utc)
 
-        if not self._dataset_path.is_file():
+        if not self._dataset_path.exists():
             raise FileNotFoundError(f"Archive dataset not found: {self._dataset_path}")
 
         ds: xr.Dataset

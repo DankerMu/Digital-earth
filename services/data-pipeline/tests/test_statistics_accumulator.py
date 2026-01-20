@@ -40,6 +40,21 @@ def test_exact_percentiles_matches_numpy() -> None:
     np.testing.assert_allclose(out[90.0], np.full((2, 2), 5.5, dtype=np.float32))
 
 
+def test_p2_quantiles_remain_nan_until_initialized() -> None:
+    from statistics.accumulator import GridStatisticsAccumulator
+
+    acc = GridStatisticsAccumulator(shape=(1, 1), percentiles=[50])
+
+    for v in range(1, 5):
+        acc.update(np.array([[float(v)]], dtype=np.float32))
+        result = acc.finalize()
+        assert np.isnan(result.percentiles[50.0][0, 0])
+
+    acc.update(np.array([[5.0]], dtype=np.float32))
+    result = acc.finalize()
+    assert float(result.percentiles[50.0][0, 0]) == pytest.approx(3.0)
+
+
 def test_p2_quantiles_produces_reasonable_estimates() -> None:
     from statistics.accumulator import GridStatisticsAccumulator
 
