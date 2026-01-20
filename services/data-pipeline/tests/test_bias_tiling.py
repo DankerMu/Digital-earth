@@ -265,7 +265,9 @@ def test_bias_tiles_relative_error_uses_percent_legend_by_default(
     observation = _make_observation_dataset(value=1.0)
 
     out_dir = tmp_path / "tiles"
-    result = BiasTileGenerator(forecast_cube, observation, mode="relative_error").generate(
+    result = BiasTileGenerator(
+        forecast_cube, observation, mode="relative_error"
+    ).generate(
         out_dir,
         valid_time="2026-01-01T00:00:00Z",
         level="sfc",
