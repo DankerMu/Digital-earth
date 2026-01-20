@@ -10,6 +10,12 @@ vi.mock('cesium', () => {
     SCENE3D: 3
   };
 
+  const createWorldTerrainAsync = vi.fn(async () => ({ terrain: true }));
+  const EllipsoidTerrainProvider = vi.fn(function () {
+    return { ellipsoidTerrain: true };
+  });
+  const Ion = { defaultAccessToken: '' };
+
   let morphCompleteHandler: (() => void) | null = null;
 
   const camera = {
@@ -99,12 +105,15 @@ vi.mock('cesium', () => {
       PI_OVER_TWO: Math.PI / 2
     },
     __mocks: {
-      getMorphCompleteHandler: () => morphCompleteHandler
-    }
+      getMorphCompleteHandler: () => morphCompleteHandler,
+    },
+    createWorldTerrainAsync,
+    EllipsoidTerrainProvider,
+    Ion,
   };
 });
 
-import { Viewer } from 'cesium';
+import { EllipsoidTerrainProvider, createWorldTerrainAsync, Viewer } from 'cesium';
 import { clearConfigCache } from '../../config';
 import { DEFAULT_BASEMAP_ID } from '../../config/basemaps';
 import { useBasemapStore } from '../../state/basemap';
@@ -248,6 +257,62 @@ describe('CesiumViewer', () => {
     await waitFor(() => {
       expect(screen.queryByRole('combobox', { name: '底图' })).toBeNull();
     });
+  });
+
+  it('falls back to ellipsoid terrain and shows a notice when ion token is missing', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        jsonResponse({
+          apiBaseUrl: 'http://api.test',
+          map: {
+            terrainProvider: 'ion',
+          },
+        }),
+      ),
+    );
+
+    render(<CesiumViewer />);
+
+    await waitFor(() => expect(vi.mocked(Viewer)).toHaveBeenCalledTimes(1));
+
+    const viewer = vi.mocked(Viewer).mock.results[0].value;
+
+    expect(await screen.findByRole('alert', { name: 'terrain-notice' })).toHaveTextContent(
+      '未配置 Cesium ion token',
+    );
+    expect(vi.mocked(createWorldTerrainAsync)).not.toHaveBeenCalled();
+    expect(vi.mocked(EllipsoidTerrainProvider)).toHaveBeenCalled();
+    expect(viewer.scene.requestRender).toHaveBeenCalled();
+  });
+
+  it('falls back to ellipsoid terrain and shows a notice when ion terrain fails to load', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        jsonResponse({
+          apiBaseUrl: 'http://api.test',
+          map: {
+            terrainProvider: 'ion',
+            cesiumIonAccessToken: 'token',
+          },
+        }),
+      ),
+    );
+
+    vi.mocked(createWorldTerrainAsync).mockRejectedValueOnce(new Error('Terrain failed'));
+
+    render(<CesiumViewer />);
+
+    await waitFor(() => expect(vi.mocked(Viewer)).toHaveBeenCalledTimes(1));
+
+    const viewer = vi.mocked(Viewer).mock.results[0].value;
+
+    expect(await screen.findByRole('alert', { name: 'terrain-notice' })).toHaveTextContent(
+      '地形加载失败',
+    );
+    expect(vi.mocked(EllipsoidTerrainProvider)).toHaveBeenCalled();
+    expect(viewer.scene.requestRender).toHaveBeenCalled();
   });
 
   it('switches scene mode and restores camera view after morph completes', async () => {
