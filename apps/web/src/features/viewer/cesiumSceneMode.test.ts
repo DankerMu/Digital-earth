@@ -75,8 +75,8 @@ describe('cesiumSceneMode', () => {
     expect(scene.morphToColumbusView).toHaveBeenCalledWith(0.25);
     expect(morphCompleteHandler).toBeTypeOf('function');
 
-    // TypeScript can't track the mock side-effect, so use assertion
-    (morphCompleteHandler as () => void)();
+    // TypeScript can't track the mock side-effect, use non-null assertion
+    morphCompleteHandler!();
 
     expect(camera.setView).toHaveBeenCalledWith({
       destination: { rect: true },
