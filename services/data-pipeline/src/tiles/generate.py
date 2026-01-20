@@ -6,9 +6,17 @@ from pathlib import Path
 from typing import Final, Iterable, Sequence
 
 import numpy as np
+import xarray as xr
 
 from datacube.core import DataCube
 from tiles.wind_speed_tiles import DEFAULT_WIND_SPEED_OPACITY, WindSpeedTileGenerator
+from tiling.bias_tiles import (
+    DEFAULT_BIAS_FORECAST_VARIABLE,
+    DEFAULT_BIAS_LAYER,
+    DEFAULT_BIAS_LEGEND_FILENAME,
+    DEFAULT_BIAS_OBSERVATION_VARIABLE,
+    BiasTileGenerator,
+)
 from tiling.precip_amount_tiles import PrecipAmountTileGenerator
 from tiling.tcc_tiles import TccTileGenerator
 from tiling.temperature_tiles import TemperatureTileGenerator
@@ -43,6 +51,25 @@ def _default_valid_time(cube: DataCube) -> object:
     if values.size == 0:
         raise ValueError("datacube time coordinate is empty")
     return values[0]
+
+
+def _load_observation_dataset(
+    path: str | Path, *, engine: str | None = None
+) -> xr.Dataset:
+    src = Path(path)
+    try:
+        with xr.open_dataset(
+            src,
+            engine=engine,
+            decode_cf=True,
+            mask_and_scale=True,
+        ) as ds:
+            ds.load()
+            return ds
+    except FileNotFoundError as exc:
+        raise FileNotFoundError(f"Observation dataset not found: {src}") from exc
+    except Exception as exc:  # noqa: BLE001
+        raise ValueError(f"Failed to open observation dataset: {src}") from exc
 
 
 def generate_ecmwf_raster_tiles(
@@ -131,7 +158,10 @@ def generate_ecmwf_raster_tiles(
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="python -m tiles",
-        description="Generate ECMWF raster tiles (temperature/cloud/precipitation, optional wind speed).",
+        description=(
+            "Generate ECMWF raster tiles (temperature/cloud/precipitation, optional wind speed) "
+            "and optional observation-vs-forecast bias tiles."
+        ),
     )
     parser.add_argument(
         "--datacube", required=True, help="Path to a NetCDF/Zarr DataCube"
@@ -188,6 +218,49 @@ def _build_parser() -> argparse.ArgumentParser:
         default=DEFAULT_WIND_SPEED_OPACITY,
         help="Wind speed tile opacity in [0, 1] (default: 0.35)",
     )
+
+    parser.add_argument(
+        "--bias",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Generate observation-vs-forecast bias tiles (default: disabled)",
+    )
+    parser.add_argument(
+        "--bias-observation",
+        default=None,
+        help="Path to an observation NetCDF dataset (required when --bias)",
+    )
+    parser.add_argument(
+        "--bias-mode",
+        choices=("difference", "relative_error"),
+        default="difference",
+        help="Bias mode: difference (forecast-observation) or relative_error (%%) (default: difference)",
+    )
+    parser.add_argument(
+        "--bias-layer",
+        default=DEFAULT_BIAS_LAYER,
+        help=f"Output layer name for bias tiles (default: {DEFAULT_BIAS_LAYER})",
+    )
+    parser.add_argument(
+        "--bias-forecast-variable",
+        default=DEFAULT_BIAS_FORECAST_VARIABLE,
+        help=f"Forecast variable name for bias computation (default: {DEFAULT_BIAS_FORECAST_VARIABLE})",
+    )
+    parser.add_argument(
+        "--bias-observation-variable",
+        default=DEFAULT_BIAS_OBSERVATION_VARIABLE,
+        help=f"Observation variable name for bias computation (default: {DEFAULT_BIAS_OBSERVATION_VARIABLE})",
+    )
+    parser.add_argument(
+        "--bias-legend",
+        default=DEFAULT_BIAS_LEGEND_FILENAME,
+        help=f"Bias legend filename inside config dir (default: {DEFAULT_BIAS_LEGEND_FILENAME})",
+    )
+    parser.add_argument(
+        "--bias-engine",
+        default=None,
+        help="Optional xarray engine for opening the observation dataset (e.g., netcdf4, h5netcdf)",
+    )
     return parser
 
 
@@ -198,22 +271,84 @@ def main(argv: Iterable[str] | None = None) -> int:
     cube = DataCube.open(Path(args.datacube))
     try:
         formats = _parse_formats(tuple(args.formats)) or DEFAULT_TILE_FORMATS
-
-        results = generate_ecmwf_raster_tiles(
-            cube,
-            Path(args.output_dir),
-            valid_time=args.valid_time,
-            level=args.level,
-            temperature=bool(args.temperature),
-            cloud=bool(args.cloud),
-            precipitation=bool(args.precipitation),
-            wind_speed=bool(args.wind_speed),
-            wind_speed_opacity=float(args.wind_speed_opacity),
-            min_zoom=int(args.min_zoom) if args.min_zoom is not None else None,
-            max_zoom=int(args.max_zoom) if args.max_zoom is not None else None,
-            tile_size=int(args.tile_size) if args.tile_size is not None else None,
-            formats=formats,
+        resolved_valid_time = (
+            _default_valid_time(cube) if args.valid_time is None else args.valid_time
         )
+
+        results: list[object] = []
+
+        wants_ecmwf_layers = any(
+            (
+                bool(args.temperature),
+                bool(args.cloud),
+                bool(args.precipitation),
+                bool(args.wind_speed),
+            )
+        )
+        if wants_ecmwf_layers:
+            results.extend(
+                generate_ecmwf_raster_tiles(
+                    cube,
+                    Path(args.output_dir),
+                    valid_time=resolved_valid_time,
+                    level=args.level,
+                    temperature=bool(args.temperature),
+                    cloud=bool(args.cloud),
+                    precipitation=bool(args.precipitation),
+                    wind_speed=bool(args.wind_speed),
+                    wind_speed_opacity=float(args.wind_speed_opacity),
+                    min_zoom=int(args.min_zoom) if args.min_zoom is not None else None,
+                    max_zoom=int(args.max_zoom) if args.max_zoom is not None else None,
+                    tile_size=int(args.tile_size)
+                    if args.tile_size is not None
+                    else None,
+                    formats=formats,
+                )
+            )
+
+        if bool(args.bias):
+            if (
+                args.bias_observation is None
+                or str(args.bias_observation).strip() == ""
+            ):
+                raise ValueError(
+                    "--bias-observation is required when --bias is enabled"
+                )
+
+            obs_ds = _load_observation_dataset(
+                args.bias_observation, engine=args.bias_engine
+            )
+            try:
+                results.append(
+                    BiasTileGenerator(
+                        cube,
+                        obs_ds,
+                        mode=str(args.bias_mode),
+                        forecast_variable=str(args.bias_forecast_variable),
+                        observation_variable=str(args.bias_observation_variable),
+                        layer=str(args.bias_layer),
+                        legend_filename=str(args.bias_legend),
+                    ).generate(
+                        Path(args.output_dir),
+                        valid_time=resolved_valid_time,
+                        level=args.level,
+                        min_zoom=int(args.min_zoom)
+                        if args.min_zoom is not None
+                        else None,
+                        max_zoom=int(args.max_zoom)
+                        if args.max_zoom is not None
+                        else None,
+                        tile_size=int(args.tile_size)
+                        if args.tile_size is not None
+                        else None,
+                        formats=formats,
+                    )
+                )
+            finally:
+                obs_ds.close()
+
+        if not results:
+            raise ValueError("No tile layers selected")
     finally:
         cube.dataset.close()
 
