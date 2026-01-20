@@ -3149,6 +3149,46 @@
       }
     },
     "/api/v1/products/{product_id}": {
+      "get": {
+        "operationId": "get_product_api_v1_products__product_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "product_id",
+            "required": true,
+            "schema": {
+              "title": "Product Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProductDetailResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Product",
+        "tags": [
+          "products"
+        ]
+      },
       "put": {
         "operationId": "update_product_api_v1_products__product_id__put",
         "parameters": [
