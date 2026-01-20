@@ -29,7 +29,7 @@
 Web 端实现方式：
 - 继续保留现有开源底图（`open`）的 `BasemapSelector`
 - 当 `basemapProvider != open` 时，隐藏底图选择器，避免“看起来能切换但实际无效”的误用
-- `ion` 模式：通过 `Ion.defaultAccessToken` + `createWorldImagery()` / `createWorldTerrainAsync()` 加载
+- `ion` 模式：通过 `Ion.defaultAccessToken` + `createWorldImageryAsync()` / `createWorldTerrainAsync()` 加载
 - `selfHosted` 模式：
   - 底图：`UrlTemplateImageryProvider(urlTemplate)`
   - 地形：`CesiumTerrainProvider.fromUrl(terrainUrl)`（quantized-mesh）
@@ -101,4 +101,3 @@ Web 端通过 `GET /config.json` 获取运行时配置（当前项目已采用�
 - `apps/web/src/config.ts`：扩展 `PublicConfig.map` 并保持向后兼容（旧 `config.json` 仍可用）
 - `apps/web/src/features/viewer/CesiumViewer.tsx`：根据 `map.*Provider` 应用 imagery/terrain provider
 - 支持 `open` 模式下继续使用现有开源底图切换逻辑
-
