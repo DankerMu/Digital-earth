@@ -21,4 +21,3 @@ __all__ = [
     "TileID",
     "tiles_for_rectangle",
 ]
-

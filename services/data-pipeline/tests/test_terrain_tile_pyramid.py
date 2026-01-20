@@ -75,9 +75,17 @@ def test_tile_pyramid_validation_errors() -> None:
     with pytest.raises(ValueError, match="y out of range"):
         TileID(z=0, x=0, y=1)
     with pytest.raises(ValueError, match="Zoom levels must be"):
-        list(iter_tile_pyramid(GeoRect(west=0, south=0, east=1, north=1), min_zoom=-1, max_zoom=0))
+        list(
+            iter_tile_pyramid(
+                GeoRect(west=0, south=0, east=1, north=1), min_zoom=-1, max_zoom=0
+            )
+        )
     with pytest.raises(ValueError, match="Expected min_zoom"):
-        list(iter_tile_pyramid(GeoRect(west=0, south=0, east=1, north=1), min_zoom=2, max_zoom=1))
+        list(
+            iter_tile_pyramid(
+                GeoRect(west=0, south=0, east=1, north=1), min_zoom=2, max_zoom=1
+            )
+        )
 
 
 def test_iter_tiles_in_ranges() -> None:

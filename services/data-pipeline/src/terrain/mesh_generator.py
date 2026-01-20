@@ -17,7 +17,9 @@ WGS84_E2 = WGS84_F * (2.0 - WGS84_F)
 WGS84_B = WGS84_A * (1.0 - WGS84_F)
 
 
-def wgs84_to_ecef(lon_deg: float, lat_deg: float, height_m: float) -> tuple[float, float, float]:
+def wgs84_to_ecef(
+    lon_deg: float, lat_deg: float, height_m: float
+) -> tuple[float, float, float]:
     lon = math.radians(float(lon_deg))
     lat = math.radians(float(lat_deg))
     sin_lat = math.sin(lat)
@@ -32,7 +34,9 @@ def wgs84_to_ecef(lon_deg: float, lat_deg: float, height_m: float) -> tuple[floa
     return x, y, z
 
 
-def _transform_to_scaled_space(x: float, y: float, z: float) -> tuple[float, float, float]:
+def _transform_to_scaled_space(
+    x: float, y: float, z: float
+) -> tuple[float, float, float]:
     return x / WGS84_A, y / WGS84_A, z / WGS84_B
 
 
@@ -158,7 +162,9 @@ def _reorder_by_first_appearance(
     if len(new_to_old) != vertex_count:
         # In a regular grid all vertices should be referenced by triangles.
         missing = vertex_count - len(new_to_old)
-        raise ValueError(f"Mesh triangles did not reference all vertices (missing {missing})")
+        raise ValueError(
+            f"Mesh triangles did not reference all vertices (missing {missing})"
+        )
 
     u_new = [int(u[old]) for old in new_to_old]
     v_new = [int(v[old]) for old in new_to_old]

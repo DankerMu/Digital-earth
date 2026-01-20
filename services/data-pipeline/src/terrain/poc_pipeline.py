@@ -8,7 +8,12 @@ from typing import Any
 
 from .dem_downloader import DemMosaic
 from .mesh_generator import QuantizedMeshOptions, encode_quantized_mesh
-from .tile_pyramid import GeoRect, available_ranges, tile_bounds_deg, tiles_for_rectangle
+from .tile_pyramid import (
+    GeoRect,
+    available_ranges,
+    tile_bounds_deg,
+    tiles_for_rectangle,
+)
 
 
 @dataclass(frozen=True)
@@ -104,4 +109,6 @@ def generate_tileset(
             tile_count += 1
 
     elapsed_s = time.perf_counter() - started
-    return TilesetStats(tile_count=tile_count, total_bytes=total_bytes, elapsed_s=elapsed_s)
+    return TilesetStats(
+        tile_count=tile_count, total_bytes=total_bytes, elapsed_s=elapsed_s
+    )

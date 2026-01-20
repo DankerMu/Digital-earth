@@ -38,7 +38,9 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Sample region bounds in degrees (default: Beijing 116-117E,39-40N)",
     )
     parser.add_argument("--min-zoom", type=int, default=0, help="Min zoom (default: 0)")
-    parser.add_argument("--max-zoom", type=int, default=12, help="Max zoom (default: 12)")
+    parser.add_argument(
+        "--max-zoom", type=int, default=12, help="Max zoom (default: 12)"
+    )
     parser.add_argument(
         "--grid-size",
         type=int,

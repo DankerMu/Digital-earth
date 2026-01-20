@@ -58,4 +58,3 @@ def test_generate_tileset_writes_expected_files(tmp_path: Path) -> None:
     )
     write_layer_json(out_dir / "layer.json", layer=layer)
     assert (out_dir / "layer.json").exists()
-

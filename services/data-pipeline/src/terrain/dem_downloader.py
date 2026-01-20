@@ -27,7 +27,9 @@ class CopernicusDemTile:
             raise ValueError(f"Invalid tile lon_deg: {self.lon_deg}")
 
 
-def _copernicus_item_id(tile: CopernicusDemTile, *, dataset: CopernicusDemDataset) -> str:
+def _copernicus_item_id(
+    tile: CopernicusDemTile, *, dataset: CopernicusDemDataset
+) -> str:
     cog_tag = {"glo30": "10", "glo90": "30"}[dataset]
 
     lat_prefix = "N" if tile.lat_deg >= 0 else "S"
@@ -87,11 +89,15 @@ class CopernicusStacClient:
         if not isinstance(assets, dict) or "elevation" not in assets:
             raise ValueError(f"Missing elevation asset in STAC item: {tile}")
         elevation = assets["elevation"]
-        if not isinstance(elevation, dict) or not isinstance(elevation.get("href"), str):
+        if not isinstance(elevation, dict) or not isinstance(
+            elevation.get("href"), str
+        ):
             raise ValueError(f"Invalid elevation asset in STAC item: {tile}")
         return str(elevation["href"])
 
-    def download_elevation_geotiff(self, tile: CopernicusDemTile, *, out_dir: Path) -> Path:
+    def download_elevation_geotiff(
+        self, tile: CopernicusDemTile, *, out_dir: Path
+    ) -> Path:
         out_dir.mkdir(parents=True, exist_ok=True)
         item_id = _copernicus_item_id(tile, dataset=self.dataset)
         dest = out_dir / f"{item_id}_DEM.tif"
@@ -141,7 +147,12 @@ class DemGrid:
         return (self.west <= lon <= self.east) and (self.south <= lat <= self.north)
 
     def sample(
-        self, lon: float, lat: float, *, method: Literal["nearest", "bilinear"] = "bilinear", fill_value: float = 0.0
+        self,
+        lon: float,
+        lat: float,
+        *,
+        method: Literal["nearest", "bilinear"] = "bilinear",
+        fill_value: float = 0.0,
     ) -> float:
         if not self.contains(lon, lat):
             return float(fill_value)
@@ -184,7 +195,12 @@ class DemGrid:
         return v0 * (1.0 - dy) + v1 * dy
 
     def sample_grid(
-        self, rect: GeoRect, *, grid_size: int, method: Literal["nearest", "bilinear"] = "bilinear", fill_value: float = 0.0
+        self,
+        rect: GeoRect,
+        *,
+        grid_size: int,
+        method: Literal["nearest", "bilinear"] = "bilinear",
+        fill_value: float = 0.0,
     ) -> np.ndarray:
         if grid_size < 2:
             raise ValueError("grid_size must be >= 2")
@@ -193,7 +209,11 @@ class DemGrid:
         out = np.full((grid_size, grid_size), float(fill_value), dtype=np.float32)
         for j, lat in enumerate(lats):
             for i, lon in enumerate(lons):
-                out[j, i] = float(self.sample(float(lon), float(lat), method=method, fill_value=fill_value))
+                out[j, i] = float(
+                    self.sample(
+                        float(lon), float(lat), method=method, fill_value=fill_value
+                    )
+                )
         return out
 
     @staticmethod
@@ -263,7 +283,9 @@ class DemMosaic:
 
         return float(fill_value)
 
-    def sample_grid(self, rect: GeoRect, *, grid_size: int, fill_value: float = 0.0) -> np.ndarray:
+    def sample_grid(
+        self, rect: GeoRect, *, grid_size: int, fill_value: float = 0.0
+    ) -> np.ndarray:
         if grid_size < 2:
             raise ValueError("grid_size must be >= 2")
         lons = np.linspace(rect.west, rect.east, grid_size, dtype=np.float64)
@@ -271,7 +293,9 @@ class DemMosaic:
         out = np.full((grid_size, grid_size), float(fill_value), dtype=np.float32)
         for j, lat in enumerate(lats):
             for i, lon in enumerate(lons):
-                out[j, i] = float(self.sample(float(lon), float(lat), fill_value=fill_value))
+                out[j, i] = float(
+                    self.sample(float(lon), float(lat), fill_value=fill_value)
+                )
         return out
 
     @staticmethod

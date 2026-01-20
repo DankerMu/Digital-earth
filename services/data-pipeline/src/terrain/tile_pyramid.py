@@ -173,7 +173,9 @@ def available_ranges(
     return levels
 
 
-def iter_tiles_in_ranges(ranges: Iterable[tuple[int, int, int, int]], z: int) -> Iterator[TileID]:
+def iter_tiles_in_ranges(
+    ranges: Iterable[tuple[int, int, int, int]], z: int
+) -> Iterator[TileID]:
     """Iterate tiles for precomputed ranges (x_min, x_max, y_min, y_max)."""
 
     for x_min, x_max, y_min, y_max in ranges:

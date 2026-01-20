@@ -69,7 +69,9 @@ def test_encode_quantized_mesh_basic_decode() -> None:
         dtype=np.float32,
     )
 
-    payload = encode_quantized_mesh(rect, heights, options=QuantizedMeshOptions(gzip=False))
+    payload = encode_quantized_mesh(
+        rect, heights, options=QuantizedMeshOptions(gzip=False)
+    )
     assert len(payload) > 88
 
     # Header: <dddffddddddd
@@ -133,5 +135,7 @@ def test_encode_quantized_mesh_basic_decode() -> None:
 def test_encode_quantized_mesh_gzip_magic() -> None:
     rect = GeoRect(west=0.0, south=0.0, east=1.0, north=1.0)
     heights = np.zeros((2, 2), dtype=np.float32)
-    payload = encode_quantized_mesh(rect, heights, options=QuantizedMeshOptions(gzip=True))
+    payload = encode_quantized_mesh(
+        rect, heights, options=QuantizedMeshOptions(gzip=True)
+    )
     assert payload[:2] == b"\x1f\x8b"
