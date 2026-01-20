@@ -7,9 +7,12 @@ import {
 import { useEffect, useRef, useState } from 'react';
 import { getBasemapById, type BasemapId } from '../../config/basemaps';
 import { useBasemapStore } from '../../state/basemap';
+import { useSceneModeStore } from '../../state/sceneMode';
 import { BasemapSelector } from './BasemapSelector';
 import { CompassControl } from './CompassControl';
+import { SceneModeToggle } from './SceneModeToggle';
 import { createImageryProviderForBasemap, setViewerBasemap } from './cesiumBasemap';
+import { switchViewerSceneMode } from './cesiumSceneMode';
 import 'cesium/Build/Cesium/Widgets/widgets.css';
 
 const DEFAULT_CAMERA = {
@@ -25,7 +28,9 @@ export function CesiumViewer() {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [viewer, setViewer] = useState<CesiumViewerInstance | null>(null);
   const basemapId = useBasemapStore((state) => state.basemapId);
+  const sceneModeId = useSceneModeStore((state) => state.sceneModeId);
   const appliedBasemapIdRef = useRef<BasemapId | null>(null);
+  const didApplySceneModeRef = useRef(false);
 
   useEffect(() => {
     const defaultDestination = Cartesian3.fromDegrees(
@@ -89,11 +94,21 @@ export function CesiumViewer() {
     appliedBasemapIdRef.current = basemapId;
   }, [basemapId, viewer]);
 
+  useEffect(() => {
+    if (!viewer) return;
+
+    const duration = didApplySceneModeRef.current ? 0.8 : 0;
+    didApplySceneModeRef.current = true;
+
+    return switchViewerSceneMode(viewer, sceneModeId, { duration });
+  }, [sceneModeId, viewer]);
+
   return (
     <div className="viewerRoot">
       <div ref={containerRef} className="viewerCanvas" data-testid="cesium-container" />
       <div className="viewerOverlay">
         {viewer ? <CompassControl viewer={viewer} /> : null}
+        <SceneModeToggle />
         <BasemapSelector />
       </div>
     </div>
