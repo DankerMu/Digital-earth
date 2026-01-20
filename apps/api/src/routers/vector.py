@@ -557,7 +557,7 @@ def _rk4_step(
 
     u0, v0 = sampled
     speed = float(np.hypot(u0, v0))
-    if speed < float(min_speed):
+    if speed <= 0.0 or speed < float(min_speed):
         return None
 
     dt = float(step_m) / speed
@@ -600,19 +600,15 @@ def _rk4_step(
     )
     if k3 is None:
         return None
-    k4 = _derivatives(
-        float(lat) + dt * k3[0], float(lon_unwrapped) + dt * k3[1]
-    )
+    k4 = _derivatives(float(lat) + dt * k3[0], float(lon_unwrapped) + dt * k3[1])
     if k4 is None:
         return None
 
     lat_next = float(
-        float(lat)
-        + (dt / 6.0) * (k1[0] + 2.0 * k2[0] + 2.0 * k3[0] + k4[0])
+        float(lat) + (dt / 6.0) * (k1[0] + 2.0 * k2[0] + 2.0 * k3[0] + k4[0])
     )
     lon_next = float(
-        float(lon_unwrapped)
-        + (dt / 6.0) * (k1[1] + 2.0 * k2[1] + 2.0 * k3[1] + k4[1])
+        float(lon_unwrapped) + (dt / 6.0) * (k1[1] + 2.0 * k2[1] + 2.0 * k3[1] + k4[1])
     )
 
     if not (np.isfinite(lat_next) and np.isfinite(lon_next)):
@@ -659,7 +655,9 @@ def _integrate_streamline(
         if next_point is None:
             break
         lat_next, lon_next = next_point
-        if not _bbox_contains(lon=lon_next, lat=lat_next, bbox=bbox, lon_coord=lon_coord):
+        if not _bbox_contains(
+            lon=lon_next, lat=lat_next, bbox=bbox, lon_coord=lon_coord
+        ):
             break
         points_backward.append((lon_next, lat_next))
         lat_cursor = lat_next
@@ -683,7 +681,9 @@ def _integrate_streamline(
         if next_point is None:
             break
         lat_next, lon_next = next_point
-        if not _bbox_contains(lon=lon_next, lat=lat_next, bbox=bbox, lon_coord=lon_coord):
+        if not _bbox_contains(
+            lon=lon_next, lat=lat_next, bbox=bbox, lon_coord=lon_coord
+        ):
             break
         points_forward.append((lon_next, lat_next))
         lat_cursor = lat_next

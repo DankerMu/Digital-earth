@@ -165,6 +165,9 @@ def test_vector_helpers_cover_edge_cases() -> None:
     with pytest.raises(ValueError, match="must not be empty"):
         vector_router._parse_time("", label="run")
 
+    with pytest.raises(ValueError, match="must be an ISO8601 timestamp"):
+        vector_router._parse_time("not-a-time", label="run")
+
     with pytest.raises(ValueError, match="level must not be empty"):
         vector_router._normalize_level(" ")
 
@@ -251,6 +254,252 @@ def test_vector_helpers_cover_edge_cases() -> None:
             xr.Dataset({"temp": xr.DataArray([1.0])})
         )
     assert exc.value.status_code == 404
+
+
+def test_streamlines_helpers_cover_edge_cases() -> None:
+    from routers import vector as vector_router
+
+    # normalize axis: no-op vs reversed coordinate
+    values = np.arange(6, dtype=np.float32).reshape(3, 2)
+    coord = np.array([0.0, 1.0, 2.0], dtype=np.float32)
+    norm_coord, norm_values = vector_router._normalize_grid_axis(coord, values, axis=0)
+    assert norm_coord.tolist() == [0.0, 1.0, 2.0]
+    assert norm_values.tolist() == values.astype(np.float64).tolist()
+
+    desc_coord = np.array([2.0, 1.0, 0.0], dtype=np.float32)
+    flipped_coord, flipped_values = vector_router._normalize_grid_axis(
+        desc_coord, values, axis=0
+    )
+    assert flipped_coord.tolist() == [0.0, 1.0, 2.0]
+    assert flipped_values.tolist() == values[::-1].astype(np.float64).tolist()
+
+    # bilinear sampling: hit/miss + NaN handling
+    lat_coord = np.array([0.0, 1.0], dtype=np.float64)
+    lon_coord = np.array([0.0, 1.0], dtype=np.float64)
+    u_grid = np.array([[0.0, 2.0], [4.0, 6.0]], dtype=np.float64)
+    v_grid = np.array([[0.0, 0.0], [2.0, 2.0]], dtype=np.float64)
+
+    sampled = vector_router._bilinear_sample_wind(
+        lat=0.5,
+        lon=0.5,
+        lat_coord=lat_coord,
+        lon_coord=lon_coord,
+        u_grid=u_grid,
+        v_grid=v_grid,
+    )
+    assert sampled == pytest.approx((3.0, 1.0))
+
+    assert (
+        vector_router._bilinear_sample_wind(
+            lat=-1.0,
+            lon=0.5,
+            lat_coord=lat_coord,
+            lon_coord=lon_coord,
+            u_grid=u_grid,
+            v_grid=v_grid,
+        )
+        is None
+    )
+    assert (
+        vector_router._bilinear_sample_wind(
+            lat=0.5,
+            lon=5.0,
+            lat_coord=lat_coord,
+            lon_coord=lon_coord,
+            u_grid=u_grid,
+            v_grid=v_grid,
+        )
+        is None
+    )
+
+    u_nan = u_grid.copy()
+    u_nan[0, 0] = np.nan
+    assert (
+        vector_router._bilinear_sample_wind(
+            lat=0.5,
+            lon=0.5,
+            lat_coord=lat_coord,
+            lon_coord=lon_coord,
+            u_grid=u_nan,
+            v_grid=v_grid,
+        )
+        is None
+    )
+
+    # rk4 step: speed threshold + polar singularity guard
+    lat_coord2 = np.array([0.0, 1.0], dtype=np.float64)
+    lon_coord2 = np.array([0.0, 1.0], dtype=np.float64)
+    u_zero = np.zeros((2, 2), dtype=np.float64)
+    v_zero = np.zeros((2, 2), dtype=np.float64)
+    assert (
+        vector_router._rk4_step(
+            lat=0.5,
+            lon_unwrapped=0.5,
+            lon_coord=lon_coord2,
+            lat_coord=lat_coord2,
+            u_grid=u_zero,
+            v_grid=v_zero,
+            step_m=1000.0,
+            min_speed=0.1,
+            direction=1.0,
+        )
+        is None
+    )
+
+    lat_polar = np.array([89.0, 90.0], dtype=np.float64)
+    lon_polar = np.array([0.0, 1.0], dtype=np.float64)
+    u_polar = np.ones((2, 2), dtype=np.float64)
+    v_polar = np.zeros((2, 2), dtype=np.float64)
+    assert (
+        vector_router._rk4_step(
+            lat=89.99999,
+            lon_unwrapped=0.5,
+            lon_coord=lon_polar,
+            lat_coord=lat_polar,
+            u_grid=u_polar,
+            v_grid=v_polar,
+            step_m=1000.0,
+            min_speed=0.0,
+            direction=1.0,
+        )
+        is None
+    )
+
+    # streamline integration: seed outside bbox returns empty polyline
+    bbox = (0.0, 0.0, 1.0, 1.0)
+    empty_lat, empty_lon = vector_router._integrate_streamline(
+        seed_lat=2.0,
+        seed_lon=2.0,
+        bbox=bbox,
+        lat_coord=lat_coord2,
+        lon_coord=lon_coord2,
+        u_grid=u_polar,
+        v_grid=v_polar,
+        step_km=1.0,
+        max_steps=5,
+        min_speed=0.0,
+    )
+    assert empty_lat == []
+    assert empty_lon == []
+
+
+def test_streamlines_helpers_cover_wrap_bbox_and_short_lines() -> None:
+    from routers import vector as vector_router
+
+    # bbox span >= 360 means "any lon" within lat range.
+    lon_coord = np.array([0.0, 359.0], dtype=np.float64)
+    bbox_global = (0.0, -10.0, 360.0, 10.0)
+    assert (
+        vector_router._bbox_contains(
+            lon=123.0, lat=0.0, bbox=bbox_global, lon_coord=lon_coord
+        )
+        is True
+    )
+    assert (
+        vector_router._bbox_contains(
+            lon=123.0, lat=20.0, bbox=bbox_global, lon_coord=lon_coord
+        )
+        is False
+    )
+
+    # bbox that crosses dateline should accept lon near 360 and near 0.
+    bbox_wrap = (350.0, -10.0, 10.0, 10.0)
+    assert (
+        vector_router._bbox_contains(
+            lon=355.0, lat=0.0, bbox=bbox_wrap, lon_coord=lon_coord
+        )
+        is True
+    )
+    assert (
+        vector_router._bbox_contains(
+            lon=5.0, lat=0.0, bbox=bbox_wrap, lon_coord=lon_coord
+        )
+        is True
+    )
+    assert (
+        vector_router._bbox_contains(
+            lon=180.0, lat=0.0, bbox=bbox_wrap, lon_coord=lon_coord
+        )
+        is False
+    )
+
+    # streamline integration: if RK4 cannot advance, return empty polyline.
+    lat_coord2 = np.array([0.0, 1.0], dtype=np.float64)
+    lon_coord2 = np.array([0.0, 1.0], dtype=np.float64)
+    u_zero = np.zeros((2, 2), dtype=np.float64)
+    v_zero = np.zeros((2, 2), dtype=np.float64)
+    bbox = (0.0, 0.0, 1.0, 1.0)
+    line_lat, line_lon = vector_router._integrate_streamline(
+        seed_lat=0.5,
+        seed_lon=0.5,
+        bbox=bbox,
+        lat_coord=lat_coord2,
+        lon_coord=lon_coord2,
+        u_grid=u_zero,
+        v_grid=v_zero,
+        step_km=1.0,
+        max_steps=5,
+        min_speed=0.1,
+    )
+    assert line_lat == []
+    assert line_lon == []
+
+
+def test_streamlines_helpers_cover_degenerate_grids() -> None:
+    from routers import vector as vector_router
+
+    coord = np.array([0.0], dtype=np.float32)
+    values = np.array([[1.0]], dtype=np.float32)
+    norm_coord, norm_values = vector_router._normalize_grid_axis(coord, values, axis=0)
+    assert norm_coord.tolist() == [0.0]
+    assert norm_values.tolist() == [[1.0]]
+
+    lat_coord = np.array([0.0], dtype=np.float64)
+    lon_coord = np.array([0.0, 1.0], dtype=np.float64)
+    u_grid = np.zeros((1, 2), dtype=np.float64)
+    v_grid = np.zeros((1, 2), dtype=np.float64)
+    assert (
+        vector_router._bilinear_sample_wind(
+            lat=0.0,
+            lon=0.5,
+            lat_coord=lat_coord,
+            lon_coord=lon_coord,
+            u_grid=u_grid,
+            v_grid=v_grid,
+        )
+        is None
+    )
+
+    lat_coord2 = np.array([0.0, 0.0], dtype=np.float64)
+    lon_coord2 = np.array([0.0, 1.0], dtype=np.float64)
+    u_grid2 = np.zeros((2, 2), dtype=np.float64)
+    v_grid2 = np.zeros((2, 2), dtype=np.float64)
+    assert (
+        vector_router._bilinear_sample_wind(
+            lat=0.0,
+            lon=0.5,
+            lat_coord=lat_coord2,
+            lon_coord=lon_coord2,
+            u_grid=u_grid2,
+            v_grid=v_grid2,
+        )
+        is None
+    )
+
+    assert (
+        vector_router._rk4_step(
+            lat=0.5,
+            lon_unwrapped=0.5,
+            lon_coord=np.array([0.0, 1.0], dtype=np.float64),
+            lat_coord=np.array([0.0, 1.0], dtype=np.float64),
+            u_grid=np.zeros((2, 2), dtype=np.float64),
+            v_grid=np.zeros((2, 2), dtype=np.float64),
+            step_m=1000.0,
+            min_speed=0.0,
+            direction=1.0,
+        )
+        is None
+    )
 
 
 def test_vector_bbox_stride_returns_points_matching_datacube(
@@ -1000,3 +1249,59 @@ def test_streamlines_prewarm_requires_editor_permission(
         json={"bboxes": ["0,0,1,1"], "stride": 1},
     )
     assert prewarm.status_code == 403
+
+
+def test_streamlines_works_without_redis_and_with_absolute_asset_path(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    db_url = f"sqlite+pysqlite:///{tmp_path / 'catalog.db'}"
+    client, _redis = _make_client(monkeypatch, tmp_path, db_url=db_url)
+    client.app.state.redis_client = None
+    monkeypatch.setenv(
+        "DIGITAL_EARTH_VECTOR_CACHE_DIR", str(tmp_path / "vector-cache-streamlines")
+    )
+
+    cube_path = tmp_path / "wind-850-abs.nc"
+    lat = np.array([0.0, 1.0], dtype=np.float32)
+    lon = np.array([0.0, 1.0], dtype=np.float32)
+    level = xr.DataArray([850.0], dims=["level"], attrs={"units": "hPa"})
+
+    u_values = np.full((1, 1, 2, 2), 10.0, dtype=np.float32)
+    v_values = np.zeros((1, 1, 2, 2), dtype=np.float32)
+    _write_wind_datacube(
+        cube_path,
+        u_name="u",
+        v_name="v",
+        u_values=u_values,
+        v_values=v_values,
+        lat=lat,
+        lon=lon,
+        level=level,
+    )
+
+    run_time = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    valid_time = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    _seed_asset(
+        db_url,
+        run_time=run_time,
+        valid_time=valid_time,
+        variable="wind",
+        level="850",
+        path=str(cube_path),
+    )
+
+    url = "/api/v1/vector/ecmwf/20260101T000000Z/wind/850/20260101T000000Z/streamlines"
+    params = {"bbox": "0,0,1,1", "stride": 1, "step_km": 10.0, "max_steps": 10}
+    first = client.get(url, params=params)
+    assert first.status_code == 200
+
+    from routers import vector as vector_router
+
+    def _boom(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("expected cached response (no DB query)")
+
+    monkeypatch.setattr(vector_router, "_query_asset_path", _boom)
+
+    second = client.get(url, params=params)
+    assert second.status_code == 200
+    assert second.json() == first.json()
