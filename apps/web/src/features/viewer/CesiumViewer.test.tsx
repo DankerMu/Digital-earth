@@ -3,10 +3,22 @@ import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('cesium', () => {
+  const SceneMode = {
+    MORPHING: 0,
+    COLUMBUS_VIEW: 1,
+    SCENE2D: 2,
+    SCENE3D: 3
+  };
+
+  let morphCompleteHandler: (() => void) | null = null;
+
   const camera = {
     heading: 1,
     pitch: 0.5,
+    roll: 0.1,
     position: { x: 1, y: 2, z: 3 },
+    positionCartographic: { longitude: 0.1, latitude: 0.2, height: 123 },
+    computeViewRectangle: vi.fn(() => null),
     setView: vi.fn(),
     flyTo: vi.fn()
   };
@@ -17,6 +29,13 @@ vi.mock('cesium', () => {
   };
 
   const baseLayer = { baseLayer: true };
+
+  const morphComplete = {
+    addEventListener: vi.fn((handler: () => void) => {
+      morphCompleteHandler = handler;
+    }),
+    removeEventListener: vi.fn()
+  };
 
   const viewer = {
     camera,
@@ -36,6 +55,17 @@ vi.mock('cesium', () => {
       requestRenderMode: false,
       maximumRenderTimeChange: 0,
       requestRender: vi.fn(),
+      mode: SceneMode.SCENE3D,
+      morphComplete,
+      morphTo2D: vi.fn(() => {
+        viewer.scene.mode = SceneMode.SCENE2D;
+      }),
+      morphTo3D: vi.fn(() => {
+        viewer.scene.mode = SceneMode.SCENE3D;
+      }),
+      morphToColumbusView: vi.fn(() => {
+        viewer.scene.mode = SceneMode.COLUMBUS_VIEW;
+      }),
       screenSpaceCameraController: {
         minimumZoomDistance: 0,
         maximumZoomDistance: 0
@@ -49,6 +79,7 @@ vi.mock('cesium', () => {
   };
 
   return {
+    SceneMode,
     Viewer: vi.fn(function () {
       return viewer;
     }),
@@ -57,13 +88,18 @@ vi.mock('cesium', () => {
     }),
     Cartesian3: {
       fromDegrees: vi.fn(() => ({ destination: true })),
+      fromRadians: vi.fn(() => ({ destinationRadians: true })),
       clone: vi.fn((value: unknown) => ({ ...(value as Record<string, unknown>), cloned: true }))
     },
     WebMapTileServiceImageryProvider: vi.fn(),
     UrlTemplateImageryProvider: vi.fn(),
     WebMercatorTilingScheme: vi.fn(),
     Math: {
-      toDegrees: vi.fn((radians: number) => radians)
+      toDegrees: vi.fn((radians: number) => radians),
+      PI_OVER_TWO: Math.PI / 2
+    },
+    __mocks: {
+      getMorphCompleteHandler: () => morphCompleteHandler
     }
   };
 });
@@ -71,13 +107,16 @@ vi.mock('cesium', () => {
 import { Viewer } from 'cesium';
 import { DEFAULT_BASEMAP_ID } from '../../config/basemaps';
 import { useBasemapStore } from '../../state/basemap';
+import { DEFAULT_SCENE_MODE_ID, useSceneModeStore } from '../../state/sceneMode';
 import { CesiumViewer } from './CesiumViewer';
 
 describe('CesiumViewer', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     localStorage.removeItem('digital-earth.basemap');
+    localStorage.removeItem('digital-earth.sceneMode');
     useBasemapStore.setState({ basemapId: DEFAULT_BASEMAP_ID });
+    useSceneModeStore.setState({ sceneModeId: DEFAULT_SCENE_MODE_ID });
   });
 
   it('initializes and destroys Cesium Viewer', async () => {
@@ -172,5 +211,35 @@ describe('CesiumViewer', () => {
       true,
     );
     expect(viewer.scene.requestRender).toHaveBeenCalledTimes(1);
+  });
+
+  it('switches scene mode and restores camera view after morph completes', async () => {
+    const user = userEvent.setup();
+    render(<CesiumViewer />);
+
+    await waitFor(() => expect(vi.mocked(Viewer)).toHaveBeenCalledTimes(1));
+
+    const cesium = await import('cesium');
+    const viewer = vi.mocked(Viewer).mock.results[0].value;
+
+    await user.click(screen.getByRole('button', { name: '2D' }));
+
+    await waitFor(() => expect(viewer.scene.morphTo2D).toHaveBeenCalledWith(0.8));
+
+    const handler = (cesium as unknown as { __mocks: { getMorphCompleteHandler: () => (() => void) | null } })
+      .__mocks.getMorphCompleteHandler();
+    expect(handler).toBeTypeOf('function');
+
+    handler?.();
+
+    expect(viewer.camera.setView).toHaveBeenLastCalledWith({
+      destination: { destinationRadians: true },
+      orientation: {
+        heading: 1,
+        pitch: -(Math.PI / 2),
+        roll: 0
+      }
+    });
+    expect(viewer.scene.requestRender).toHaveBeenCalled();
   });
 });
