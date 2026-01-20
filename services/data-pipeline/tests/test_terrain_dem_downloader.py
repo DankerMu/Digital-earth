@@ -112,7 +112,19 @@ def test_demgrid_sample_grid() -> None:
         grid.sample_grid(GeoRect(west=0.0, south=0.0, east=1.0, north=1.0), grid_size=1)
 
 
-def test_demgrid_from_geotiff_requires_rasterio(tmp_path: Path) -> None:
+def test_demgrid_from_geotiff_requires_rasterio(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Simulate missing rasterio by blocking the import
+    def mock_import(name: str, *args: object, **kwargs: object) -> object:
+        if name == "rasterio":
+            raise ModuleNotFoundError(f"No module named '{name}'")
+        return __import__(name, *args, **kwargs)
+
+    import builtins
+
+    monkeypatch.setattr(builtins, "__import__", mock_import)
+
     dummy = tmp_path / "dummy.tif"
     dummy.write_bytes(b"")
     with pytest.raises(RuntimeError, match="rasterio is required"):
