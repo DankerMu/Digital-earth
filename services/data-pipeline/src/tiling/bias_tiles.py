@@ -31,6 +31,7 @@ DEFAULT_BIAS_VARIABLE: Final[str] = "bias"
 DEFAULT_BIAS_FORECAST_VARIABLE: Final[str] = "temp"
 DEFAULT_BIAS_OBSERVATION_VARIABLE: Final[str] = "TMP"
 DEFAULT_BIAS_LEGEND_FILENAME: Final[str] = "bias_legend.json"
+DEFAULT_BIAS_RELATIVE_ERROR_LEGEND_FILENAME: Final[str] = "bias_relative_error_legend.json"
 
 SUPPORTED_TILE_FORMATS: Final[set[str]] = {"png", "webp"}
 
@@ -289,9 +290,15 @@ class BiasTileGenerator:
         self._observation_variable = (observation_variable or "").strip()
         self._variable = (variable or "").strip()
         self._layer = _validate_layer(layer)
-        self._legend_filename = (
-            legend_filename or ""
-        ).strip() or DEFAULT_BIAS_LEGEND_FILENAME
+        resolved_legend_filename = (
+            (legend_filename or "").strip() or DEFAULT_BIAS_LEGEND_FILENAME
+        )
+        if (
+            self._mode == "relative_error"
+            and resolved_legend_filename == DEFAULT_BIAS_LEGEND_FILENAME
+        ):
+            resolved_legend_filename = DEFAULT_BIAS_RELATIVE_ERROR_LEGEND_FILENAME
+        self._legend_filename = resolved_legend_filename
         self._time_method = (time_method or "").strip() or "linear"
         self._spatial_method = (spatial_method or "").strip() or "linear"
         self._relative_epsilon = float(relative_epsilon)

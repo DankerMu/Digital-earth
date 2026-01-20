@@ -1,0 +1,11 @@
+{
+  "title": "监测-预报相对误差（Bias）",
+  "unit": "%",
+  "type": "gradient",
+  "stops": [
+    { "value": -100, "color": "#3B82F6", "label": "-100" },
+    { "value": 0, "color": "#FFFFFF", "label": "0" },
+    { "value": 100, "color": "#EF4444", "label": "100" }
+  ]
+}
+
