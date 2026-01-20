@@ -1,0 +1,76 @@
+schema_version: 1
+
+# ST-0057: Historical snowfall / snow depth metric definitions.
+# This file is intentionally "definition-only" and may be consumed by future pipeline code.
+
+dataset_priority:
+  # Preferred datasets in order (first available wins).
+  - cldas
+  - ecmwf
+  - archive
+
+variables:
+  # Canonical variable names and their expected meaning/units.
+  # Actual dataset variable names should be mapped in the ingestion/normalize stage.
+  snow_depth_cm:
+    description: "Snow depth (instantaneous)."
+    units: "cm"
+  precip_amount_mm:
+    description: "Total precipitation amount."
+    units: "mm"
+  precip_type:
+    description: "Precipitation type flag (rain/snow/mix)."
+    units: "flag"
+  snowfall_mm:
+    description: "Snowfall amount (solid precipitation, water equivalent)."
+    units: "mm"
+    derivation:
+      method: "preferred-direct"
+      fallback:
+        method: "precip_amount_times_type_mask"
+        mix_ratio: 0.5
+
+windows:
+  rolling_days:
+    - 7
+    - 30
+    - 90
+
+climatology:
+  baseline_years:
+    start: 1991
+    end: 2020
+  grouping:
+    # Preferred grouping for anomaly percentiles.
+    primary: "day_of_year"
+    smoothing_days: 7
+    fallback: "monthly"
+  min_samples: 30
+
+metrics:
+  - id: snowfall_sum
+    source: snowfall_mm
+    reducer: sum
+    windows: rolling_days
+    output_units: mm
+
+  - id: snow_depth_max
+    source: snow_depth_cm
+    reducer: max
+    windows: rolling_days
+    output_units: cm
+
+  - id: snow_depth_percentiles
+    source: snow_depth_cm
+    reducer: percentiles
+    percentiles: [10, 50, 90]
+    windows: rolling_days
+    output_units: cm
+
+  - id: snow_depth_anomaly_percentile
+    source: snow_depth_max
+    reducer: anomaly_percentile
+    climatology: true
+    windows: rolling_days
+    output_units: percentile
+
