@@ -215,6 +215,81 @@ body {
   color: #fff;
 }
 
+.eventLayersPanel {
+  width: 240px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: rgba(42, 42, 42, 0.75);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  backdrop-filter: blur(8px);
+}
+
+.eventLayersHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 0 0 6px;
+}
+
+.eventLayersLabel {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: rgba(226, 232, 240, 0.95);
+}
+
+.eventLayersSwitch {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: rgba(148, 163, 184, 0.95);
+}
+
+.eventLayersSwitch input {
+  cursor: pointer;
+}
+
+.eventLayersGroup {
+  display: flex;
+  gap: 8px;
+}
+
+.eventLayersButton {
+  flex: 1;
+  height: 34px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  background: rgba(15, 23, 42, 0.85);
+  color: rgba(226, 232, 240, 0.95);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 160ms ease, border-color 160ms ease, color 160ms ease;
+}
+
+.eventLayersButton:hover {
+  border-color: rgba(255, 255, 255, 0.25);
+}
+
+.eventLayersButton:focus-visible {
+  outline: 2px solid rgba(96, 165, 250, 1);
+  outline-offset: 2px;
+}
+
+.eventLayersButton[data-active='true'] {
+  background: rgba(59, 130, 246, 0.2);
+  border-color: rgba(59, 130, 246, 0.6);
+  color: #fff;
+}
+
+.eventLayersHelp {
+  font-size: 11px;
+  line-height: 1.25;
+  color: rgba(148, 163, 184, 0.95);
+}
+
 .attributionBar {
   position: fixed;
   right: 1rem;
