@@ -239,12 +239,28 @@ class ApiRateLimitSettings(BaseModel):
     rules: list[ApiRateLimitRule] = Field(default_factory=_default_api_rate_limit_rules)
 
 
+class ApiEffectTriggerLoggingSettings(BaseModel):
+    enabled: bool = True
+    sample_rate: float = Field(
+        default=0.1,
+        ge=0.0,
+        le=1.0,
+        description="Probability of persisting a received effect trigger event.",
+    )
+    max_events_per_request: int = Field(
+        default=100, ge=1, le=1000, description="Maximum events accepted per request."
+    )
+
+
 class ApiSettings(BaseModel):
     host: str
     port: int
     debug: bool = False
     cors_origins: list[str] = Field(default_factory=list)
     rate_limit: ApiRateLimitSettings = Field(default_factory=ApiRateLimitSettings)
+    effect_trigger_logging: ApiEffectTriggerLoggingSettings = Field(
+        default_factory=ApiEffectTriggerLoggingSettings
+    )
 
     @field_validator("cors_origins", mode="before")
     @classmethod
