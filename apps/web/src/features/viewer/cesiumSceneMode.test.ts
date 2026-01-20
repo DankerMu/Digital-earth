@@ -75,7 +75,9 @@ describe('cesiumSceneMode', () => {
     expect(scene.morphToColumbusView).toHaveBeenCalledWith(0.25);
     expect(morphCompleteHandler).toBeTypeOf('function');
 
-    morphCompleteHandler?.();
+    if (morphCompleteHandler) {
+      morphCompleteHandler();
+    }
 
     expect(camera.setView).toHaveBeenCalledWith({
       destination: { rect: true },
