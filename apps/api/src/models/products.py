@@ -10,9 +10,11 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    JSON,
     LargeBinary,
     String,
     Text,
+    UniqueConstraint,
     func,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -141,6 +143,38 @@ class Product(Base):
     hazards: Mapped[list["ProductHazard"]] = relationship(
         back_populates="product", cascade="all, delete-orphan"
     )
+    versions: Mapped[list["ProductVersion"]] = relationship(
+        back_populates="product",
+        cascade="all, delete-orphan",
+        order_by="ProductVersion.version",
+    )
+
+
+class ProductVersion(Base):
+    __tablename__ = "product_versions"
+    __table_args__ = (
+        UniqueConstraint(
+            "product_id",
+            "version",
+            name="uq_product_versions_product_id_version",
+        ),
+        Index("ix_product_versions_product_id", "product_id"),
+        Index("ix_product_versions_published_at", "published_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    product_id: Mapped[int] = mapped_column(
+        ForeignKey("products.id", ondelete="CASCADE"), nullable=False
+    )
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    snapshot: Mapped[object] = mapped_column(JSON, nullable=False)
+    published_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
+    product: Mapped["Product"] = relationship(back_populates="versions")
 
 
 class ProductHazard(Base):

@@ -11,7 +11,7 @@ from models.products import bbox_from_geojson
 
 def test_product_models_define_expected_tables() -> None:
     tables = Base.metadata.tables
-    assert set(tables) >= {"products", "product_hazards"}
+    assert set(tables) >= {"products", "product_hazards", "product_versions"}
 
     assert set(tables["products"].columns.keys()) >= {
         "id",
@@ -37,6 +37,14 @@ def test_product_models_define_expected_tables() -> None:
         "bbox_max_x",
         "bbox_max_y",
         "created_at",
+    }
+
+    assert set(tables["product_versions"].columns.keys()) >= {
+        "id",
+        "product_id",
+        "version",
+        "snapshot",
+        "published_at",
     }
 
 
@@ -70,6 +78,25 @@ def test_product_models_create_indexes_and_constraints() -> None:
 
     fks = inspector.get_foreign_keys("product_hazards")
     assert any(fk["referred_table"] == "products" for fk in fks)
+
+    version_indexes = {
+        idx["name"]: idx for idx in inspector.get_indexes("product_versions")
+    }
+    assert version_indexes["ix_product_versions_product_id"]["column_names"] == [
+        "product_id"
+    ]
+    assert version_indexes["ix_product_versions_published_at"]["column_names"] == [
+        "published_at"
+    ]
+
+    version_fks = inspector.get_foreign_keys("product_versions")
+    assert any(fk["referred_table"] == "products" for fk in version_fks)
+
+    uniques = inspector.get_unique_constraints("product_versions")
+    assert any(
+        set(constraint["column_names"]) == {"product_id", "version"}
+        for constraint in uniques
+    )
 
 
 def test_products_default_version_and_publish_status() -> None:

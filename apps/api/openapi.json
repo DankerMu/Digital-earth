@@ -822,6 +822,114 @@
         "title": "ParticleSizeRange",
         "type": "object"
       },
+      "ProductDetailResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "hazards": {
+            "items": {
+              "$ref": "#/components/schemas/ProductHazardDetailResponse"
+            },
+            "title": "Hazards",
+            "type": "array"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "issued_at": {
+            "format": "date-time",
+            "title": "Issued At",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "draft",
+              "published"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Text"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "valid_from": {
+            "format": "date-time",
+            "title": "Valid From",
+            "type": "string"
+          },
+          "valid_to": {
+            "format": "date-time",
+            "title": "Valid To",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "issued_at",
+          "valid_from",
+          "valid_to",
+          "version",
+          "status"
+        ],
+        "title": "ProductDetailResponse",
+        "type": "object"
+      },
+      "ProductHazardDetailResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "bbox": {
+            "$ref": "#/components/schemas/BBoxResponse"
+          },
+          "geometry": {
+            "title": "Geometry"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "severity": {
+            "title": "Severity",
+            "type": "string"
+          },
+          "valid_from": {
+            "format": "date-time",
+            "title": "Valid From",
+            "type": "string"
+          },
+          "valid_to": {
+            "format": "date-time",
+            "title": "Valid To",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "severity",
+          "geometry",
+          "bbox",
+          "valid_from",
+          "valid_to"
+        ],
+        "title": "ProductHazardDetailResponse",
+        "type": "object"
+      },
       "ProductHazardFeatureCollectionResponse": {
         "additionalProperties": false,
         "properties": {
@@ -939,6 +1047,36 @@
         "title": "ProductHazardSummaryResponse",
         "type": "object"
       },
+      "ProductHazardUpsertRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "geometry": {
+            "title": "Geometry"
+          },
+          "severity": {
+            "title": "Severity",
+            "type": "string"
+          },
+          "valid_from": {
+            "format": "date-time",
+            "title": "Valid From",
+            "type": "string"
+          },
+          "valid_to": {
+            "format": "date-time",
+            "title": "Valid To",
+            "type": "string"
+          }
+        },
+        "required": [
+          "severity",
+          "geometry",
+          "valid_from",
+          "valid_to"
+        ],
+        "title": "ProductHazardUpsertRequest",
+        "type": "object"
+      },
       "ProductSummaryResponse": {
         "additionalProperties": false,
         "properties": {
@@ -963,6 +1101,185 @@
           "title"
         ],
         "title": "ProductSummaryResponse",
+        "type": "object"
+      },
+      "ProductUpdateRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "hazards": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/ProductHazardUpsertRequest"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hazards"
+          },
+          "issued_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Issued At"
+          },
+          "text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Text"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          },
+          "valid_from": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Valid From"
+          },
+          "valid_to": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Valid To"
+          }
+        },
+        "title": "ProductUpdateRequest",
+        "type": "object"
+      },
+      "ProductUpsertRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "hazards": {
+            "items": {
+              "$ref": "#/components/schemas/ProductHazardUpsertRequest"
+            },
+            "title": "Hazards",
+            "type": "array"
+          },
+          "issued_at": {
+            "format": "date-time",
+            "title": "Issued At",
+            "type": "string"
+          },
+          "text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Text"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "valid_from": {
+            "format": "date-time",
+            "title": "Valid From",
+            "type": "string"
+          },
+          "valid_to": {
+            "format": "date-time",
+            "title": "Valid To",
+            "type": "string"
+          }
+        },
+        "required": [
+          "title",
+          "issued_at",
+          "valid_from",
+          "valid_to"
+        ],
+        "title": "ProductUpsertRequest",
+        "type": "object"
+      },
+      "ProductVersionResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "product_id": {
+            "title": "Product Id",
+            "type": "integer"
+          },
+          "published_at": {
+            "format": "date-time",
+            "title": "Published At",
+            "type": "string"
+          },
+          "snapshot": {
+            "additionalProperties": true,
+            "title": "Snapshot",
+            "type": "object"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "product_id",
+          "version",
+          "published_at",
+          "snapshot"
+        ],
+        "title": "ProductVersionResponse",
+        "type": "object"
+      },
+      "ProductVersionsResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ProductVersionResponse"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "title": "ProductVersionsResponse",
         "type": "object"
       },
       "ProductsQueryResponse": {
@@ -2632,6 +2949,45 @@
         "tags": [
           "products"
         ]
+      },
+      "post": {
+        "operationId": "create_product_api_v1_products_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProductUpsertRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProductDetailResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Product",
+        "tags": [
+          "products"
+        ]
       }
     },
     "/api/v1/products/hazards": {
@@ -2752,6 +3108,142 @@
           }
         },
         "summary": "List Product Hazards Geojson",
+        "tags": [
+          "products"
+        ]
+      }
+    },
+    "/api/v1/products/{product_id}": {
+      "put": {
+        "operationId": "update_product_api_v1_products__product_id__put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "product_id",
+            "required": true,
+            "schema": {
+              "title": "Product Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProductUpdateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProductDetailResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Product",
+        "tags": [
+          "products"
+        ]
+      }
+    },
+    "/api/v1/products/{product_id}/publish": {
+      "post": {
+        "operationId": "publish_product_api_v1_products__product_id__publish_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "product_id",
+            "required": true,
+            "schema": {
+              "title": "Product Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProductVersionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Publish Product",
+        "tags": [
+          "products"
+        ]
+      }
+    },
+    "/api/v1/products/{product_id}/versions": {
+      "get": {
+        "operationId": "list_product_versions_api_v1_products__product_id__versions_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "product_id",
+            "required": true,
+            "schema": {
+              "title": "Product Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProductVersionsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Product Versions",
         "tags": [
           "products"
         ]

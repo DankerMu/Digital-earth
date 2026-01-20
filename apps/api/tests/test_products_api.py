@@ -420,3 +420,207 @@ def test_products_endpoints_return_500_on_sqlalchemy_error(
 
     assert client.get("/api/v1/products").status_code == 500
     assert client.get("/api/v1/products/hazards").status_code == 500
+
+
+def test_product_edit_endpoints_require_editor_permissions(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    db_url = f"sqlite+pysqlite:///{tmp_path / 'products-edit.db'}"
+    from models import Base
+
+    Base.metadata.create_all(create_engine(db_url))
+
+    monkeypatch.delenv("ENABLE_EDITOR", raising=False)
+    monkeypatch.delenv("EDITOR_TOKEN", raising=False)
+
+    client = _make_client(monkeypatch, tmp_path, db_url=db_url)
+    response = client.post(
+        "/api/v1/products",
+        json={
+            "title": "Draft",
+            "issued_at": "2026-01-01T00:00:00Z",
+            "valid_from": "2026-01-01T00:00:00Z",
+            "valid_to": "2026-01-02T00:00:00Z",
+            "hazards": [],
+        },
+    )
+    assert response.status_code == 403
+
+
+def test_product_edit_flow_creates_versions_and_preserves_snapshots(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    db_url = f"sqlite+pysqlite:///{tmp_path / 'products-edit.db'}"
+    from models import Base
+
+    Base.metadata.create_all(create_engine(db_url))
+    monkeypatch.setenv("ENABLE_EDITOR", "1")
+
+    client = _make_client(monkeypatch, tmp_path, db_url=db_url)
+    polygon = {
+        "type": "Polygon",
+        "coordinates": [[[0, 0], [2, 0], [2, 3], [0, 3], [0, 0]]],
+    }
+
+    create_payload = {
+        "title": "My product",
+        "text": "draft text",
+        "issued_at": "2026-01-01T00:00:00Z",
+        "valid_from": "2026-01-01T00:00:00Z",
+        "valid_to": "2026-01-02T00:00:00Z",
+        "hazards": [
+            {
+                "severity": "high",
+                "geometry": polygon,
+                "valid_from": "2026-01-01T00:00:00Z",
+                "valid_to": "2026-01-02T00:00:00Z",
+            }
+        ],
+    }
+    created = client.post("/api/v1/products", json=create_payload)
+    assert created.status_code == 201
+    draft = created.json()
+    assert draft["status"] == "draft"
+    product_id = draft["id"]
+
+    assert client.get("/api/v1/products").json()["total"] == 0
+
+    published_v1 = client.post(f"/api/v1/products/{product_id}/publish")
+    assert published_v1.status_code == 200
+    v1 = published_v1.json()
+    assert v1["version"] == 1
+    assert v1["snapshot"]["status"] == "published"
+    assert v1["snapshot"]["text"] == "draft text"
+
+    assert client.get("/api/v1/products").json()["total"] == 1
+
+    versions_v1 = client.get(f"/api/v1/products/{product_id}/versions")
+    assert versions_v1.status_code == 200
+    items_v1 = versions_v1.json()["items"]
+    assert [item["version"] for item in items_v1] == [1]
+    assert items_v1[0]["snapshot"]["text"] == "draft text"
+
+    updated = client.put(
+        f"/api/v1/products/{product_id}",
+        json={"text": "updated text"},
+    )
+    assert updated.status_code == 200
+    assert updated.json()["status"] == "draft"
+
+    assert client.get("/api/v1/products").json()["total"] == 0
+    versions_after_update = client.get(
+        f"/api/v1/products/{product_id}/versions"
+    ).json()["items"]
+    assert versions_after_update[-1]["snapshot"]["text"] == "draft text"
+
+    published_v2 = client.post(f"/api/v1/products/{product_id}/publish")
+    assert published_v2.status_code == 200
+    assert published_v2.json()["version"] == 2
+
+    versions_v2 = client.get(f"/api/v1/products/{product_id}/versions")
+    assert versions_v2.status_code == 200
+    items_v2 = versions_v2.json()["items"]
+    assert [item["version"] for item in items_v2] == [2, 1]
+    assert items_v2[1]["snapshot"]["text"] == "draft text"
+    assert items_v2[0]["snapshot"]["text"] == "updated text"
+
+
+def test_product_publish_snapshots_bytes_geometry(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    db_url = f"sqlite+pysqlite:///{tmp_path / 'products-edit.db'}"
+    from models import Base, Product, ProductHazard
+
+    engine = create_engine(db_url)
+    Base.metadata.create_all(engine)
+
+    issued_at = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    with Session(engine) as session:
+        product = Product(
+            title="Binary hazard",
+            text="draft",
+            issued_at=issued_at,
+            valid_from=issued_at,
+            valid_to=issued_at,
+            status="draft",
+        )
+        hazard = ProductHazard(
+            severity="low",
+            geometry=b"\x01",
+            valid_from=issued_at,
+            valid_to=issued_at,
+            bbox_min_x=1,
+            bbox_min_y=1,
+            bbox_max_x=1,
+            bbox_max_y=1,
+        )
+        product.hazards.append(hazard)
+        session.add(product)
+        session.commit()
+        product_id = product.id
+
+    monkeypatch.setenv("ENABLE_EDITOR", "1")
+    client = _make_client(monkeypatch, tmp_path, db_url=db_url)
+
+    response = client.post(f"/api/v1/products/{product_id}/publish")
+    assert response.status_code == 200
+    payload = response.json()
+    geometry_snapshot = payload["snapshot"]["hazards"][0]["geometry"]
+    assert geometry_snapshot["encoding"] == "base64"
+    assert geometry_snapshot["data"]
+
+
+def test_product_create_rejects_invalid_geometry(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    db_url = f"sqlite+pysqlite:///{tmp_path / 'products-edit.db'}"
+    from models import Base
+
+    Base.metadata.create_all(create_engine(db_url))
+    monkeypatch.setenv("ENABLE_EDITOR", "1")
+    client = _make_client(monkeypatch, tmp_path, db_url=db_url)
+
+    response = client.post(
+        "/api/v1/products",
+        json={
+            "title": "Invalid hazard",
+            "issued_at": "2026-01-01T00:00:00Z",
+            "valid_from": "2026-01-01T00:00:00Z",
+            "valid_to": "2026-01-02T00:00:00Z",
+            "hazards": [
+                {
+                    "severity": "low",
+                    "geometry": {"type": "Point"},
+                    "valid_from": "2026-01-01T00:00:00Z",
+                    "valid_to": "2026-01-02T00:00:00Z",
+                }
+            ],
+        },
+    )
+    assert response.status_code == 400
+
+
+def test_product_update_rejects_null_title(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    db_url = f"sqlite+pysqlite:///{tmp_path / 'products-edit.db'}"
+    from models import Base
+
+    Base.metadata.create_all(create_engine(db_url))
+    monkeypatch.setenv("ENABLE_EDITOR", "1")
+    client = _make_client(monkeypatch, tmp_path, db_url=db_url)
+
+    created = client.post(
+        "/api/v1/products",
+        json={
+            "title": "Draft",
+            "issued_at": "2026-01-01T00:00:00Z",
+            "valid_from": "2026-01-01T00:00:00Z",
+            "valid_to": "2026-01-02T00:00:00Z",
+            "hazards": [],
+        },
+    )
+    product_id = created.json()["id"]
+
+    updated = client.put(f"/api/v1/products/{product_id}", json={"title": None})
+    assert updated.status_code == 400
