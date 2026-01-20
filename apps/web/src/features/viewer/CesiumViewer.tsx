@@ -1,17 +1,24 @@
 import {
   Cartesian3,
+  CesiumTerrainProvider,
+  createWorldImageryAsync,
+  createWorldTerrainAsync,
   ImageryLayer,
+  Ion,
+  UrlTemplateImageryProvider,
   Viewer,
+  WebMercatorTilingScheme,
   type Viewer as CesiumViewerInstance
 } from 'cesium';
 import { useEffect, useRef, useState } from 'react';
+import { loadConfig, type MapConfig } from '../../config';
 import { getBasemapById, type BasemapId } from '../../config/basemaps';
 import { useBasemapStore } from '../../state/basemap';
 import { useSceneModeStore } from '../../state/sceneMode';
 import { BasemapSelector } from './BasemapSelector';
 import { CompassControl } from './CompassControl';
 import { SceneModeToggle } from './SceneModeToggle';
-import { createImageryProviderForBasemap, setViewerBasemap } from './cesiumBasemap';
+import { createImageryProviderForBasemap, setViewerBasemap, setViewerImageryProvider } from './cesiumBasemap';
 import { switchViewerSceneMode } from './cesiumSceneMode';
 import 'cesium/Build/Cesium/Widgets/widgets.css';
 
@@ -24,13 +31,41 @@ const DEFAULT_CAMERA = {
 const MIN_ZOOM_DISTANCE_METERS = 100;
 const MAX_ZOOM_DISTANCE_METERS = 40_000_000;
 
+function normalizeSelfHostedBasemapTemplate(
+  urlTemplate: string,
+  scheme: 'xyz' | 'tms',
+): string {
+  if (scheme !== 'tms') return urlTemplate;
+  if (urlTemplate.includes('{reverseY}')) return urlTemplate;
+  return urlTemplate.replaceAll('{y}', '{reverseY}');
+}
+
 export function CesiumViewer() {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [viewer, setViewer] = useState<CesiumViewerInstance | null>(null);
+  const [mapConfig, setMapConfig] = useState<MapConfig | undefined>(undefined);
   const basemapId = useBasemapStore((state) => state.basemapId);
   const sceneModeId = useSceneModeStore((state) => state.sceneModeId);
   const appliedBasemapIdRef = useRef<BasemapId | null>(null);
   const didApplySceneModeRef = useRef(false);
+
+  const basemapProvider = mapConfig?.basemapProvider ?? 'open';
+
+  useEffect(() => {
+    let cancelled = false;
+    void loadConfig()
+      .then((config) => {
+        if (cancelled) return;
+        setMapConfig(config.map);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setMapConfig(undefined);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     const defaultDestination = Cartesian3.fromDegrees(
@@ -86,13 +121,92 @@ export function CesiumViewer() {
 
   useEffect(() => {
     if (!viewer) return;
+    if (basemapProvider !== 'open') return;
     if (appliedBasemapIdRef.current === basemapId) return;
     const basemap = getBasemapById(basemapId);
     if (!basemap) return;
 
     setViewerBasemap(viewer, basemap);
     appliedBasemapIdRef.current = basemapId;
-  }, [basemapId, viewer]);
+  }, [basemapId, basemapProvider, viewer]);
+
+  useEffect(() => {
+    if (!viewer) return;
+    if (!mapConfig) return;
+
+    let cancelled = false;
+
+    const token = mapConfig.cesiumIonAccessToken;
+    if (token) {
+      Ion.defaultAccessToken = token;
+    }
+
+    const applyBasemapProvider = async () => {
+      if (mapConfig.basemapProvider !== 'ion') return;
+      if (!token) {
+        console.warn('[Digital Earth] map.basemapProvider=ion requires map.cesiumIonAccessToken');
+        return;
+      }
+      const provider = await createWorldImageryAsync();
+      if (cancelled) return;
+      setViewerImageryProvider(viewer, provider);
+    };
+
+    if (mapConfig.basemapProvider === 'selfHosted') {
+      const urlTemplate = mapConfig.selfHosted?.basemapUrlTemplate;
+      if (!urlTemplate) {
+        console.warn('[Digital Earth] map.basemapProvider=selfHosted requires map.selfHosted.basemapUrlTemplate');
+      } else {
+        const scheme = mapConfig.selfHosted?.basemapScheme ?? 'xyz';
+        const provider = new UrlTemplateImageryProvider({
+          url: normalizeSelfHostedBasemapTemplate(urlTemplate, scheme),
+          tilingScheme: new WebMercatorTilingScheme(),
+          credit: 'Self-hosted basemap',
+        });
+        setViewerImageryProvider(viewer, provider);
+      }
+    }
+
+    const applyTerrainProvider = async () => {
+      if (mapConfig.terrainProvider === 'ion') {
+        if (!token) {
+          console.warn('[Digital Earth] map.terrainProvider=ion requires map.cesiumIonAccessToken');
+          return;
+        }
+        const terrain = await createWorldTerrainAsync();
+        if (cancelled) return;
+        viewer.terrainProvider = terrain;
+        viewer.scene.requestRender();
+        return;
+      }
+
+      if (mapConfig.terrainProvider === 'selfHosted') {
+        const terrainUrl = mapConfig.selfHosted?.terrainUrl;
+        if (!terrainUrl) {
+          console.warn('[Digital Earth] map.terrainProvider=selfHosted requires map.selfHosted.terrainUrl');
+          return;
+        }
+        const terrain = await CesiumTerrainProvider.fromUrl(terrainUrl);
+        if (cancelled) return;
+        viewer.terrainProvider = terrain;
+        viewer.scene.requestRender();
+      }
+    };
+
+    void applyBasemapProvider().catch((error: unknown) => {
+      if (cancelled) return;
+      console.warn('[Digital Earth] failed to apply basemap provider', error);
+    });
+
+    void applyTerrainProvider().catch((error: unknown) => {
+      if (cancelled) return;
+      console.warn('[Digital Earth] failed to apply terrain provider', error);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [mapConfig, viewer]);
 
   useEffect(() => {
     if (!viewer) return;
@@ -109,7 +223,7 @@ export function CesiumViewer() {
       <div className="viewerOverlay">
         {viewer ? <CompassControl viewer={viewer} /> : null}
         <SceneModeToggle />
-        <BasemapSelector />
+        {basemapProvider === 'open' ? <BasemapSelector /> : null}
       </div>
     </div>
   );

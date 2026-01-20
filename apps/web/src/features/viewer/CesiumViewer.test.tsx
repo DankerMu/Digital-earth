@@ -105,18 +105,29 @@ vi.mock('cesium', () => {
 });
 
 import { Viewer } from 'cesium';
+import { clearConfigCache } from '../../config';
 import { DEFAULT_BASEMAP_ID } from '../../config/basemaps';
 import { useBasemapStore } from '../../state/basemap';
 import { DEFAULT_SCENE_MODE_ID, useSceneModeStore } from '../../state/sceneMode';
 import { CesiumViewer } from './CesiumViewer';
 
+function jsonResponse(payload: unknown) {
+  return new Response(JSON.stringify(payload), {
+    status: 200,
+    headers: { 'content-type': 'application/json' },
+  });
+}
+
 describe('CesiumViewer', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.unstubAllGlobals();
+    clearConfigCache();
     localStorage.removeItem('digital-earth.basemap');
     localStorage.removeItem('digital-earth.sceneMode');
     useBasemapStore.setState({ basemapId: DEFAULT_BASEMAP_ID });
     useSceneModeStore.setState({ sceneModeId: DEFAULT_SCENE_MODE_ID });
+    vi.stubGlobal('fetch', vi.fn(async () => jsonResponse({ apiBaseUrl: 'http://api.test' })));
   });
 
   it('initializes and destroys Cesium Viewer', async () => {
@@ -211,6 +222,32 @@ describe('CesiumViewer', () => {
       true,
     );
     expect(viewer.scene.requestRender).toHaveBeenCalledTimes(1);
+  });
+
+  it('hides basemap selector when basemapProvider is not open', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        jsonResponse({
+          apiBaseUrl: 'http://api.test',
+          map: {
+            basemapProvider: 'selfHosted',
+            selfHosted: {
+              basemapUrlTemplate: 'https://tiles.example/b/{z}/{x}/{y}.jpg',
+              basemapScheme: 'xyz',
+            },
+          },
+        }),
+      ),
+    );
+
+    render(<CesiumViewer />);
+
+    await waitFor(() => expect(vi.mocked(Viewer)).toHaveBeenCalledTimes(1));
+
+    await waitFor(() => {
+      expect(screen.queryByRole('combobox', { name: '底图' })).toBeNull();
+    });
   });
 
   it('switches scene mode and restores camera view after morph completes', async () => {

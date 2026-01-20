@@ -43,3 +43,47 @@ test('bubbles up http errors from /config.json', async () => {
 
   await expect(loadConfig()).rejects.toMatchObject({ status: 500 });
 });
+
+test('parses optional map provider settings', async () => {
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async () =>
+      jsonResponse({
+        apiBaseUrl: 'http://api.test',
+        map: {
+          basemapProvider: 'self_hosted',
+          terrainProvider: 'ion',
+          cesiumIonAccessToken: ' token ',
+          selfHosted: {
+            basemapUrlTemplate: 'https://tiles.example/b/{z}/{x}/{y}.jpg',
+            basemapScheme: 'xyz',
+            terrainUrl: 'https://tiles.example/terrain/',
+          },
+        },
+      }),
+    ),
+  );
+
+  await expect(loadConfig()).resolves.toEqual({
+    apiBaseUrl: 'http://api.test',
+    map: {
+      basemapProvider: 'selfHosted',
+      terrainProvider: 'ion',
+      cesiumIonAccessToken: 'token',
+      selfHosted: {
+        basemapUrlTemplate: 'https://tiles.example/b/{z}/{x}/{y}.jpg',
+        basemapScheme: 'xyz',
+        terrainUrl: 'https://tiles.example/terrain/',
+      },
+    },
+  });
+});
+
+test('throws when /config.json map is invalid', async () => {
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async () => jsonResponse({ apiBaseUrl: 'http://api.test', map: 'nope' })),
+  );
+
+  await expect(loadConfig()).rejects.toThrow('Invalid /config.json: map');
+});
