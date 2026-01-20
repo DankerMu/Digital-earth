@@ -818,3 +818,185 @@ def test_vector_cache_error_falls_back_to_compute(
         params={"bbox": "0,0,1,1", "stride": 1},
     )
     assert resp.status_code == 200
+
+
+def test_streamlines_endpoint_returns_polylines_in_bbox(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    db_url = f"sqlite+pysqlite:///{tmp_path / 'catalog.db'}"
+    client, _redis = _make_client(monkeypatch, tmp_path, db_url=db_url)
+
+    cube_path = tmp_path / "Data" / "cubes" / "wind-850.nc"
+    lat = np.array([0.0, 1.0, 2.0], dtype=np.float32)
+    lon = np.array([0.0, 1.0, 2.0], dtype=np.float32)
+    level = xr.DataArray([850.0], dims=["level"], attrs={"units": "hPa"})
+
+    u_values = np.full((1, 1, lat.size, lon.size), 10.0, dtype=np.float32)
+    v_values = np.zeros((1, 1, lat.size, lon.size), dtype=np.float32)
+    _write_wind_datacube(
+        cube_path,
+        u_name="u",
+        v_name="v",
+        u_values=u_values,
+        v_values=v_values,
+        lat=lat,
+        lon=lon,
+        level=level,
+    )
+
+    run_time = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    valid_time = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    rel_path = str(cube_path.relative_to(tmp_path / "Data"))
+    _seed_asset(
+        db_url,
+        run_time=run_time,
+        valid_time=valid_time,
+        variable="wind",
+        level="850",
+        path=rel_path,
+    )
+
+    resp = client.get(
+        "/api/v1/vector/ecmwf/20260101T000000Z/wind/850/20260101T000000Z/streamlines",
+        params={"bbox": "0,0,2,2", "stride": 1, "step_km": 10.0, "max_steps": 25},
+    )
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert "streamlines" in payload
+    assert len(payload["streamlines"]) == 9
+
+    for line in payload["streamlines"]:
+        assert isinstance(line["lat"], list)
+        assert isinstance(line["lon"], list)
+        assert len(line["lat"]) == len(line["lon"])
+        assert len(line["lat"]) >= 2
+
+        assert line["lon"][-1] > line["lon"][0]
+        assert all(-1e-6 <= value <= 2.0 + 1e-6 for value in line["lat"])
+        assert all(-1e-6 <= value <= 2.0 + 1e-6 for value in line["lon"])
+
+
+def test_streamlines_cache_hit_skips_db_query(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    db_url = f"sqlite+pysqlite:///{tmp_path / 'catalog.db'}"
+    client, _redis = _make_client(monkeypatch, tmp_path, db_url=db_url)
+
+    cube_path = tmp_path / "Data" / "cubes" / "wind-850.nc"
+    lat = np.array([0.0, 1.0], dtype=np.float32)
+    lon = np.array([0.0, 1.0], dtype=np.float32)
+    level = xr.DataArray([850.0], dims=["level"], attrs={"units": "hPa"})
+
+    u_values = np.full((1, 1, lat.size, lon.size), 10.0, dtype=np.float32)
+    v_values = np.zeros((1, 1, lat.size, lon.size), dtype=np.float32)
+    _write_wind_datacube(
+        cube_path,
+        u_name="u",
+        v_name="v",
+        u_values=u_values,
+        v_values=v_values,
+        lat=lat,
+        lon=lon,
+        level=level,
+    )
+
+    run_time = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    valid_time = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    rel_path = str(cube_path.relative_to(tmp_path / "Data"))
+    _seed_asset(
+        db_url,
+        run_time=run_time,
+        valid_time=valid_time,
+        variable="wind",
+        level="850",
+        path=rel_path,
+    )
+
+    url = "/api/v1/vector/ecmwf/20260101T000000Z/wind/850/20260101T000000Z/streamlines"
+    params = {"bbox": "0,0,1,1", "stride": 1, "step_km": 10.0, "max_steps": 10}
+    first = client.get(url, params=params)
+    assert first.status_code == 200
+
+    from routers import vector as vector_router
+
+    def _boom(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("expected cached response (no DB query)")
+
+    monkeypatch.setattr(vector_router, "_query_asset_path", _boom)
+
+    second = client.get(url, params=params)
+    assert second.status_code == 200
+    assert second.json() == first.json()
+
+
+def test_streamlines_prewarm_endpoint_warms_cache(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    db_url = f"sqlite+pysqlite:///{tmp_path / 'catalog.db'}"
+    monkeypatch.setenv("ENABLE_EDITOR", "true")
+    client, _redis = _make_client(monkeypatch, tmp_path, db_url=db_url)
+
+    cube_path = tmp_path / "Data" / "cubes" / "wind-850.nc"
+    lat = np.array([0.0, 1.0], dtype=np.float32)
+    lon = np.array([0.0, 1.0], dtype=np.float32)
+    level = xr.DataArray([850.0], dims=["level"], attrs={"units": "hPa"})
+
+    u_values = np.full((1, 1, lat.size, lon.size), 10.0, dtype=np.float32)
+    v_values = np.zeros((1, 1, lat.size, lon.size), dtype=np.float32)
+    _write_wind_datacube(
+        cube_path,
+        u_name="u",
+        v_name="v",
+        u_values=u_values,
+        v_values=v_values,
+        lat=lat,
+        lon=lon,
+        level=level,
+    )
+
+    run_time = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    valid_time = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    rel_path = str(cube_path.relative_to(tmp_path / "Data"))
+    _seed_asset(
+        db_url,
+        run_time=run_time,
+        valid_time=valid_time,
+        variable="wind",
+        level="850",
+        path=rel_path,
+    )
+
+    prewarm = client.post(
+        "/api/v1/vector/ecmwf/20260101T000000Z/wind/850/20260101T000000Z/streamlines/prewarm",
+        params={"step_km": 10.0, "max_steps": 10},
+        json={"bboxes": ["0,0,1,1"], "stride": 1},
+    )
+    assert prewarm.status_code == 200
+    payload = prewarm.json()
+    assert payload["results"][0]["status"] == "computed"
+
+    from routers import vector as vector_router
+
+    def _boom(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("expected cached response (no DB query)")
+
+    monkeypatch.setattr(vector_router, "_query_asset_path", _boom)
+
+    resp = client.get(
+        "/api/v1/vector/ecmwf/20260101T000000Z/wind/850/20260101T000000Z/streamlines",
+        params={"bbox": "0,0,1,1", "stride": 1, "step_km": 10.0, "max_steps": 10},
+    )
+    assert resp.status_code == 200
+
+
+def test_streamlines_prewarm_requires_editor_permission(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    db_url = f"sqlite+pysqlite:///{tmp_path / 'catalog.db'}"
+    client, _redis = _make_client(monkeypatch, tmp_path, db_url=db_url)
+
+    prewarm = client.post(
+        "/api/v1/vector/ecmwf/20260101T000000Z/wind/850/20260101T000000Z/streamlines/prewarm",
+        json={"bboxes": ["0,0,1,1"], "stride": 1},
+    )
+    assert prewarm.status_code == 403
