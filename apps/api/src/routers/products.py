@@ -826,6 +826,25 @@ async def publish_product(
     return response
 
 
+@router.get("/{product_id}", response_model=ProductDetailResponse)
+def get_product(product_id: int) -> ProductDetailResponse:
+    try:
+        with Session(db.get_engine()) as session:
+            product = session.execute(
+                select(Product)
+                .options(selectinload(Product.hazards))
+                .where(Product.id == product_id)
+            ).scalar_one_or_none()
+            if product is None:
+                raise HTTPException(status_code=404, detail="Product not found")
+            return _product_detail_response(product)
+    except HTTPException:
+        raise
+    except SQLAlchemyError as exc:
+        logger.error("products_db_error", extra={"error": str(exc)})
+        raise HTTPException(status_code=500, detail="Internal Server Error") from exc
+
+
 @router.get("/{product_id}/versions", response_model=ProductVersionsResponse)
 def list_product_versions(product_id: int) -> ProductVersionsResponse:
     try:
