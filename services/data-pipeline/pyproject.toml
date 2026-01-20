@@ -8,6 +8,7 @@ packages = [
     {include = "datacube", from = "src"},
     {include = "processing", from = "src"},
     {include = "statistics", from = "src"},
+    {include = "terrain", from = "src"},
     {include = "units", from = "src"},
 ]
 
