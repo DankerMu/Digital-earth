@@ -2,13 +2,15 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('cesium', () => {
   return {
-    GeographicTilingScheme: vi.fn(() => ({ kind: 'geographic' })),
+    GeographicTilingScheme: vi.fn((options?: unknown) => ({ kind: 'geographic', options })),
     UrlTemplateImageryProvider: vi.fn(function (options: unknown) {
       return { kind: 'url-template', options };
     }),
     ImageryLayer: vi.fn(function (provider: unknown, options: unknown) {
       return { kind: 'imagery-layer', provider, ...(options as Record<string, unknown>) };
     }),
+    TextureMinificationFilter: { LINEAR: 'linear', NEAREST: 'nearest' },
+    TextureMagnificationFilter: { LINEAR: 'linear', NEAREST: 'nearest' },
   };
 });
 
@@ -46,10 +48,19 @@ describe('CloudLayer', () => {
     });
 
     expect(vi.mocked(GeographicTilingScheme)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(GeographicTilingScheme)).toHaveBeenCalledWith(
+      expect.objectContaining({ numberOfLevelZeroTilesX: 1, numberOfLevelZeroTilesY: 1 }),
+    );
     expect(vi.mocked(UrlTemplateImageryProvider)).toHaveBeenCalledWith(
       expect.objectContaining({
         url: expect.stringContaining('/api/v1/tiles/cldas/'),
-        tilingScheme: expect.objectContaining({ kind: 'geographic' }),
+        tilingScheme: expect.objectContaining({
+          kind: 'geographic',
+          options: expect.objectContaining({
+            numberOfLevelZeroTilesX: 1,
+            numberOfLevelZeroTilesY: 1,
+          }),
+        }),
         maximumLevel: 22,
         tileWidth: 256,
         tileHeight: 256,
@@ -68,6 +79,13 @@ describe('CloudLayer', () => {
 
     expect(viewer.imageryLayers.add).toHaveBeenCalledTimes(1);
     expect(viewer.scene.requestRender).toHaveBeenCalledTimes(1);
+
+    const imageryLayer = vi.mocked(ImageryLayer).mock.results[0]?.value as {
+      minificationFilter?: unknown;
+      magnificationFilter?: unknown;
+    };
+    expect(imageryLayer.minificationFilter).toBe('nearest');
+    expect(imageryLayer.magnificationFilter).toBe('nearest');
   });
 
   it('updates opacity and visibility without recreating the layer', () => {
@@ -219,4 +237,3 @@ describe('CloudLayer', () => {
     ).toThrow('CloudLayer id mismatch');
   });
 });
-

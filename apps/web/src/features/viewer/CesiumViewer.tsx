@@ -4,6 +4,7 @@ import {
   CesiumTerrainProvider,
   createWorldImageryAsync,
   createWorldTerrainAsync,
+  Ellipsoid,
   EllipsoidTerrainProvider,
   ImageryLayer,
   Ion,
@@ -272,6 +273,16 @@ export function CesiumViewer() {
     return DEFAULT_LAYER_TIME_KEY;
   }, [activeLayer, cloudTimeKey]);
 
+  const layerGlobalLayerId =
+    viewModeRoute.viewModeId === 'layerGlobal' ? viewModeRoute.layerId : null;
+  const layerGlobalShellHeightMeters = useMemo(() => {
+    if (!layerGlobalLayerId) return null;
+    const targetLayer = layers.find((layer) => layer.id === layerGlobalLayerId) ?? null;
+    return targetLayer
+      ? LAYER_GLOBAL_SHELL_HEIGHT_METERS_BY_LAYER_TYPE[targetLayer.type]
+      : LAYER_GLOBAL_SHELL_HEIGHT_METERS_BY_LAYER_TYPE.cloud;
+  }, [layerGlobalLayerId, layers]);
+
   const basemapProvider = mapConfig?.basemapProvider ?? 'open';
 
   useEffect(() => {
@@ -402,18 +413,20 @@ export function CesiumViewer() {
   }, [basemapId, basemapProvider, viewer]);
 
   useEffect(() => {
+    const token = mapConfig?.cesiumIonAccessToken;
+    if (!token) return;
+    Ion.defaultAccessToken = token;
+  }, [mapConfig?.cesiumIonAccessToken]);
+
+  useEffect(() => {
     if (!viewer) return;
     if (!mapConfig) return;
 
     let cancelled = false;
 
-    const token = mapConfig.cesiumIonAccessToken;
-    if (token) {
-      Ion.defaultAccessToken = token;
-    }
-
     const applyBasemapProvider = async () => {
       if (mapConfig.basemapProvider !== 'ion') return;
+      const token = mapConfig.cesiumIonAccessToken;
       if (!token) {
         console.warn('[Digital Earth] map.basemapProvider=ion requires map.cesiumIonAccessToken');
         return;
@@ -438,6 +451,23 @@ export function CesiumViewer() {
       }
     }
 
+    void applyBasemapProvider().catch((error: unknown) => {
+      if (cancelled) return;
+      console.warn('[Digital Earth] failed to apply basemap provider', error);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [mapConfig, viewer]);
+
+  useEffect(() => {
+    if (!viewer) return;
+    if (!mapConfig) return;
+    if (viewModeRoute.viewModeId === 'layerGlobal') return;
+
+    let cancelled = false;
+
     const applyTerrainProvider = async () => {
       setTerrainNotice(null);
 
@@ -448,6 +478,7 @@ export function CesiumViewer() {
       }
 
       if (mapConfig.terrainProvider === 'ion') {
+        const token = mapConfig.cesiumIonAccessToken;
         if (!token) {
           console.warn('[Digital Earth] map.terrainProvider=ion requires map.cesiumIonAccessToken');
           setTerrainNotice('未配置 Cesium ion token，已回退到无地形模式。');
@@ -478,11 +509,6 @@ export function CesiumViewer() {
       }
     };
 
-    void applyBasemapProvider().catch((error: unknown) => {
-      if (cancelled) return;
-      console.warn('[Digital Earth] failed to apply basemap provider', error);
-    });
-
     void applyTerrainProvider().catch((error: unknown) => {
       if (cancelled) return;
       console.warn('[Digital Earth] failed to apply terrain provider', error);
@@ -494,7 +520,7 @@ export function CesiumViewer() {
     return () => {
       cancelled = true;
     };
-  }, [mapConfig, viewer]);
+  }, [mapConfig, viewModeRoute.viewModeId, viewer]);
 
   useEffect(() => {
     if (!viewer) return;
@@ -850,6 +876,32 @@ export function CesiumViewer() {
       duration: 2.0,
     });
   }, [layers, sceneModeId, viewModeRoute, viewer]);
+
+  useEffect(() => {
+    if (!viewer) return;
+    if (layerGlobalShellHeightMeters == null) return;
+
+    const globe = viewer.scene.globe;
+    const baseEllipsoid = globe.ellipsoid;
+    const baseTerrainProvider = viewer.terrainProvider;
+
+    const radii = baseEllipsoid.radii;
+    const shellEllipsoid = new Ellipsoid(
+      radii.x + layerGlobalShellHeightMeters,
+      radii.y + layerGlobalShellHeightMeters,
+      radii.z + layerGlobalShellHeightMeters,
+    );
+
+    globe.ellipsoid = shellEllipsoid;
+    viewer.terrainProvider = new EllipsoidTerrainProvider({ ellipsoid: shellEllipsoid });
+    viewer.scene.requestRender();
+
+    return () => {
+      globe.ellipsoid = baseEllipsoid;
+      viewer.terrainProvider = baseTerrainProvider;
+      viewer.scene.requestRender();
+    };
+  }, [layerGlobalShellHeightMeters, viewer]);
 
   useEffect(() => {
     if (!viewer) return;
