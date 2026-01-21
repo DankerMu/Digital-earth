@@ -75,6 +75,12 @@ function parseWindVectorData(payload: unknown): WindVectorData {
   return { vectors };
 }
 
+function isAbortError(error: unknown, signal?: AbortSignal): boolean {
+  if (signal?.aborted) return true;
+  if (!isRecord(error)) return false;
+  return error.name === 'AbortError';
+}
+
 export async function fetchWindVectorData(options: {
   apiBaseUrl: string;
   timeKey: string;
@@ -253,8 +259,11 @@ export async function probeCldasTileAvailability(options: {
     }
 
     return result;
-  } catch {
+  } catch (error) {
     const result: CldasTileProbeResult = { status: 'error', httpStatus: 0 };
+    if (isAbortError(error, options.signal)) {
+      return result;
+    }
     if (options.cache !== 'no-cache') {
       writeCache(cldasTileProbeCache, key, result, {
         maxEntries: CLDAS_TILE_PROBE_CACHE_MAX_ENTRIES,

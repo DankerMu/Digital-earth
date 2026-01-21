@@ -9,6 +9,10 @@ describe('alignToMostRecentHourTimeKey', () => {
     expect(alignToMostRecentHourTimeKey('2026-01-20T10:30:00Z')).toBe('20260120T100000Z');
   });
 
+  it('treats timezone-less ISO timestamps as UTC', () => {
+    expect(alignToMostRecentHourTimeKey('2026-01-20T10:30:00')).toBe('20260120T100000Z');
+  });
+
   it('aligns YYYYMMDDHH timestamps', () => {
     expect(alignToMostRecentHourTimeKey('2026012010')).toBe('20260120T100000Z');
   });
@@ -40,4 +44,3 @@ describe('normalizeSnowDepthVariable', () => {
     expect(normalizeSnowDepthVariable('SNOD')).toBe('SNOD');
   });
 });
-

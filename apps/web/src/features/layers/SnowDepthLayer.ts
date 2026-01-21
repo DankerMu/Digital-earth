@@ -12,7 +12,9 @@ import { alignToMostRecentHourTimeKey, normalizeSnowDepthVariable } from './clda
 import { buildCldasTileUrlTemplate } from './layersApi';
 import type { SnowDepthLayerParams } from './types';
 
-const MAX_TILE_LEVEL = 22;
+const CLDAS_SNOW_DEPTH_GLOBAL_MAX_TILE_LEVEL = 6;
+const CLDAS_SNOW_DEPTH_EVENT_MIN_TILE_LEVEL = 8;
+const CLDAS_SNOW_DEPTH_EVENT_MAX_TILE_LEVEL = 10;
 
 function clampOpacity(value: number): number {
   if (!Number.isFinite(value)) return 1;
@@ -99,16 +101,22 @@ export class SnowDepthLayer {
         this.viewer.imageryLayers.remove(this.imageryLayer, true);
       }
 
+      const rectangle = normalizeRectangle(this.current.rectangle);
+      const [minimumLevel, maximumLevel] = rectangle
+        ? [CLDAS_SNOW_DEPTH_EVENT_MIN_TILE_LEVEL, CLDAS_SNOW_DEPTH_EVENT_MAX_TILE_LEVEL]
+        : [0, CLDAS_SNOW_DEPTH_GLOBAL_MAX_TILE_LEVEL];
+
       const provider = new UrlTemplateImageryProvider({
         url: nextTemplate,
         tilingScheme: new GeographicTilingScheme({
           numberOfLevelZeroTilesX: 1,
           numberOfLevelZeroTilesY: 1,
         }),
-        maximumLevel: MAX_TILE_LEVEL,
+        minimumLevel,
+        maximumLevel,
         tileWidth: 256,
         tileHeight: 256,
-        rectangle: normalizeRectangle(this.current.rectangle),
+        rectangle,
         credit: 'Snow depth tiles',
       });
 
@@ -130,4 +138,3 @@ export class SnowDepthLayer {
     this.viewer.scene.requestRender();
   }
 }
-

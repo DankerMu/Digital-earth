@@ -15,6 +15,28 @@ function formatCldasTimeKeyUtc(date: Date): string {
   return `${year}${month}${day}T${hour}0000Z`;
 }
 
+function parseIsoNoTimezoneUtc(value: string): Date | null {
+  const match =
+    /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2})(?:\.(\d{1,3}))?)?$/.exec(
+      value,
+    );
+  if (!match) return null;
+
+  const [, year, month, day, hour, minute, second, fraction] = match;
+  const msFraction = fraction ? Number(fraction.padEnd(3, '0')) : 0;
+  const ms = Date.UTC(
+    Number(year),
+    Number(month) - 1,
+    Number(day),
+    Number(hour),
+    Number(minute),
+    Number(second ?? '0'),
+    msFraction,
+  );
+  const parsed = new Date(ms);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
 function parseCldasTimeKey(value: string): Date | null {
   const trimmed = value.trim();
   if (!trimmed) return null;
@@ -40,6 +62,9 @@ function parseCldasTimeKey(value: string): Date | null {
     const parsed = new Date(ms);
     return Number.isNaN(parsed.getTime()) ? null : parsed;
   }
+
+  const parsedIsoNoTz = parseIsoNoTimezoneUtc(trimmed);
+  if (parsedIsoNoTz) return parsedIsoNoTz;
 
   const parsed = new Date(trimmed);
   return Number.isNaN(parsed.getTime()) ? null : parsed;
@@ -90,4 +115,3 @@ export function normalizeSnowDepthVariable(variable?: string): string {
 
   return trimmed.toUpperCase();
 }
-

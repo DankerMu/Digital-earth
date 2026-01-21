@@ -62,7 +62,8 @@ describe('SnowDepthLayer', () => {
     expect(vi.mocked(UrlTemplateImageryProvider)).toHaveBeenCalledWith(
       expect.objectContaining({
         url: expect.stringContaining('/api/v1/tiles/cldas/'),
-        maximumLevel: 22,
+        minimumLevel: 8,
+        maximumLevel: 10,
         tileWidth: 256,
         tileHeight: 256,
         rectangle: expect.objectContaining({ west: 100, south: 20, east: 110, north: 30 }),
@@ -81,6 +82,28 @@ describe('SnowDepthLayer', () => {
     );
     expect(viewer.imageryLayers.add).toHaveBeenCalledTimes(1);
     expect(viewer.scene.requestRender).toHaveBeenCalledTimes(1);
+  });
+
+  it('uses a lower max tile level for global coverage', () => {
+    const viewer = makeViewer();
+
+    new SnowDepthLayer(viewer as never, {
+      id: 'snow-depth',
+      apiBaseUrl: 'http://api.test',
+      timeKey: '2024011500',
+      variable: 'SNOD',
+      opacity: 1,
+      visible: true,
+      zIndex: 50,
+    });
+
+    expect(vi.mocked(UrlTemplateImageryProvider)).toHaveBeenCalledWith(
+      expect.objectContaining({
+        minimumLevel: 0,
+        maximumLevel: 6,
+        rectangle: undefined,
+      }),
+    );
   });
 
   it('updates opacity and visibility without recreating the layer', () => {
@@ -263,4 +286,3 @@ describe('SnowDepthLayer', () => {
     ).toThrow('SnowDepthLayer id mismatch');
   });
 });
-

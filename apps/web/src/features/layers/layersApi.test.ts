@@ -244,4 +244,55 @@ describe('layersApi', () => {
 
     expect(result).toEqual({ status: 'error', httpStatus: 0 });
   });
+
+  it('does not cache probe results when requests are aborted', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockRejectedValueOnce(new DOMException('aborted', 'AbortError'))
+      .mockResolvedValueOnce(new Response('nope', { status: 404 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const controller = new AbortController();
+    controller.abort();
+
+    const abortedResult = await probeCldasTileAvailability({
+      apiBaseUrl: 'http://api.test',
+      timeKey: '2024011500',
+      variable: 'SNOD',
+      signal: controller.signal,
+    });
+
+    const retryResult = await probeCldasTileAvailability({
+      apiBaseUrl: 'http://api.test',
+      timeKey: '2024011500',
+      variable: 'SNOD',
+    });
+
+    expect(abortedResult).toEqual({ status: 'error', httpStatus: 0 });
+    expect(retryResult).toEqual({ status: 'missing', httpStatus: 404 });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not cache AbortError results even without an AbortSignal', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockRejectedValueOnce(new DOMException('aborted', 'AbortError'))
+      .mockResolvedValueOnce(new Response('ok', { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const first = await probeCldasTileAvailability({
+      apiBaseUrl: 'http://api.test',
+      timeKey: '2024011500',
+      variable: 'SNOD',
+    });
+    const second = await probeCldasTileAvailability({
+      apiBaseUrl: 'http://api.test',
+      timeKey: '2024011500',
+      variable: 'SNOD',
+    });
+
+    expect(first).toEqual({ status: 'error', httpStatus: 0 });
+    expect(second).toEqual({ status: 'available', httpStatus: 200 });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
 });
