@@ -12,6 +12,92 @@ function resolveApiOrigin(apiBaseUrl: string): string {
   }
 }
 
+export type WindVector = {
+  lon: number;
+  lat: number;
+  u: number;
+  v: number;
+};
+
+export type WindVectorData = {
+  vectors: WindVector[];
+};
+
+export type WindVectorBBox = {
+  west: number;
+  south: number;
+  east: number;
+  north: number;
+};
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object';
+}
+
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value);
+}
+
+function normalizeDensity(value: number): number {
+  if (!Number.isFinite(value)) return 10;
+  const rounded = Math.round(value);
+  if (rounded < 1) return 1;
+  if (rounded > 100) return 100;
+  return rounded;
+}
+
+function normalizeBBox(bbox: WindVectorBBox): WindVectorBBox {
+  const { west, south, east, north } = bbox;
+  if (![west, south, east, north].every((item) => Number.isFinite(item))) {
+    throw new Error('Invalid bbox');
+  }
+  return { west, south, east, north };
+}
+
+function parseWindVectorData(payload: unknown): WindVectorData {
+  if (!isRecord(payload)) return { vectors: [] };
+  const rawVectors = payload.vectors;
+  if (!Array.isArray(rawVectors)) return { vectors: [] };
+
+  const vectors: WindVector[] = [];
+  for (const entry of rawVectors) {
+    if (!isRecord(entry)) continue;
+    const lon = entry.lon;
+    const lat = entry.lat;
+    const u = entry.u;
+    const v = entry.v;
+    if (!isFiniteNumber(lon) || !isFiniteNumber(lat) || !isFiniteNumber(u) || !isFiniteNumber(v)) {
+      continue;
+    }
+    vectors.push({ lon, lat, u, v });
+  }
+
+  return { vectors };
+}
+
+export async function fetchWindVectorData(options: {
+  apiBaseUrl: string;
+  timeKey: string;
+  bbox: WindVectorBBox;
+  density: number;
+  signal?: AbortSignal;
+}): Promise<WindVectorData> {
+  const origin = resolveApiOrigin(options.apiBaseUrl);
+  const timeKey = encodeURIComponent(options.timeKey);
+  const bbox = normalizeBBox(options.bbox);
+  const density = normalizeDensity(options.density);
+
+  const url = `${origin}/api/v1/vectors/cldas/${timeKey}/wind?bbox=${bbox.west},${bbox.south},${bbox.east},${bbox.north}&density=${density}`;
+
+  const response = await fetch(url, { signal: options.signal });
+  if (!response.ok) {
+    throw new Error(`Failed to fetch wind vectors: ${response.status}`);
+  }
+
+  const payload = (await response.json()) as unknown;
+  return parseWindVectorData(payload);
+}
+
 export function buildCldasTileUrlTemplate(options: CldasTileUrlTemplateOptions): string {
   const origin = resolveApiOrigin(options.apiBaseUrl);
   const timeKey = encodeURIComponent(options.timeKey);
