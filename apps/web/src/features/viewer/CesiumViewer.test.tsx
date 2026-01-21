@@ -32,6 +32,21 @@ const windArrowsMocks = vi.hoisted(() => {
   };
 });
 
+const customDataSourceMocks = vi.hoisted(() => {
+  return {
+    instances: [] as Array<{
+      name: string;
+      entities: { add: ReturnType<typeof vi.fn>; removeAll: ReturnType<typeof vi.fn> };
+      clustering: {
+        enabled: boolean;
+        pixelRange: number;
+        minimumClusterSize: number;
+        clusterEvent: { addEventListener: ReturnType<typeof vi.fn>; removeEventListener: ReturnType<typeof vi.fn> };
+      };
+    }>,
+  };
+});
+
 vi.mock('../effects/WindArrows', () => {
   return {
     WindArrows: vi.fn(function () {
@@ -209,6 +224,10 @@ vi.mock('cesium', () => {
 
   const viewer = {
     camera,
+    dataSources: {
+      add: vi.fn(async (dataSource: unknown) => dataSource),
+      remove: vi.fn(() => true),
+    },
     entities: {
       add: vi.fn((entity: unknown) => entity),
       remove: vi.fn(() => true),
@@ -255,6 +274,7 @@ vi.mock('cesium', () => {
       },
       skyBox: { show: false },
       skyAtmosphere: { show: false },
+      pick: vi.fn(() => null),
       pickPosition: vi.fn(() => ({ pickedPosition: true })),
       screenSpaceCameraController: {
         minimumZoomDistance: 0,
@@ -284,6 +304,8 @@ vi.mock('cesium', () => {
       ORANGE: { name: 'orange', withAlpha: vi.fn((alpha: number) => ({ name: 'orange', alpha })) },
       YELLOW: { name: 'yellow', withAlpha: vi.fn((alpha: number) => ({ name: 'yellow', alpha })) },
       CYAN: { name: 'cyan', withAlpha: vi.fn((alpha: number) => ({ name: 'cyan', alpha })) },
+      WHITE: { name: 'white', withAlpha: vi.fn((alpha: number) => ({ name: 'white', alpha })) },
+      BLACK: { name: 'black', withAlpha: vi.fn((alpha: number) => ({ name: 'black', alpha })) },
     },
     Rectangle: {
       fromDegrees: vi.fn((west: number, south: number, east: number, north: number) => ({
@@ -301,6 +323,26 @@ vi.mock('cesium', () => {
     }),
     Entity: vi.fn(function (options: unknown) {
       return { ...(options as Record<string, unknown>) };
+    }),
+    CustomDataSource: vi.fn(function (name: string) {
+      const instance = {
+        name,
+        entities: {
+          add: vi.fn((entity: unknown) => entity),
+          removeAll: vi.fn(),
+        },
+        clustering: {
+          enabled: false,
+          pixelRange: 0,
+          minimumClusterSize: 2,
+          clusterEvent: {
+            addEventListener: vi.fn(),
+            removeEventListener: vi.fn(),
+          },
+        },
+      };
+      customDataSourceMocks.instances.push(instance);
+      return instance;
     }),
     Viewer: vi.fn(function () {
       return viewer;
@@ -377,6 +419,7 @@ describe('CesiumViewer', () => {
     vi.unstubAllGlobals();
     precipitationParticlesMocks.instances.length = 0;
     windArrowsMocks.instances.length = 0;
+    customDataSourceMocks.instances.length = 0;
     clearConfigCache();
     clearProductsCache();
     clearCldasTileProbeCache();
@@ -2366,6 +2409,253 @@ describe('CesiumViewer', () => {
         outlineWidth: 2,
       }),
     });
+  });
+
+  it('loads and renders risk POIs with clustering in event mode', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url =
+          typeof input === 'string'
+            ? input
+            : input instanceof URL
+              ? input.toString()
+              : input.url;
+        if (url.endsWith('/config.json')) {
+          return jsonResponse({ apiBaseUrl: 'http://api.test' });
+        }
+        if (url === 'http://api.test/api/v1/products/1') {
+          return jsonResponse({
+            id: 1,
+            title: '降雪',
+            text: '降雪预警',
+            issued_at: '2026-01-01T00:00:00Z',
+            valid_from: '2026-01-01T00:00:00Z',
+            valid_to: '2026-01-02T00:00:00Z',
+            version: 1,
+            status: 'published',
+            hazards: [
+              {
+                id: 11,
+                severity: 'high',
+                geometry: null,
+                bbox: { min_x: 126, min_y: 45, max_x: 127, max_y: 46 },
+                valid_from: '2026-01-01T00:00:00Z',
+                valid_to: '2026-01-02T00:00:00Z',
+              },
+            ],
+          });
+        }
+        if (url.startsWith('http://api.test/api/v1/risk/pois')) {
+          return jsonResponse({
+            page: 1,
+            page_size: 1000,
+            total: 1,
+            items: [
+              {
+                id: 101,
+                name: 'poi-a',
+                type: 'fire',
+                lon: 126.5,
+                lat: 45.5,
+                alt: null,
+                weight: 1,
+                tags: null,
+                risk_level: null,
+              },
+            ],
+          });
+        }
+        if (url === 'http://api.test/api/v1/risk/evaluate') {
+          expect(init?.method).toBe('POST');
+          return jsonResponse({
+            summary: {
+              total: 1,
+              duration_ms: 1,
+              level_counts: { '4': 1 },
+              reasons: {},
+              max_level: 4,
+              avg_score: 0.9,
+            },
+            results: [
+              {
+                poi_id: 101,
+                level: 4,
+                score: 0.9,
+                factors: [],
+                reasons: [],
+              },
+            ],
+          });
+        }
+        return jsonResponse({});
+      }),
+    );
+
+    const cesium = await import('cesium');
+    render(<CesiumViewer />);
+    await waitFor(() => expect(vi.mocked(Viewer)).toHaveBeenCalledTimes(1));
+
+    act(() => {
+      useViewModeStore.getState().enterEvent({ productId: '1' });
+    });
+
+    await waitFor(() => expect(customDataSourceMocks.instances.length).toBe(1));
+    const [dataSource] = customDataSourceMocks.instances;
+    await waitFor(() => expect(dataSource?.entities.add).toHaveBeenCalled());
+
+    const [entity] = vi.mocked(dataSource!.entities.add).mock.calls[0] ?? [];
+    expect(entity).toMatchObject({
+      id: 'risk-poi:101',
+      label: expect.objectContaining({ text: '4' }),
+      point: expect.objectContaining({
+        color: { name: 'red', alpha: 0.85 },
+        outlineColor: { name: 'white', alpha: 0.9 },
+      }),
+    });
+
+    const camera = (cesium as unknown as { __mocks: { getCamera: () => { positionCartographic: { height: number }; changed: { __mocks: { trigger: () => void } } } } }).__mocks.getCamera();
+    expect(dataSource!.clustering.enabled).toBe(false);
+    camera.positionCartographic.height = 900_000;
+    camera.changed.__mocks.trigger();
+    expect(dataSource!.clustering.enabled).toBe(true);
+    expect(dataSource!.clustering.pixelRange).toBe(60);
+  });
+
+  it('opens a risk POI popup on click and can jump to disaster demo', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url =
+          typeof input === 'string'
+            ? input
+            : input instanceof URL
+              ? input.toString()
+              : input.url;
+        if (url.endsWith('/config.json')) {
+          return jsonResponse({ apiBaseUrl: 'http://api.test' });
+        }
+        if (url === 'http://api.test/api/v1/products/1') {
+          return jsonResponse({
+            id: 1,
+            title: '降雪',
+            text: '降雪预警',
+            issued_at: '2026-01-01T00:00:00Z',
+            valid_from: '2026-01-01T00:00:00Z',
+            valid_to: '2026-01-02T00:00:00Z',
+            version: 1,
+            status: 'published',
+            hazards: [
+              {
+                id: 11,
+                severity: 'high',
+                geometry: null,
+                bbox: { min_x: 126, min_y: 45, max_x: 127, max_y: 46 },
+                valid_from: '2026-01-01T00:00:00Z',
+                valid_to: '2026-01-02T00:00:00Z',
+              },
+            ],
+          });
+        }
+        if (url.startsWith('http://api.test/api/v1/risk/pois')) {
+          return jsonResponse({
+            page: 1,
+            page_size: 1000,
+            total: 1,
+            items: [
+              {
+                id: 101,
+                name: 'poi-a',
+                type: 'fire',
+                lon: 126.5,
+                lat: 45.5,
+                alt: null,
+                weight: 1,
+                tags: null,
+                risk_level: null,
+              },
+            ],
+          });
+        }
+        if (url === 'http://api.test/api/v1/risk/evaluate') {
+          expect(init?.method).toBe('POST');
+          return jsonResponse({
+            summary: {
+              total: 1,
+              duration_ms: 1,
+              level_counts: { '4': 1 },
+              reasons: {},
+              max_level: 4,
+              avg_score: 0.9,
+            },
+            results: [
+              {
+                poi_id: 101,
+                level: 4,
+                score: 0.9,
+                factors: [],
+                reasons: [
+                  {
+                    factor_id: 'wind',
+                    factor_name: 'Wind',
+                    value: 8.1,
+                    threshold: 5,
+                    contribution: 0.5,
+                  },
+                ],
+              },
+            ],
+          });
+        }
+        if (url === 'http://api.test/api/v1/effects/presets') {
+          return jsonResponse([]);
+        }
+        return jsonResponse({});
+      }),
+    );
+
+    const user = userEvent.setup();
+    const cesium = await import('cesium');
+
+    render(<CesiumViewer />);
+    await waitFor(() => expect(vi.mocked(Viewer)).toHaveBeenCalledTimes(1));
+    const viewer = vi.mocked(Viewer).mock.results[0].value;
+
+    act(() => {
+      useViewModeStore.getState().enterEvent({ productId: '1' });
+    });
+
+    await waitFor(() => expect(customDataSourceMocks.instances.length).toBe(1));
+    const [dataSource] = customDataSourceMocks.instances;
+    await waitFor(() => expect(dataSource?.entities.add).toHaveBeenCalled());
+
+    vi.mocked(viewer.scene.pick).mockReturnValue({ id: { id: 'risk-poi:101' } });
+
+    act(() => {
+      (
+        cesium as unknown as {
+          __mocks: { triggerLeftClick: (movement: { position?: unknown }) => void };
+        }
+      ).__mocks.triggerLeftClick({ position: { x: 12, y: 34 } });
+    });
+
+    expect(await screen.findByLabelText('Risk POI details')).toHaveTextContent('poi-a');
+    expect(screen.getByText('Wind')).toBeInTheDocument();
+    expect(screen.getByText('8.10')).toBeInTheDocument();
+    expect(screen.getByText('5.00')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: '查看灾害演示' }));
+    expect(await screen.findByRole('dialog', { name: '灾害演示' })).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: '关闭' }));
+    await waitFor(() =>
+      expect(screen.queryByRole('dialog', { name: '灾害演示' })).not.toBeInTheDocument(),
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Close risk popup' }));
+    await waitFor(() =>
+      expect(screen.queryByLabelText('Risk POI details')).not.toBeInTheDocument(),
+    );
   });
 
   it('handles dateline-crossing bboxes when flying camera for events', async () => {

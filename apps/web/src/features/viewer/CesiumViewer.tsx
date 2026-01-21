@@ -1,6 +1,7 @@
 import {
   Cartographic,
   Cartesian3,
+  CustomDataSource,
   CesiumTerrainProvider,
   Color,
   createWorldImageryAsync,
@@ -33,6 +34,7 @@ import { usePerformanceModeStore } from '../../state/performanceMode';
 import { useSceneModeStore } from '../../state/sceneMode';
 import { useViewModeStore, type ViewModeRoute } from '../../state/viewMode';
 import { PrecipitationParticles } from '../effects/PrecipitationParticles';
+import { DisasterDemo } from '../effects/DisasterDemo';
 import { WindArrows, windArrowDensityForCameraHeight } from '../effects/WindArrows';
 import { createCloudSampler, createWeatherSampler } from '../effects/weatherSampler';
 import { CloudLayer } from '../layers/CloudLayer';
@@ -60,6 +62,9 @@ import { switchViewerSceneMode } from './cesiumSceneMode';
 import 'cesium/Build/Cesium/Widgets/widgets.css';
 import { getProductDetail } from '../products/productsApi';
 import type { BBox, ProductHazardDetail } from '../products/productsTypes';
+import { evaluateRisk, getRiskPois } from '../risk/riskApi';
+import { formatRiskLevel, riskSeverityForLevel, type POIRiskResult, type RiskPOI } from '../risk/riskTypes';
+import { RiskPoiPopup } from '../risk/RiskPoiPopup';
 import { extractGeoJsonPolygons, type LonLat } from './geoJsonPolygons';
 
 const DEFAULT_CAMERA = {
@@ -188,6 +193,14 @@ function materialForSeverity(severity: string): { fill: Color; outline: Color } 
   return { fill: Color.CYAN.withAlpha(0.35), outline: Color.CYAN };
 }
 
+function colorForRiskLevel(level: number | null | undefined): Color {
+  const severity = riskSeverityForLevel(level);
+  if (severity === 'high') return Color.RED;
+  if (severity === 'medium') return Color.ORANGE;
+  if (severity === 'low') return Color.YELLOW;
+  return Color.CYAN;
+}
+
 function ringToCartesian(positions: LonLat[]): Cartesian3[] {
   return positions.map((pos) => Cartesian3.fromDegrees(pos.lon, pos.lat));
 }
@@ -232,6 +245,118 @@ function getViewerCameraHeightMeters(viewer: CesiumViewerInstance): number | nul
   const height = camera.positionCartographic?.height;
   if (typeof height !== 'number' || !Number.isFinite(height)) return null;
   return height;
+}
+
+type RiskClusterConfig = {
+  enabled: boolean;
+  pixelRange: number;
+  minimumClusterSize: number;
+};
+
+function riskClusterConfigForHeight(heightMeters: number | null): RiskClusterConfig {
+  if (heightMeters == null) {
+    return { enabled: true, pixelRange: 60, minimumClusterSize: 2 };
+  }
+  if (heightMeters > 8_000_000) {
+    return { enabled: true, pixelRange: 90, minimumClusterSize: 2 };
+  }
+  if (heightMeters > 2_000_000) {
+    return { enabled: true, pixelRange: 80, minimumClusterSize: 2 };
+  }
+  if (heightMeters > 600_000) {
+    return { enabled: true, pixelRange: 60, minimumClusterSize: 2 };
+  }
+  if (heightMeters > 200_000) {
+    return { enabled: true, pixelRange: 40, minimumClusterSize: 3 };
+  }
+  return { enabled: false, pixelRange: 0, minimumClusterSize: 2 };
+}
+
+function applyRiskClusterConfig(
+  clustering: { enabled: boolean; pixelRange: number; minimumClusterSize: number },
+  next: RiskClusterConfig,
+): boolean {
+  const didChange =
+    clustering.enabled !== next.enabled ||
+    clustering.pixelRange !== next.pixelRange ||
+    clustering.minimumClusterSize !== next.minimumClusterSize;
+  clustering.enabled = next.enabled;
+  clustering.pixelRange = next.pixelRange;
+  clustering.minimumClusterSize = next.minimumClusterSize;
+  return didChange;
+}
+
+function setupRiskPoiClustering(
+  viewer: CesiumViewerInstance,
+  dataSource: CustomDataSource,
+): () => void {
+  const clustering = dataSource.clustering as unknown as {
+    enabled: boolean;
+    pixelRange: number;
+    minimumClusterSize: number;
+    clusterEvent: { addEventListener: (fn: unknown) => void; removeEventListener: (fn: unknown) => void };
+  };
+
+  const onCluster = (
+    clusteredEntities: unknown[],
+    cluster: {
+      label?: {
+        show?: boolean;
+        text?: string;
+        fillColor?: unknown;
+        showBackground?: boolean;
+        backgroundColor?: unknown;
+        disableDepthTestDistance?: number;
+      };
+      point?: {
+        show?: boolean;
+        pixelSize?: number;
+        color?: unknown;
+        outlineColor?: unknown;
+        outlineWidth?: number;
+        disableDepthTestDistance?: number;
+      };
+      billboard?: { show?: boolean };
+    },
+  ) => {
+    if (cluster.billboard) cluster.billboard.show = false;
+    if (cluster.point) {
+      cluster.point.show = true;
+      cluster.point.pixelSize = 18;
+      cluster.point.color = Color.CYAN.withAlpha(0.85);
+      cluster.point.outlineColor = Color.WHITE.withAlpha(0.9);
+      cluster.point.outlineWidth = 2;
+      cluster.point.disableDepthTestDistance = Number.POSITIVE_INFINITY;
+    }
+    if (cluster.label) {
+      cluster.label.show = true;
+      cluster.label.text = String(clusteredEntities.length);
+      cluster.label.fillColor = Color.WHITE;
+      cluster.label.showBackground = true;
+      cluster.label.backgroundColor = Color.BLACK.withAlpha(0.55);
+      cluster.label.disableDepthTestDistance = Number.POSITIVE_INFINITY;
+    }
+  };
+
+  clustering.clusterEvent.addEventListener(onCluster);
+
+  const update = () => {
+    const heightMeters = getViewerCameraHeightMeters(viewer);
+    const didChange = applyRiskClusterConfig(clustering, riskClusterConfigForHeight(heightMeters));
+    if (didChange) {
+      viewer.scene.requestRender();
+    }
+  };
+
+  viewer.camera.changed.addEventListener(update);
+  viewer.camera.moveEnd.addEventListener(update);
+  update();
+
+  return () => {
+    viewer.camera.changed.removeEventListener(update);
+    viewer.camera.moveEnd.removeEventListener(update);
+    clustering.clusterEvent.removeEventListener(onCluster);
+  };
 }
 
 function localFrustumForCameraHeight(heightMeters: number): { near: number; far: number } {
@@ -418,6 +543,13 @@ export function CesiumViewer() {
   const appliedCameraPerspectiveRef = useRef<CameraPerspectiveId | null>(null);
   const eventAbortRef = useRef<AbortController | null>(null);
   const eventEntitiesRef = useRef<Entity[]>([]);
+  const riskAbortRef = useRef<AbortController | null>(null);
+  const riskEntryKeyRef = useRef<string | null>(null);
+  const riskDataSourceRef = useRef<CustomDataSource | null>(null);
+  const riskClusterTeardownRef = useRef<(() => void) | null>(null);
+  const riskPoisByIdRef = useRef<Map<number, RiskPOI>>(new Map());
+  const riskEvalByIdRef = useRef<Map<number, POIRiskResult>>(new Map());
+  const riskPopupAbortRef = useRef<AbortController | null>(null);
   const baseCameraControllerRef = useRef<{ enableTilt?: boolean; enableLook?: boolean } | null>(
     null,
   );
@@ -456,6 +588,13 @@ export function CesiumViewer() {
     east: number;
     north: number;
   } | null>(null);
+  const [riskPopup, setRiskPopup] = useState<{
+    poi: RiskPOI;
+    evaluation: POIRiskResult | null;
+    status: 'loading' | 'loaded' | 'error';
+    errorMessage: string | null;
+  } | null>(null);
+  const [disasterDemoOpen, setDisasterDemoOpen] = useState(false);
   const localModeSnapshotRef = useRef<ModeSnapshot | null>(null);
   const pendingLocalCameraRestoreRef = useRef<SavedCameraState | null>(null);
   const previousRouteRef = useRef<ViewModeRoute | null>(null);
@@ -1084,6 +1223,77 @@ export function CesiumViewer() {
       const position = movement.position;
       if (!position) return;
 
+      const pickedObject = (viewer.scene as unknown as { pick?: (pos: unknown) => unknown }).pick?.(
+        position,
+      );
+      const pickedId =
+        pickedObject && typeof pickedObject === 'object'
+          ? (() => {
+              const raw = (pickedObject as { id?: unknown }).id;
+              if (typeof raw === 'string') return raw;
+              if (raw && typeof raw === 'object' && typeof (raw as { id?: unknown }).id === 'string') {
+                return (raw as { id: string }).id;
+              }
+              return null;
+            })()
+          : null;
+      const riskPoiMatch = pickedId ? /^risk-poi:(\d+)$/.exec(pickedId) : null;
+      if (riskPoiMatch) {
+        const poiId = Number(riskPoiMatch[1]);
+        if (!Number.isFinite(poiId)) return;
+        const poi = riskPoisByIdRef.current.get(poiId);
+        if (!poi) return;
+
+        samplingAbortRef.current?.abort();
+        closeSamplingCard();
+
+        const existing = riskEvalByIdRef.current.get(poiId) ?? null;
+        setRiskPopup({
+          poi,
+          evaluation: existing,
+          status: existing ? 'loaded' : 'loading',
+          errorMessage: null,
+        });
+
+        if (!existing && apiBaseUrl && eventMonitoringTimeKey) {
+          const route = useViewModeStore.getState().route;
+          if (route.viewModeId !== 'event') return;
+
+          riskPopupAbortRef.current?.abort();
+          const controller = new AbortController();
+          riskPopupAbortRef.current = controller;
+
+          void (async () => {
+            try {
+              const evaluation = await evaluateRisk({
+                apiBaseUrl,
+                productId: route.productId,
+                validTime: eventMonitoringTimeKey,
+                poiIds: [poiId],
+                signal: controller.signal,
+              });
+              if (controller.signal.aborted) return;
+              const result = evaluation.results.find((item) => item.poi_id === poiId) ?? null;
+              if (result) riskEvalByIdRef.current.set(poiId, result);
+              setRiskPopup((prev) => {
+                if (!prev || prev.poi.id !== poiId) return prev;
+                return { ...prev, evaluation: result, status: 'loaded', errorMessage: null };
+              });
+            } catch (error) {
+              if (controller.signal.aborted) return;
+              console.warn('[Digital Earth] failed to evaluate risk poi', error);
+              setRiskPopup((prev) => {
+                if (!prev || prev.poi.id !== poiId) return prev;
+                return { ...prev, status: 'error', errorMessage: '风险详情加载失败' };
+              });
+            } finally {
+              if (riskPopupAbortRef.current === controller) riskPopupAbortRef.current = null;
+            }
+          })();
+        }
+        return;
+      }
+
       const picked = pickLocation(position);
 
       if (!picked) {
@@ -1147,7 +1357,16 @@ export function CesiumViewer() {
       handler.removeInputAction?.(ScreenSpaceEventType.LEFT_CLICK, KeyboardEventModifier.CTRL);
       handler.removeInputAction?.(ScreenSpaceEventType.LEFT_DOUBLE_CLICK);
     };
-  }, [closeSamplingCard, enterLocal, openSamplingCard, setSamplingData, setSamplingError, viewer]);
+  }, [
+    apiBaseUrl,
+    closeSamplingCard,
+    enterLocal,
+    eventMonitoringTimeKey,
+    openSamplingCard,
+    setSamplingData,
+    setSamplingError,
+    viewer,
+  ]);
 
   useEffect(() => {
     if (!viewer) return;
@@ -1339,6 +1558,152 @@ export function CesiumViewer() {
 
     return () => controller.abort();
   }, [apiBaseUrl, maybeApplyEventAutoLayerTemplate, sceneModeId, viewModeRoute, viewer]);
+
+  useEffect(() => {
+    if (!viewer) return;
+
+    if (viewModeRoute.viewModeId !== 'event') {
+      riskEntryKeyRef.current = null;
+      riskAbortRef.current?.abort();
+      riskAbortRef.current = null;
+      riskPopupAbortRef.current?.abort();
+      riskPopupAbortRef.current = null;
+      riskPoisByIdRef.current.clear();
+      riskEvalByIdRef.current.clear();
+      setRiskPopup(null);
+      setDisasterDemoOpen(false);
+
+      const dataSource = riskDataSourceRef.current;
+      if (dataSource) {
+        viewer.dataSources.remove(dataSource, true);
+        riskDataSourceRef.current = null;
+        riskClusterTeardownRef.current?.();
+        riskClusterTeardownRef.current = null;
+        viewer.scene.requestRender();
+      }
+      return;
+    }
+
+    if (!apiBaseUrl) return;
+
+    const productId = viewModeRoute.productId.trim();
+    if (!productId) return;
+    if (!eventMonitoringRectangle) return;
+    if (!eventMonitoringTimeKey) return;
+
+    const bbox: BBox = {
+      min_x: eventMonitoringRectangle.west,
+      min_y: eventMonitoringRectangle.south,
+      max_x: eventMonitoringRectangle.east,
+      max_y: eventMonitoringRectangle.north,
+    };
+
+    const key = `${apiBaseUrl}:${productId}:${eventMonitoringTimeKey}:${bbox.min_x},${bbox.min_y},${bbox.max_x},${bbox.max_y}`;
+    if (riskEntryKeyRef.current === key) return;
+    riskEntryKeyRef.current = key;
+
+    riskAbortRef.current?.abort();
+    const controller = new AbortController();
+    riskAbortRef.current = controller;
+
+    let dataSource = riskDataSourceRef.current;
+    if (!dataSource) {
+      dataSource = new CustomDataSource('risk-pois');
+      riskDataSourceRef.current = dataSource;
+      void viewer.dataSources.add(dataSource);
+      riskClusterTeardownRef.current?.();
+      riskClusterTeardownRef.current = setupRiskPoiClustering(viewer, dataSource);
+    } else {
+      dataSource.entities.removeAll();
+      viewer.scene.requestRender();
+    }
+
+    riskPoisByIdRef.current.clear();
+    riskEvalByIdRef.current.clear();
+
+    void (async () => {
+      try {
+        const pois = await getRiskPois({
+          apiBaseUrl,
+          bbox,
+          signal: controller.signal,
+        });
+        if (controller.signal.aborted) return;
+        if (riskEntryKeyRef.current !== key) return;
+
+        const poiById = new Map<number, RiskPOI>();
+        for (const poi of pois) poiById.set(poi.id, poi);
+        riskPoisByIdRef.current = poiById;
+
+        const ids = pois.map((poi) => poi.id);
+        let evaluated: POIRiskResult[] = [];
+        if (ids.length > 0) {
+          const evaluation = await evaluateRisk({
+            apiBaseUrl,
+            productId,
+            validTime: eventMonitoringTimeKey,
+            poiIds: ids,
+            signal: controller.signal,
+          });
+          evaluated = evaluation.results;
+        }
+
+        if (controller.signal.aborted) return;
+        if (riskEntryKeyRef.current !== key) return;
+
+        const evalMap = riskEvalByIdRef.current;
+        evalMap.clear();
+        for (const result of evaluated) evalMap.set(result.poi_id, result);
+
+        for (const poi of pois) {
+          const result = evalMap.get(poi.id);
+          const level = result?.level ?? poi.risk_level;
+          const color = colorForRiskLevel(level);
+          dataSource.entities.add(
+            new Entity({
+              id: `risk-poi:${poi.id}`,
+              position: Cartesian3.fromDegrees(poi.lon, poi.lat, poi.alt ?? 0),
+              point: {
+                pixelSize: 12,
+                color: color.withAlpha(0.85),
+                outlineColor: Color.WHITE.withAlpha(0.9),
+                outlineWidth: 2,
+                disableDepthTestDistance: Number.POSITIVE_INFINITY,
+              },
+              label: {
+                text: formatRiskLevel(level),
+                font: 'bold 14px sans-serif',
+                fillColor: Color.WHITE,
+                showBackground: true,
+                backgroundColor: color.withAlpha(0.85),
+                disableDepthTestDistance: Number.POSITIVE_INFINITY,
+              },
+            }),
+          );
+        }
+
+        viewer.scene.requestRender();
+      } catch (error) {
+        if (controller.signal.aborted) return;
+        if (riskEntryKeyRef.current !== key) return;
+        console.warn('[Digital Earth] failed to load risk POIs', error);
+        riskPoisByIdRef.current.clear();
+        riskEvalByIdRef.current.clear();
+        dataSource.entities.removeAll();
+        viewer.scene.requestRender();
+      } finally {
+        if (riskAbortRef.current === controller) riskAbortRef.current = null;
+      }
+    })();
+
+    return () => controller.abort();
+  }, [
+    apiBaseUrl,
+    eventMonitoringRectangle,
+    eventMonitoringTimeKey,
+    viewModeRoute,
+    viewer,
+  ]);
 
   useEffect(() => {
     if (!apiBaseUrl) {
@@ -2112,6 +2477,7 @@ export function CesiumViewer() {
   return (
     <div className="viewerRoot">
       <div ref={containerRef} className="viewerCanvas" data-testid="cesium-container" />
+      <div id="effect-stage" className="absolute inset-0 z-0 pointer-events-none" />
       <div className="viewerOverlay">
         {viewer ? <CompassControl viewer={viewer} /> : null}
         <SceneModeToggle />
@@ -2146,8 +2512,54 @@ export function CesiumViewer() {
             }}
           />
         ) : null}
+        <RiskPoiPopup
+          poi={riskPopup?.poi ?? null}
+          evaluation={riskPopup?.evaluation ?? null}
+          status={riskPopup?.status ?? 'loaded'}
+          errorMessage={riskPopup?.errorMessage ?? null}
+          onClose={() => {
+            riskPopupAbortRef.current?.abort();
+            riskPopupAbortRef.current = null;
+            setRiskPopup(null);
+          }}
+          onOpenDisasterDemo={() => setDisasterDemoOpen(true)}
+        />
         <SamplingCard state={samplingCardState} onClose={closeSamplingCard} />
       </div>
+      {disasterDemoOpen ? (
+        <div
+          className="modalOverlay"
+          role="presentation"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setDisasterDemoOpen(false);
+          }}
+        >
+          <div className="modal" role="dialog" aria-modal="true" aria-label="灾害演示">
+            <div className="modalHeader">
+              <div>
+                <h2 className="modalTitle">灾害演示</h2>
+                <div className="modalMeta">灾害特效预设与播放控制</div>
+              </div>
+              <div className="modalHeaderActions">
+                <button
+                  type="button"
+                  className="modalButton"
+                  onClick={() => setDisasterDemoOpen(false)}
+                >
+                  关闭
+                </button>
+              </div>
+            </div>
+            <div className="modalBody">
+              {apiBaseUrl ? (
+                <DisasterDemo apiBaseUrl={apiBaseUrl} />
+              ) : (
+                <div className="muted">缺少 API 配置</div>
+              )}
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
