@@ -2,14 +2,19 @@ import {
   Cartographic,
   Cartesian3,
   CesiumTerrainProvider,
+  Color,
   createWorldImageryAsync,
   createWorldTerrainAsync,
   Ellipsoid,
   EllipsoidTerrainProvider,
+  Entity,
   ImageryLayer,
   Ion,
   KeyboardEventModifier,
   Math as CesiumMath,
+  PolygonGraphics,
+  PolygonHierarchy,
+  Rectangle,
   SceneMode,
   ScreenSpaceEventType,
   UrlTemplateImageryProvider,
@@ -49,6 +54,9 @@ import { SceneModeToggle } from './SceneModeToggle';
 import { createImageryProviderForBasemap, setViewerBasemap, setViewerImageryProvider } from './cesiumBasemap';
 import { switchViewerSceneMode } from './cesiumSceneMode';
 import 'cesium/Build/Cesium/Widgets/widgets.css';
+import { getProductDetail } from '../products/productsApi';
+import type { BBox, ProductHazardDetail } from '../products/productsTypes';
+import { extractGeoJsonPolygons, type LonLat } from './geoJsonPolygons';
 
 const DEFAULT_CAMERA = {
   longitude: 116.391,
@@ -79,6 +87,129 @@ const LAYER_GLOBAL_SHELL_HEIGHT_METERS_BY_LAYER_TYPE: Record<LayerType, number> 
   precipitation: 3000,
   wind: 8000,
 };
+
+type LongitudeInterval = { start: number; end: number };
+
+function normalizeLongitude360(value: number): number {
+  const normalized = ((value % 360) + 360) % 360;
+  return normalized === 360 ? 0 : normalized;
+}
+
+function normalizeLongitude180(value: number): number {
+  const normalized = normalizeLongitude360(value);
+  if (normalized > 180) return normalized - 360;
+  return normalized;
+}
+
+function mergeLongitudeIntervals(intervals: LongitudeInterval[]): LongitudeInterval[] {
+  if (intervals.length === 0) return [];
+  const sorted = [...intervals].sort((a, b) => a.start - b.start);
+  const merged: LongitudeInterval[] = [];
+
+  for (const interval of sorted) {
+    const last = merged[merged.length - 1];
+    if (!last || interval.start > last.end) {
+      merged.push({ start: interval.start, end: interval.end });
+      continue;
+    }
+    last.end = Math.max(last.end, interval.end);
+  }
+
+  return merged;
+}
+
+function longitudeRangeUnion(bboxes: BBox[]): { west: number; east: number } {
+  const intervals: LongitudeInterval[] = [];
+
+  for (const bbox of bboxes) {
+    const start = normalizeLongitude360(bbox.min_x);
+    const end = normalizeLongitude360(bbox.max_x);
+    if (start <= end) {
+      intervals.push({ start, end });
+      continue;
+    }
+    intervals.push({ start, end: 360 });
+    intervals.push({ start: 0, end });
+  }
+
+  const merged = mergeLongitudeIntervals(intervals);
+  if (merged.length === 0) {
+    return { west: bboxes[0]?.min_x ?? 0, east: bboxes[0]?.max_x ?? 0 };
+  }
+
+  const covered = merged.reduce((sum, interval) => sum + (interval.end - interval.start), 0);
+  if (covered >= 360) {
+    return { west: -180, east: 180 };
+  }
+
+  let maxGap = -1;
+  let maxGapIndex = 0;
+  for (let index = 0; index < merged.length; index += 1) {
+    const current = merged[index]!;
+    const next = merged[(index + 1) % merged.length]!;
+    const gap = index === merged.length - 1 ? next.start + 360 - current.end : next.start - current.end;
+    if (gap > maxGap) {
+      maxGap = gap;
+      maxGapIndex = index;
+    }
+  }
+
+  const start = merged[(maxGapIndex + 1) % merged.length]!.start;
+  const end = merged[maxGapIndex]!.end;
+  const west = normalizeLongitude180(start);
+  const east = normalizeLongitude180(end === 360 ? 0 : end);
+  return { west, east };
+}
+
+function bboxUnion(bboxes: BBox[]): BBox | null {
+  if (bboxes.length === 0) return null;
+  let min_y = bboxes[0]!.min_y;
+  let max_y = bboxes[0]!.max_y;
+
+  for (const bbox of bboxes.slice(1)) {
+    min_y = Math.min(min_y, bbox.min_y);
+    max_y = Math.max(max_y, bbox.max_y);
+  }
+
+  const { west, east } = longitudeRangeUnion(bboxes);
+  return { min_x: west, min_y, max_x: east, max_y };
+}
+
+function materialForSeverity(severity: string): { fill: Color; outline: Color } {
+  const normalized = severity.trim().toLowerCase();
+  if (normalized === 'high') return { fill: Color.RED.withAlpha(0.35), outline: Color.RED };
+  if (normalized === 'medium') return { fill: Color.ORANGE.withAlpha(0.35), outline: Color.ORANGE };
+  if (normalized === 'low') return { fill: Color.YELLOW.withAlpha(0.35), outline: Color.YELLOW };
+  return { fill: Color.CYAN.withAlpha(0.35), outline: Color.CYAN };
+}
+
+function ringToCartesian(positions: LonLat[]): Cartesian3[] {
+  return positions.map((pos) => Cartesian3.fromDegrees(pos.lon, pos.lat));
+}
+
+function bboxToPolygonHierarchy(bbox: BBox): PolygonHierarchy {
+  const positions = [
+    Cartesian3.fromDegrees(bbox.min_x, bbox.min_y),
+    Cartesian3.fromDegrees(bbox.max_x, bbox.min_y),
+    Cartesian3.fromDegrees(bbox.max_x, bbox.max_y),
+    Cartesian3.fromDegrees(bbox.min_x, bbox.max_y),
+  ];
+  return new PolygonHierarchy(positions);
+}
+
+function polygonHierarchiesForHazard(hazard: ProductHazardDetail): PolygonHierarchy[] {
+  const polygons = extractGeoJsonPolygons(hazard.geometry);
+  if (polygons.length === 0) {
+    return [bboxToPolygonHierarchy(hazard.bbox)];
+  }
+
+  return polygons.map((poly) => {
+    const holes = poly.holes
+      .map((hole) => new PolygonHierarchy(ringToCartesian(hole)))
+      .filter((hierarchy) => hierarchy.positions.length > 2);
+    return new PolygonHierarchy(ringToCartesian(poly.outer), holes);
+  });
+}
 
 function clampNumber(value: number, min: number, max: number): number {
   if (!Number.isFinite(value)) return min;
@@ -273,7 +404,10 @@ export function CesiumViewer() {
   const didApplySceneModeRef = useRef(false);
   const localEntryKeyRef = useRef<string | null>(null);
   const layerGlobalEntryKeyRef = useRef<string | null>(null);
+  const eventEntryKeyRef = useRef<string | null>(null);
   const appliedCameraPerspectiveRef = useRef<CameraPerspectiveId | null>(null);
+  const eventAbortRef = useRef<AbortController | null>(null);
+  const eventEntitiesRef = useRef<Entity[]>([]);
   const baseCameraControllerRef = useRef<{ enableTilt?: boolean; enableLook?: boolean } | null>(
     null,
   );
@@ -971,6 +1105,106 @@ export function CesiumViewer() {
     });
     appliedCameraPerspectiveRef.current = cameraPerspectiveId;
   }, [cameraPerspectiveId, sceneModeId, viewModeRoute, viewer]);
+
+  useEffect(() => {
+    if (!viewer) return;
+
+    if (viewModeRoute.viewModeId !== 'event') {
+      eventEntryKeyRef.current = null;
+      eventAbortRef.current?.abort();
+      eventAbortRef.current = null;
+
+      if (eventEntitiesRef.current.length > 0) {
+        for (const entity of eventEntitiesRef.current) {
+          viewer.entities.remove(entity);
+        }
+        eventEntitiesRef.current = [];
+        viewer.scene.requestRender();
+      }
+      return;
+    }
+
+    if (!apiBaseUrl) return;
+
+    const productId = viewModeRoute.productId.trim();
+    if (!productId) return;
+
+    const key = `${sceneModeId}:${apiBaseUrl}:${productId}`;
+    if (eventEntryKeyRef.current === key) return;
+    eventEntryKeyRef.current = key;
+
+    eventAbortRef.current?.abort();
+    const controller = new AbortController();
+    eventAbortRef.current = controller;
+
+    if (eventEntitiesRef.current.length > 0) {
+      for (const entity of eventEntitiesRef.current) {
+        viewer.entities.remove(entity);
+      }
+      eventEntitiesRef.current = [];
+      viewer.scene.requestRender();
+    }
+
+    void (async () => {
+      try {
+        const product = await getProductDetail({
+          apiBaseUrl,
+          productId,
+          signal: controller.signal,
+        });
+        if (controller.signal.aborted) return;
+        if (eventEntryKeyRef.current !== key) return;
+
+        const hazards = product.hazards;
+        const destinationBBox = bboxUnion(hazards.map((hazard) => hazard.bbox));
+
+        const nextEntities: Entity[] = [];
+
+        for (const hazard of hazards) {
+          const { fill, outline } = materialForSeverity(hazard.severity);
+          const hierarchies = polygonHierarchiesForHazard(hazard);
+          for (const [index, hierarchy] of hierarchies.entries()) {
+            const polygon = new PolygonGraphics({
+              hierarchy,
+              material: fill,
+              outline: true,
+              outlineColor: outline,
+              outlineWidth: 2,
+            });
+            const entity = new Entity({
+              id: `event:${productId}:${hazard.id}:${index}`,
+              polygon,
+            });
+            viewer.entities.add(entity);
+            nextEntities.push(entity);
+          }
+        }
+
+        eventEntitiesRef.current = nextEntities;
+
+        if (destinationBBox) {
+          const rectangle = Rectangle.fromDegrees(
+            destinationBBox.min_x,
+            destinationBBox.min_y,
+            destinationBBox.max_x,
+            destinationBBox.max_y,
+          );
+          viewer.camera.flyTo({ destination: rectangle, duration: 1.8 });
+        }
+
+        viewer.scene.requestRender();
+      } catch (error) {
+        if (controller.signal.aborted) return;
+        if (eventEntryKeyRef.current !== key) return;
+        console.warn('[Digital Earth] failed to plot event polygon', error);
+        viewer.scene.requestRender();
+      } finally {
+        if (eventAbortRef.current === controller) eventAbortRef.current = null;
+      }
+    })();
+
+    return () => controller.abort();
+  }, [apiBaseUrl, sceneModeId, viewModeRoute, viewer]);
 
   useEffect(() => {
     if (!viewer) return;

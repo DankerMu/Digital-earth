@@ -209,6 +209,10 @@ vi.mock('cesium', () => {
 
   const viewer = {
     camera,
+    entities: {
+      add: vi.fn((entity: unknown) => entity),
+      remove: vi.fn(() => true),
+    },
     homeButton: {
       viewModel: {
         command: {
@@ -275,6 +279,29 @@ vi.mock('cesium', () => {
     ScreenSpaceEventType,
     KeyboardEventModifier,
     Cartographic,
+    Color: {
+      RED: { name: 'red', withAlpha: vi.fn((alpha: number) => ({ name: 'red', alpha })) },
+      ORANGE: { name: 'orange', withAlpha: vi.fn((alpha: number) => ({ name: 'orange', alpha })) },
+      YELLOW: { name: 'yellow', withAlpha: vi.fn((alpha: number) => ({ name: 'yellow', alpha })) },
+      CYAN: { name: 'cyan', withAlpha: vi.fn((alpha: number) => ({ name: 'cyan', alpha })) },
+    },
+    Rectangle: {
+      fromDegrees: vi.fn((west: number, south: number, east: number, north: number) => ({
+        west,
+        south,
+        east,
+        north,
+      })),
+    },
+    PolygonHierarchy: vi.fn(function (positions: unknown[], holes?: unknown[]) {
+      return { positions, holes: holes ?? [] };
+    }),
+    PolygonGraphics: vi.fn(function (options: unknown) {
+      return { ...(options as Record<string, unknown>) };
+    }),
+    Entity: vi.fn(function (options: unknown) {
+      return { ...(options as Record<string, unknown>) };
+    }),
     Viewer: vi.fn(function () {
       return viewer;
     }),
@@ -298,10 +325,10 @@ vi.mock('cesium', () => {
 	    GeographicTilingScheme,
 	    TextureMinificationFilter,
 	    TextureMagnificationFilter,
-	    Math: {
-	      toDegrees: vi.fn((radians: number) => radians),
-	      PI_OVER_TWO: Math.PI / 2
-	    },
+    Math: {
+      toDegrees: vi.fn((radians: number) => radians),
+      PI_OVER_TWO: Math.PI / 2
+    },
     __mocks: {
       getMorphCompleteHandler: () => morphCompleteHandler,
       getCamera: () => camera,
@@ -322,9 +349,10 @@ vi.mock('cesium', () => {
 	  };
 });
 
-import { Cartesian3, EllipsoidTerrainProvider, createWorldTerrainAsync, Viewer } from 'cesium';
+import { Cartesian3, EllipsoidTerrainProvider, Rectangle, createWorldTerrainAsync, Viewer } from 'cesium';
 import { clearConfigCache } from '../../config';
 import { DEFAULT_BASEMAP_ID } from '../../config/basemaps';
+import { clearProductsCache } from '../products/productsApi';
 import { useBasemapStore } from '../../state/basemap';
 import { DEFAULT_CAMERA_PERSPECTIVE_ID, useCameraPerspectiveStore } from '../../state/cameraPerspective';
 import { DEFAULT_EVENT_LAYER_MODE, useEventLayersStore } from '../../state/eventLayers';
@@ -348,6 +376,7 @@ describe('CesiumViewer', () => {
     precipitationParticlesMocks.instances.length = 0;
     windArrowsMocks.instances.length = 0;
     clearConfigCache();
+    clearProductsCache();
     localStorage.removeItem('digital-earth.basemap');
     localStorage.removeItem('digital-earth.eventLayers');
     localStorage.removeItem('digital-earth.sceneMode');
@@ -368,6 +397,39 @@ describe('CesiumViewer', () => {
         const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
         if (url.endsWith('/config.json')) {
           return jsonResponse({ apiBaseUrl: 'http://api.test' });
+        }
+        if (url === 'http://api.test/api/v1/products/1') {
+          return jsonResponse({
+            id: 1,
+            title: '降雪',
+            text: '降雪预警',
+            issued_at: '2026-01-01T00:00:00Z',
+            valid_from: '2026-01-01T00:00:00Z',
+            valid_to: '2026-01-02T00:00:00Z',
+            version: 1,
+            status: 'published',
+            hazards: [
+              {
+                id: 11,
+                severity: 'high',
+                geometry: {
+                  type: 'Polygon',
+                  coordinates: [
+                    [
+                      [126.0, 45.0],
+                      [127.0, 45.0],
+                      [127.0, 46.0],
+                      [126.0, 46.0],
+                      [126.0, 45.0],
+                    ],
+                  ],
+                },
+                bbox: { min_x: 126, min_y: 45, max_x: 127, max_y: 46 },
+                valid_from: '2026-01-01T00:00:00Z',
+                valid_to: '2026-01-02T00:00:00Z',
+              },
+            ],
+          });
         }
         if (url.startsWith('http://api.test/api/v1/vectors/')) {
           return jsonResponse({
@@ -1805,5 +1867,128 @@ describe('CesiumViewer', () => {
     } finally {
       nowSpy.mockRestore();
     }
+  });
+
+  it('plots event polygon and flies camera when entering event mode', async () => {
+    render(<CesiumViewer />);
+    await waitFor(() => expect(vi.mocked(Viewer)).toHaveBeenCalledTimes(1));
+
+    const viewer = vi.mocked(Viewer).mock.results[0].value;
+    vi.mocked(viewer.camera.flyTo).mockClear();
+    vi.mocked(viewer.entities.add).mockClear();
+    vi.mocked(Rectangle.fromDegrees).mockClear();
+
+    act(() => {
+      useViewModeStore.getState().enterEvent({ productId: '1' });
+    });
+
+    await waitFor(() => expect(viewer.entities.add).toHaveBeenCalled());
+
+    expect(Rectangle.fromDegrees).toHaveBeenCalledWith(126, 45, 127, 46);
+    expect(viewer.camera.flyTo).toHaveBeenCalledWith(
+      expect.objectContaining({ duration: 1.8 }),
+    );
+
+    const [entity] = vi.mocked(viewer.entities.add).mock.calls[0] ?? [];
+    expect(entity).toMatchObject({
+      id: 'event:1:11:0',
+      polygon: expect.objectContaining({
+        outline: true,
+        outlineWidth: 2,
+      }),
+    });
+  });
+
+  it('handles dateline-crossing bboxes when flying camera for events', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url =
+          typeof input === 'string'
+            ? input
+            : input instanceof URL
+              ? input.toString()
+              : input.url;
+        if (url.endsWith('/config.json')) {
+          return jsonResponse({ apiBaseUrl: 'http://api.test' });
+        }
+        if (url === 'http://api.test/api/v1/products/99') {
+          return jsonResponse({
+            id: 99,
+            title: 'dateline',
+            text: null,
+            issued_at: '2026-01-01T00:00:00Z',
+            valid_from: '2026-01-01T00:00:00Z',
+            valid_to: '2026-01-02T00:00:00Z',
+            version: 1,
+            status: 'published',
+            hazards: [
+              {
+                id: 1,
+                severity: 'low',
+                geometry: null,
+                bbox: { min_x: 170, min_y: 10, max_x: 179, max_y: 20 },
+                valid_from: '2026-01-01T00:00:00Z',
+                valid_to: '2026-01-02T00:00:00Z',
+              },
+              {
+                id: 2,
+                severity: 'high',
+                geometry: null,
+                bbox: { min_x: -179, min_y: 20, max_x: 190, max_y: 10 },
+                valid_from: '2026-01-01T00:00:00Z',
+                valid_to: '2026-01-02T00:00:00Z',
+              },
+            ],
+          });
+        }
+        return jsonResponse({});
+      }),
+    );
+
+    render(<CesiumViewer />);
+    await waitFor(() => expect(vi.mocked(Viewer)).toHaveBeenCalledTimes(1));
+
+    const viewer = vi.mocked(Viewer).mock.results[0].value;
+    vi.mocked(viewer.camera.flyTo).mockClear();
+    vi.mocked(Rectangle.fromDegrees).mockClear();
+
+    act(() => {
+      useViewModeStore.getState().enterEvent({ productId: '99' });
+    });
+
+    await waitFor(() => expect(Rectangle.fromDegrees).toHaveBeenCalled());
+
+    expect(Rectangle.fromDegrees).toHaveBeenCalledWith(170, 10, -170, 20);
+    expect(viewer.camera.flyTo).toHaveBeenCalledWith(
+      expect.objectContaining({ duration: 1.8 }),
+    );
+  });
+
+  it('requests render after clearing event entities even when the next request fails', async () => {
+    render(<CesiumViewer />);
+    await waitFor(() => expect(vi.mocked(Viewer)).toHaveBeenCalledTimes(1));
+
+    const viewer = vi.mocked(Viewer).mock.results[0].value;
+    vi.mocked(viewer.scene.requestRender).mockClear();
+    vi.mocked(viewer.entities.add).mockClear();
+
+    act(() => {
+      useViewModeStore.getState().enterEvent({ productId: '1' });
+    });
+
+    await waitFor(() => expect(viewer.entities.add).toHaveBeenCalled());
+
+    vi.mocked(viewer.entities.remove).mockClear();
+    vi.mocked(viewer.scene.requestRender).mockClear();
+
+    act(() => {
+      useViewModeStore.getState().enterEvent({ productId: '2' });
+    });
+
+    await waitFor(() => expect(viewer.entities.remove).toHaveBeenCalled());
+    expect(viewer.scene.requestRender).toHaveBeenCalled();
+
+    expect(viewer.entities.add).toHaveBeenCalledTimes(1);
   });
 });

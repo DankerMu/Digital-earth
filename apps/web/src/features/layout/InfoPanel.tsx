@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 
 import { useLayerManagerStore } from '../../state/layerManager';
 import { useViewModeStore } from '../../state/viewMode';
+import { EventListPanel } from '../products/EventListPanel';
 
 export type InfoPanelProps = {
   collapsed: boolean;
@@ -138,9 +139,7 @@ export function InfoPanel({ collapsed, onToggleCollapsed }: InfoPanelProps) {
                   </div>
                 </div>
               ) : (
-                <div className="text-sm text-slate-400">
-                  请选择左侧图层查看详情，或进入点位/事件模式。
-                </div>
+                <EventListPanel />
               )
             ) : (
               <div className="text-sm text-slate-400">该视图尚未实现。</div>
@@ -151,4 +150,3 @@ export function InfoPanel({ collapsed, onToggleCollapsed }: InfoPanelProps) {
     </aside>
   );
 }
-
