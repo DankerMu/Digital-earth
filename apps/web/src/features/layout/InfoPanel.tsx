@@ -1,0 +1,154 @@
+import { useMemo, useState } from 'react';
+
+import { useLayerManagerStore } from '../../state/layerManager';
+import { useViewModeStore } from '../../state/viewMode';
+
+export type InfoPanelProps = {
+  collapsed: boolean;
+  onToggleCollapsed: () => void;
+};
+
+function routeSummary(route: ReturnType<typeof useViewModeStore.getState>['route']): string {
+  switch (route.viewModeId) {
+    case 'global':
+      return '全局';
+    case 'local':
+      return `局地 (${route.lat.toFixed(3)}, ${route.lon.toFixed(3)})`;
+    case 'event':
+      return `事件 (${route.productId})`;
+    case 'layerGlobal':
+      return `图层 (${route.layerId})`;
+  }
+}
+
+export function InfoPanel({ collapsed, onToggleCollapsed }: InfoPanelProps) {
+  const [tab, setTab] = useState<'current' | 'forecast' | 'history'>('current');
+
+  const route = useViewModeStore((state) => state.route);
+  const canGoBack = useViewModeStore((state) => state.canGoBack);
+  const goBack = useViewModeStore((state) => state.goBack);
+
+  const layers = useLayerManagerStore((state) => state.layers);
+
+  const selectedLayer = useMemo(() => {
+    if (route.viewModeId !== 'layerGlobal') return null;
+    return layers.find((layer) => layer.id === route.layerId) ?? null;
+  }, [layers, route]);
+
+  return (
+    <aside
+      aria-label="Info panel"
+      className="h-full rounded-xl border border-slate-400/20 bg-slate-800/80 shadow-lg backdrop-blur-xl"
+    >
+      <header className="flex items-center justify-between gap-2 border-b border-slate-400/10 px-3 py-2">
+        <div className={collapsed ? 'sr-only' : 'min-w-0'}>
+          <div className="truncate text-sm font-semibold text-white">信息面板</div>
+          <div className="text-xs text-slate-400">{routeSummary(route)}</div>
+        </div>
+
+        <div className="flex items-center gap-2">
+          {collapsed ? null : (
+            <button
+              type="button"
+              className="rounded-lg border border-slate-400/20 bg-slate-700/30 px-2 py-1 text-xs text-slate-200 hover:bg-slate-700/50 disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-400"
+              aria-label="返回上一视图"
+              disabled={!canGoBack}
+              onClick={() => goBack()}
+            >
+              返回
+            </button>
+          )}
+
+          <button
+            type="button"
+            className="rounded-lg border border-slate-400/20 bg-slate-700/30 px-2 py-1 text-xs text-slate-200 hover:bg-slate-700/50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-400"
+            aria-label={collapsed ? '展开信息面板' : '折叠信息面板'}
+            onClick={onToggleCollapsed}
+          >
+            {collapsed ? '◀' : '▶'}
+          </button>
+        </div>
+      </header>
+
+      {collapsed ? null : (
+        <div className="flex h-full flex-col">
+          <div className="flex border-b border-slate-400/10">
+            <button
+              type="button"
+              className={[
+                'flex-1 px-3 py-2 text-sm',
+                tab === 'current'
+                  ? 'border-b-2 border-blue-500 text-blue-300'
+                  : 'text-slate-400 hover:text-slate-200',
+              ].join(' ')}
+              onClick={() => setTab('current')}
+            >
+              当前
+            </button>
+            <button
+              type="button"
+              className={[
+                'flex-1 px-3 py-2 text-sm',
+                tab === 'forecast'
+                  ? 'border-b-2 border-blue-500 text-blue-300'
+                  : 'text-slate-400 hover:text-slate-200',
+              ].join(' ')}
+              onClick={() => setTab('forecast')}
+            >
+              预报
+            </button>
+            <button
+              type="button"
+              className={[
+                'flex-1 px-3 py-2 text-sm',
+                tab === 'history'
+                  ? 'border-b-2 border-blue-500 text-blue-300'
+                  : 'text-slate-400 hover:text-slate-200',
+              ].join(' ')}
+              onClick={() => setTab('history')}
+            >
+              历史
+            </button>
+          </div>
+
+          <div className="flex-1 overflow-auto p-3">
+            {tab === 'current' ? (
+              selectedLayer ? (
+                <div className="grid gap-2 text-sm text-slate-200">
+                  <div className="text-xs uppercase tracking-wide text-slate-400">
+                    选中图层
+                  </div>
+                  <div className="flex items-center justify-between gap-2 rounded-lg border border-slate-400/10 bg-slate-900/20 px-3 py-2">
+                    <span className="font-medium text-white">{selectedLayer.id}</span>
+                    <span className="text-xs text-slate-400">{selectedLayer.type}</span>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div className="rounded-lg border border-slate-400/10 bg-slate-900/20 px-3 py-2">
+                      <div className="text-xs text-slate-400">可见</div>
+                      <div className="text-sm text-white">
+                        {selectedLayer.visible ? '是' : '否'}
+                      </div>
+                    </div>
+                    <div className="rounded-lg border border-slate-400/10 bg-slate-900/20 px-3 py-2">
+                      <div className="text-xs text-slate-400">透明度</div>
+                      <div className="text-sm text-white">
+                        {Math.round(selectedLayer.opacity * 100)}%
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="text-sm text-slate-400">
+                  请选择左侧图层查看详情，或进入点位/事件模式。
+                </div>
+              )
+            ) : (
+              <div className="text-sm text-slate-400">该视图尚未实现。</div>
+            )}
+          </div>
+        </div>
+      )}
+    </aside>
+  );
+}
+

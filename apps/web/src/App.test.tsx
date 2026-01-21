@@ -12,7 +12,12 @@ function jsonResponse(payload: unknown) {
   });
 }
 
-it('switches primary layer and updates legend', async () => {
+it('switches active layer and updates legend', async () => {
+  localStorage.removeItem('digital-earth.layers');
+  localStorage.removeItem('digital-earth.viewMode');
+  localStorage.removeItem('digital-earth.layoutPanels');
+  vi.resetModules();
+
   const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
     const url = typeof input === 'string' ? input : input.toString();
     if (url === '/config.json') {
@@ -45,11 +50,8 @@ it('switches primary layer and updates legend', async () => {
 
   expect(await screen.findByText('温度')).toBeInTheDocument();
 
-  const windCheckbox = screen.getByRole('checkbox', { name: 'wind' });
+  const windCheckbox = screen.getByRole('checkbox', { name: '显示 wind' });
   fireEvent.click(windCheckbox);
-
-  const primarySelect = screen.getByRole('combobox', { name: 'Primary' });
-  fireEvent.change(primarySelect, { target: { value: 'wind' } });
 
   expect(await screen.findByText('风速')).toBeInTheDocument();
 

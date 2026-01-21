@@ -159,6 +159,43 @@ def test_products_endpoint_returns_seeded_products(
         assert set(hazard["bbox"]) == {"min_x", "min_y", "max_x", "max_y"}
 
 
+def test_product_detail_endpoint_returns_text_and_hazards(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    db_url = f"sqlite+pysqlite:///{tmp_path / 'products.db'}"
+    _seed_products(db_url)
+
+    client = _make_client(monkeypatch, tmp_path, db_url=db_url)
+    products = client.get("/api/v1/products").json()["items"]
+    product_id = next(item["id"] for item in products if item["title"] == "降雪")
+
+    response = client.get(f"/api/v1/products/{product_id}")
+    assert response.status_code == 200
+    payload = response.json()
+
+    assert payload["id"] == product_id
+    assert payload["title"] == "降雪"
+    assert payload["text"] == "seeded 降雪"
+    assert payload["status"] == "published"
+    assert payload["version"] == 1
+    assert len(payload["hazards"]) == 1
+    hazard = payload["hazards"][0]
+    assert hazard["severity"] == "low"
+    assert hazard["geometry"]["type"] == "Polygon"
+    assert set(hazard["bbox"]) == {"min_x", "min_y", "max_x", "max_y"}
+
+
+def test_product_detail_endpoint_returns_404_for_missing_product(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    db_url = f"sqlite+pysqlite:///{tmp_path / 'products.db'}"
+    _seed_products(db_url)
+
+    client = _make_client(monkeypatch, tmp_path, db_url=db_url)
+    response = client.get("/api/v1/products/9999")
+    assert response.status_code == 404
+
+
 def test_products_hazards_geojson_returns_features(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

@@ -3,6 +3,7 @@ import {
   CesiumTerrainProvider,
   createWorldImageryAsync,
   createWorldTerrainAsync,
+  EllipsoidTerrainProvider,
   ImageryLayer,
   Ion,
   UrlTemplateImageryProvider,
@@ -45,6 +46,7 @@ export function CesiumViewer() {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [viewer, setViewer] = useState<CesiumViewerInstance | null>(null);
   const [mapConfig, setMapConfig] = useState<MapConfig | undefined>(undefined);
+  const [terrainNotice, setTerrainNotice] = useState<string | null>(null);
   const basemapId = useBasemapStore((state) => state.basemapId);
   const sceneModeId = useSceneModeStore((state) => state.sceneModeId);
   const appliedBasemapIdRef = useRef<BasemapId | null>(null);
@@ -169,9 +171,20 @@ export function CesiumViewer() {
     }
 
     const applyTerrainProvider = async () => {
+      setTerrainNotice(null);
+
+      if (mapConfig.terrainProvider === 'none' || mapConfig.terrainProvider === undefined) {
+        viewer.terrainProvider = new EllipsoidTerrainProvider();
+        viewer.scene.requestRender();
+        return;
+      }
+
       if (mapConfig.terrainProvider === 'ion') {
         if (!token) {
           console.warn('[Digital Earth] map.terrainProvider=ion requires map.cesiumIonAccessToken');
+          setTerrainNotice('未配置 Cesium ion token，已回退到无地形模式。');
+          viewer.terrainProvider = new EllipsoidTerrainProvider();
+          viewer.scene.requestRender();
           return;
         }
         const terrain = await createWorldTerrainAsync();
@@ -185,6 +198,9 @@ export function CesiumViewer() {
         const terrainUrl = mapConfig.selfHosted?.terrainUrl;
         if (!terrainUrl) {
           console.warn('[Digital Earth] map.terrainProvider=selfHosted requires map.selfHosted.terrainUrl');
+          setTerrainNotice('未配置自建地形地址，已回退到无地形模式。');
+          viewer.terrainProvider = new EllipsoidTerrainProvider();
+          viewer.scene.requestRender();
           return;
         }
         const terrain = await CesiumTerrainProvider.fromUrl(terrainUrl);
@@ -202,6 +218,9 @@ export function CesiumViewer() {
     void applyTerrainProvider().catch((error: unknown) => {
       if (cancelled) return;
       console.warn('[Digital Earth] failed to apply terrain provider', error);
+      setTerrainNotice('地形加载失败，已回退到无地形模式。');
+      viewer.terrainProvider = new EllipsoidTerrainProvider();
+      viewer.scene.requestRender();
     });
 
     return () => {
@@ -226,6 +245,12 @@ export function CesiumViewer() {
         <SceneModeToggle />
         <EventLayersToggle />
         {basemapProvider === 'open' ? <BasemapSelector /> : null}
+        {terrainNotice ? (
+          <div className="terrainNoticePanel" role="alert" aria-label="terrain-notice">
+            <div className="terrainNoticeTitle">地形</div>
+            <div className="terrainNoticeMessage">{terrainNotice}</div>
+          </div>
+        ) : null}
       </div>
     </div>
   );
