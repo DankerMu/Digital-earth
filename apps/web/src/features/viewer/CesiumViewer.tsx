@@ -17,15 +17,15 @@ import {
   WebMercatorTilingScheme,
   type Viewer as CesiumViewerInstance
 } from 'cesium';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { loadConfig, type MapConfig } from '../../config';
 import { getBasemapById, type BasemapId } from '../../config/basemaps';
 import { useBasemapStore } from '../../state/basemap';
 import { useCameraPerspectiveStore, type CameraPerspectiveId } from '../../state/cameraPerspective';
-import { useLayerManagerStore, type LayerType } from '../../state/layerManager';
+import { useLayerManagerStore, type LayerConfig, type LayerType } from '../../state/layerManager';
 import { usePerformanceModeStore } from '../../state/performanceMode';
 import { useSceneModeStore } from '../../state/sceneMode';
-import { useViewModeStore } from '../../state/viewMode';
+import { useViewModeStore, type ViewModeRoute } from '../../state/viewMode';
 import { PrecipitationParticles } from '../effects/PrecipitationParticles';
 import { WindArrows, windArrowDensityForCameraHeight } from '../effects/WindArrows';
 import { createCloudSampler, createWeatherSampler } from '../effects/weatherSampler';
@@ -67,6 +67,7 @@ const WEATHER_SAMPLE_THROTTLE_MS = 750;
 const WEATHER_SAMPLE_ZOOM = 8;
 const WIND_VECTOR_THROTTLE_MS = 800;
 const WIND_ARROWS_MAX_COUNT = 500;
+const WIND_VECTOR_CACHE_MAX_ENTRIES = 20;
 
 const LOCAL_FREE_PITCH = -Math.PI / 4;
 const LOCAL_FORWARD_PITCH = 0;
@@ -203,6 +204,54 @@ function normalizeSelfHostedBasemapTemplate(
   return urlTemplate.replaceAll('{y}', '{reverseY}');
 }
 
+type SavedCameraState = {
+  lon: number;
+  lat: number;
+  heightMeters: number;
+  heading: number;
+  pitch: number;
+  roll: number;
+};
+
+type ModeSnapshot = {
+  layers: LayerConfig[];
+  cloudFrameIndex: number;
+  camera: SavedCameraState | null;
+};
+
+function snapshotViewerCamera(viewer: CesiumViewerInstance): SavedCameraState | null {
+  const camera = viewer.camera as unknown as {
+    positionCartographic?: { longitude?: number; latitude?: number; height?: number };
+    heading?: number;
+    pitch?: number;
+    roll?: number;
+  };
+
+  const cartographic = camera.positionCartographic;
+  const lonRad = cartographic?.longitude;
+  const latRad = cartographic?.latitude;
+  const heightMeters = cartographic?.height;
+  if (typeof lonRad !== 'number' || !Number.isFinite(lonRad)) return null;
+  if (typeof latRad !== 'number' || !Number.isFinite(latRad)) return null;
+  if (typeof heightMeters !== 'number' || !Number.isFinite(heightMeters)) return null;
+
+  const heading = camera.heading;
+  const pitch = camera.pitch;
+  const roll = camera.roll;
+  if (typeof heading !== 'number' || !Number.isFinite(heading)) return null;
+  if (typeof pitch !== 'number' || !Number.isFinite(pitch)) return null;
+  if (typeof roll !== 'number' || !Number.isFinite(roll)) return null;
+
+  return {
+    lon: wrapLongitudeDegrees(CesiumMath.toDegrees(lonRad)),
+    lat: clampLatitudeDegrees(CesiumMath.toDegrees(latRad)),
+    heightMeters,
+    heading,
+    pitch,
+    roll,
+  };
+}
+
 export function CesiumViewer() {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [viewer, setViewer] = useState<CesiumViewerInstance | null>(null);
@@ -212,6 +261,7 @@ export function CesiumViewer() {
   const basemapId = useBasemapStore((state) => state.basemapId);
   const sceneModeId = useSceneModeStore((state) => state.sceneModeId);
   const viewModeRoute = useViewModeStore((state) => state.route);
+  const viewModeTransition = useViewModeStore((state) => state.transition);
   const enterLocal = useViewModeStore((state) => state.enterLocal);
   const enterLayerGlobal = useViewModeStore((state) => state.enterLayerGlobal);
   const canGoBack = useViewModeStore((state) => state.canGoBack);
@@ -246,12 +296,17 @@ export function CesiumViewer() {
   const windAbortRef = useRef<AbortController | null>(null);
   const windVectorsRef = useRef<WindVector[]>([]);
   const windViewKeyRef = useRef<string | null>(null);
+  const windVectorsKeyRef = useRef<string | null>(null);
   const windStyleKeyRef = useRef<string | null>(null);
+  const windVectorsCacheRef = useRef<Map<string, WindVector[]>>(new Map());
   const weatherSamplerRef = useRef<ReturnType<typeof createWeatherSampler> | null>(null);
   const weatherAbortRef = useRef<AbortController | null>(null);
   const cloudSamplerRef = useRef<ReturnType<typeof createCloudSampler> | null>(null);
   const samplingAbortRef = useRef<AbortController | null>(null);
   const [cloudFrameIndex, setCloudFrameIndex] = useState(0);
+  const localModeSnapshotRef = useRef<ModeSnapshot | null>(null);
+  const pendingLocalCameraRestoreRef = useRef<SavedCameraState | null>(null);
+  const previousRouteRef = useRef<ViewModeRoute | null>(null);
   const {
     state: samplingCardState,
     open: openSamplingCard,
@@ -285,6 +340,44 @@ export function CesiumViewer() {
   }, [layerGlobalLayerId, layers]);
 
   const basemapProvider = mapConfig?.basemapProvider ?? 'open';
+
+  useLayoutEffect(() => {
+    const prev = previousRouteRef.current;
+    const next = viewModeRoute;
+    previousRouteRef.current = next;
+
+    if (!prev) return;
+
+    if (prev.viewModeId === 'local' && next.viewModeId === 'layerGlobal') {
+      localModeSnapshotRef.current = {
+        layers: useLayerManagerStore.getState().layers.map((layer) => ({ ...layer })),
+        cloudFrameIndex,
+        camera: viewer ? snapshotViewerCamera(viewer) : null,
+      };
+      return;
+    }
+
+    if (prev.viewModeId === 'layerGlobal' && next.viewModeId === 'local') {
+      const isBack =
+        viewModeTransition?.kind === 'back' &&
+        viewModeTransition.from.viewModeId === 'layerGlobal' &&
+        viewModeTransition.to.viewModeId === 'local';
+      if (!isBack) return;
+
+      const snapshot = localModeSnapshotRef.current;
+      if (!snapshot) return;
+
+      useLayerManagerStore.getState().batch(() => {
+        useLayerManagerStore.setState({ layers: snapshot.layers });
+      });
+
+      if (!Object.is(cloudFrameIndex, snapshot.cloudFrameIndex)) {
+        setCloudFrameIndex(snapshot.cloudFrameIndex);
+      }
+
+      pendingLocalCameraRestoreRef.current = snapshot.camera;
+    }
+  }, [cloudFrameIndex, viewModeRoute, viewModeTransition, viewer]);
 
   useEffect(() => {
     if (!viewer) return;
@@ -583,11 +676,14 @@ export function CesiumViewer() {
   useEffect(() => {
     if (!viewer) return;
 
+    const cache = windVectorsCacheRef.current;
     windAbortRef.current?.abort();
     windAbortRef.current = null;
     windVectorsRef.current = [];
     windViewKeyRef.current = null;
+    windVectorsKeyRef.current = null;
     windStyleKeyRef.current = null;
+    cache.clear();
 
     const windArrows = new WindArrows(viewer, {
       maxArrows: WIND_ARROWS_MAX_COUNT,
@@ -600,7 +696,9 @@ export function CesiumViewer() {
       windAbortRef.current = null;
       windVectorsRef.current = [];
       windViewKeyRef.current = null;
+      windVectorsKeyRef.current = null;
       windStyleKeyRef.current = null;
+      cache.clear();
       windArrows.destroy();
       windArrowsRef.current = null;
     };
@@ -825,6 +923,35 @@ export function CesiumViewer() {
     const key = `${sceneModeId}:${viewModeRoute.lon}:${viewModeRoute.lat}:${surfaceHeightMeters}`;
     if (localEntryKeyRef.current === key) return;
     localEntryKeyRef.current = key;
+
+    const pendingRestore = pendingLocalCameraRestoreRef.current;
+    if (pendingRestore) {
+      pendingLocalCameraRestoreRef.current = null;
+
+      const destination = Cartesian3.fromDegrees(
+        pendingRestore.lon,
+        pendingRestore.lat,
+        pendingRestore.heightMeters,
+      );
+
+      const pitch =
+        cameraPerspectiveId === 'free'
+          ? pendingRestore.pitch
+          : cameraPitchForPerspective(cameraPerspectiveId) ?? LOCAL_FREE_PITCH;
+      const roll = cameraPerspectiveId === 'free' ? pendingRestore.roll : 0;
+
+      viewer.camera.flyTo({
+        destination,
+        orientation: {
+          heading: pendingRestore.heading,
+          pitch,
+          roll,
+        },
+        duration: 1.2,
+      });
+      appliedCameraPerspectiveRef.current = cameraPerspectiveId;
+      return;
+    }
 
     const offsetMeters = sceneModeId === '2d' ? 5000 : 3000;
     const destination = Cartesian3.fromDegrees(
@@ -1077,6 +1204,7 @@ export function CesiumViewer() {
       cancelInFlight();
       windVectorsRef.current = [];
       windViewKeyRef.current = null;
+      windVectorsKeyRef.current = null;
       windStyleKeyRef.current = null;
       windArrows.update({
         enabled: false,
@@ -1167,11 +1295,19 @@ export function CesiumViewer() {
         performanceModeEnabled,
       });
 
-      const viewKey = `${DEFAULT_LAYER_TIME_KEY}:${density}:${bbox.west},${bbox.south},${bbox.east},${bbox.north}`;
+      const normalizedApiBaseUrl = apiBaseUrl.trim().replace(/\/+$/, '');
+      const viewKey = `${normalizedApiBaseUrl}:${DEFAULT_LAYER_TIME_KEY}:${density}:${bbox.west},${bbox.south},${bbox.east},${bbox.north}`;
       const styleKey = `${windLayerConfig.opacity}:${windVisible}:${performanceModeEnabled}`;
 
-      if (windViewKeyRef.current === viewKey) {
-        if (windStyleKeyRef.current !== styleKey && windVectorsRef.current.length > 0) {
+      if (windViewKeyRef.current !== viewKey) {
+        cancelInFlight();
+      }
+      windViewKeyRef.current = viewKey;
+
+      const hasCurrentVectors =
+        windVectorsKeyRef.current === viewKey && windVectorsRef.current.length > 0;
+      if (hasCurrentVectors) {
+        if (windStyleKeyRef.current !== styleKey) {
           windStyleKeyRef.current = styleKey;
           windArrows.update({
             enabled: true,
@@ -1183,7 +1319,30 @@ export function CesiumViewer() {
         return;
       }
 
-      windViewKeyRef.current = viewKey;
+      if (windAbortRef.current) {
+        windStyleKeyRef.current = styleKey;
+        return;
+      }
+
+      const cache = windVectorsCacheRef.current;
+      const cachedVectors = cache.get(viewKey);
+      if (cachedVectors) {
+        cancelInFlight();
+        cache.delete(viewKey);
+        cache.set(viewKey, cachedVectors);
+        windViewKeyRef.current = viewKey;
+        windVectorsKeyRef.current = viewKey;
+        windStyleKeyRef.current = styleKey;
+        windVectorsRef.current = cachedVectors;
+        windArrows.update({
+          enabled: true,
+          opacity: windLayerConfig.opacity,
+          vectors: cachedVectors,
+          performanceModeEnabled,
+        });
+        return;
+      }
+
       windStyleKeyRef.current = styleKey;
 
       cancelInFlight();
@@ -1197,7 +1356,14 @@ export function CesiumViewer() {
           signal: controller.signal,
         });
         if (controller.signal.aborted) return;
+        if (windViewKeyRef.current !== viewKey) return;
         windVectorsRef.current = vectors;
+        windVectorsKeyRef.current = viewKey;
+        cache.set(viewKey, vectors);
+        if (cache.size > WIND_VECTOR_CACHE_MAX_ENTRIES) {
+          const oldest = cache.keys().next().value as string | undefined;
+          if (oldest) cache.delete(oldest);
+        }
         windArrows.update({
           enabled: true,
           opacity: windLayerConfig.opacity,
@@ -1206,8 +1372,11 @@ export function CesiumViewer() {
         });
       } catch (error) {
         if (controller.signal.aborted) return;
+        if (windViewKeyRef.current !== viewKey) return;
         console.warn('[Digital Earth] failed to fetch wind vectors', error);
         disableArrows();
+      } finally {
+        if (windAbortRef.current === controller) windAbortRef.current = null;
       }
     };
 
