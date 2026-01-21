@@ -1,4 +1,5 @@
 import {
+  Cartographic,
   Cartesian3,
   CesiumTerrainProvider,
   createWorldImageryAsync,
@@ -7,6 +8,7 @@ import {
   ImageryLayer,
   Ion,
   Math as CesiumMath,
+  ScreenSpaceEventType,
   UrlTemplateImageryProvider,
   Viewer,
   WebMercatorTilingScheme,
@@ -21,16 +23,19 @@ import { usePerformanceModeStore } from '../../state/performanceMode';
 import { useSceneModeStore } from '../../state/sceneMode';
 import { PrecipitationParticles } from '../effects/PrecipitationParticles';
 import { WindArrows, windArrowDensityForCameraHeight } from '../effects/WindArrows';
-import { createWeatherSampler } from '../effects/weatherSampler';
+import { createCloudSampler, createWeatherSampler } from '../effects/weatherSampler';
 import { CloudLayer } from '../layers/CloudLayer';
 import { PrecipitationLayer } from '../layers/PrecipitationLayer';
 import { TemperatureLayer } from '../layers/TemperatureLayer';
 import {
   buildCldasTileUrlTemplate,
+  buildCloudTileUrlTemplate,
   buildPrecipitationTileUrlTemplate,
   fetchWindVectorData,
   type WindVector,
 } from '../layers/layersApi';
+import { SamplingCard } from '../sampling/SamplingCard';
+import { useSamplingCard } from '../sampling/useSamplingCard';
 import { BasemapSelector } from './BasemapSelector';
 import { CompassControl } from './CompassControl';
 import { EventLayersToggle } from './EventLayersToggle';
@@ -56,6 +61,74 @@ const WEATHER_SAMPLE_THROTTLE_MS = 750;
 const WEATHER_SAMPLE_ZOOM = 8;
 const WIND_VECTOR_THROTTLE_MS = 800;
 const WIND_ARROWS_MAX_COUNT = 500;
+
+function wrapLongitudeDegrees(lon: number): number {
+  if (!Number.isFinite(lon)) return 0;
+  return ((lon + 180) % 360 + 360) % 360 - 180;
+}
+
+function clampLatitudeDegrees(lat: number): number {
+  if (!Number.isFinite(lat)) return 0;
+  if (lat < -90) return -90;
+  if (lat > 90) return 90;
+  return lat;
+}
+
+function deltaLongitudeDegrees(a: number, b: number): number {
+  const d = a - b;
+  return ((d + 540) % 360) - 180;
+}
+
+function sampleWindVectorAt(
+  vectors: WindVector[],
+  target: { lon: number; lat: number },
+): { speedMps: number; directionDeg: number | null } | null {
+  if (vectors.length === 0) return null;
+
+  const lon = wrapLongitudeDegrees(target.lon);
+  const lat = clampLatitudeDegrees(target.lat);
+
+  const candidates = vectors
+    .map((vector) => {
+      const dx = deltaLongitudeDegrees(lon, vector.lon);
+      const dy = lat - vector.lat;
+      const dist2 = dx * dx + dy * dy;
+      return { vector, dist2 };
+    })
+    .sort((a, b) => a.dist2 - b.dist2)
+    .slice(0, 8);
+
+  if (candidates.length === 0) return null;
+  if (candidates[0]!.dist2 <= 0) {
+    const { u, v } = candidates[0]!.vector;
+    const speedMps = Math.sqrt(u * u + v * v);
+    const directionDeg =
+      speedMps > 0 ? ((Math.atan2(u, v) * 180) / Math.PI + 360) % 360 : null;
+    return { speedMps, directionDeg };
+  }
+
+  const epsilon = 1e-12;
+  let sumW = 0;
+  let sumU = 0;
+  let sumV = 0;
+
+  for (const { vector, dist2 } of candidates) {
+    const weight = 1 / Math.max(epsilon, dist2);
+    sumW += weight;
+    sumU += vector.u * weight;
+    sumV += vector.v * weight;
+  }
+
+  if (!Number.isFinite(sumW) || sumW <= 0) return null;
+
+  const u = sumU / sumW;
+  const v = sumV / sumW;
+  const speedMps = Math.sqrt(u * u + v * v);
+  const directionDeg =
+    speedMps > 0 ? ((Math.atan2(u, v) * 180) / Math.PI + 360) % 360 : null;
+
+  return { speedMps, directionDeg };
+}
 
 function toUtcIsoNoMillis(date: Date): string {
   return date.toISOString().replace(/\.\d{3}Z$/, 'Z');
@@ -107,7 +180,16 @@ export function CesiumViewer() {
   const windStyleKeyRef = useRef<string | null>(null);
   const weatherSamplerRef = useRef<ReturnType<typeof createWeatherSampler> | null>(null);
   const weatherAbortRef = useRef<AbortController | null>(null);
+  const cloudSamplerRef = useRef<ReturnType<typeof createCloudSampler> | null>(null);
+  const samplingAbortRef = useRef<AbortController | null>(null);
   const [cloudFrameIndex, setCloudFrameIndex] = useState(0);
+  const {
+    state: samplingCardState,
+    open: openSamplingCard,
+    close: closeSamplingCard,
+    setData: setSamplingData,
+    setError: setSamplingError,
+  } = useSamplingCard();
   const cloudTimeKey = useMemo(
     () => makeHourlyUtcIso(DEFAULT_LAYER_TIME_KEY, cloudFrameIndex),
     [cloudFrameIndex],
@@ -389,6 +471,11 @@ export function CesiumViewer() {
     return visible ?? layers.find((layer) => layer.type === 'temperature') ?? null;
   }, [layers]);
 
+  const cloudLayerConfig = useMemo(() => {
+    const visible = layers.find((layer) => layer.type === 'cloud' && layer.visible);
+    return visible ?? layers.find((layer) => layer.type === 'cloud') ?? null;
+  }, [layers]);
+
   useEffect(() => {
     if (!apiBaseUrl) return;
     if (!precipitationLayerConfig) {
@@ -415,6 +502,120 @@ export function CesiumViewer() {
       temperature: { urlTemplate: temperatureTemplate },
     });
   }, [apiBaseUrl, precipitationLayerConfig, temperatureLayerConfig]);
+
+  useEffect(() => {
+    if (!apiBaseUrl) {
+      cloudSamplerRef.current = null;
+      return;
+    }
+    if (!cloudLayerConfig) {
+      cloudSamplerRef.current = null;
+      return;
+    }
+
+    const cloudTemplate = buildCloudTileUrlTemplate({
+      apiBaseUrl,
+      timeKey: cloudTimeKey,
+      variable: cloudLayerConfig.variable,
+    });
+
+    cloudSamplerRef.current = createCloudSampler({
+      zoom: WEATHER_SAMPLE_ZOOM,
+      cloud: { urlTemplate: cloudTemplate },
+    });
+  }, [apiBaseUrl, cloudLayerConfig, cloudTimeKey]);
+
+  useEffect(() => {
+    if (!viewer) return;
+
+    const handler = viewer.screenSpaceEventHandler as unknown as {
+      setInputAction?: (cb: (movement: { position?: unknown }) => void, type: unknown) => void;
+      removeInputAction?: (type: unknown) => void;
+    };
+
+    if (!handler?.setInputAction) return;
+
+    const onClick = (movement: { position?: unknown }) => {
+      const position = movement.position;
+      if (!position) return;
+
+      const cartesian =
+        (viewer.scene as unknown as { pickPosition?: (pos: unknown) => unknown }).pickPosition?.(
+          position,
+        ) ??
+        (viewer.camera as unknown as {
+          pickEllipsoid?: (pos: unknown, ellipsoid?: unknown) => unknown;
+        }).pickEllipsoid?.(
+          position,
+          (viewer.scene as unknown as { globe?: { ellipsoid?: unknown } }).globe?.ellipsoid,
+        );
+
+      if (!cartesian) {
+        openSamplingCard({ lon: Number.NaN, lat: Number.NaN });
+        setSamplingError('无法获取点击位置');
+        return;
+      }
+
+      const cartographic = Cartographic.fromCartesian(cartesian as never);
+      const lon = CesiumMath.toDegrees(cartographic.longitude);
+      const lat = CesiumMath.toDegrees(cartographic.latitude);
+
+      if (!Number.isFinite(lon) || !Number.isFinite(lat)) {
+        openSamplingCard({ lon: Number.NaN, lat: Number.NaN });
+        setSamplingError('无法获取经纬度');
+        return;
+      }
+
+      samplingAbortRef.current?.abort();
+      const controller = new AbortController();
+      samplingAbortRef.current = controller;
+
+      openSamplingCard({ lon, lat });
+
+      const sampler = weatherSamplerRef.current;
+      const cloudSampler = cloudSamplerRef.current;
+      const windVectors = windVectorsRef.current;
+
+      void (async () => {
+        try {
+          const [weather, cloud] = await Promise.all([
+            sampler?.sample({ lon, lat, signal: controller.signal }) ??
+              Promise.resolve({
+                precipitationMm: null,
+                precipitationIntensity: 0,
+                precipitationKind: 'none' as const,
+                temperatureC: null,
+              }),
+            cloudSampler?.sample({ lon, lat, signal: controller.signal }) ??
+              Promise.resolve({ cloudCoverFraction: null }),
+          ]);
+
+          if (controller.signal.aborted) return;
+
+          const wind = sampleWindVectorAt(windVectors, { lon, lat });
+          setSamplingData({
+            temperatureC: weather.temperatureC,
+            precipitationMm: weather.precipitationMm,
+            windSpeedMps: wind?.speedMps ?? null,
+            windDirectionDeg: wind?.directionDeg ?? null,
+            cloudCoverPercent:
+              cloud.cloudCoverFraction == null
+                ? null
+                : Math.max(0, Math.min(100, cloud.cloudCoverFraction * 100)),
+          });
+        } catch {
+          if (controller.signal.aborted) return;
+          setSamplingError('取样失败');
+        }
+      })();
+    };
+
+    handler.setInputAction(onClick, ScreenSpaceEventType.LEFT_CLICK);
+
+    return () => {
+      handler.removeInputAction?.(ScreenSpaceEventType.LEFT_CLICK);
+    };
+  }, [openSamplingCard, setSamplingData, setSamplingError, viewer]);
 
   useEffect(() => {
     if (!viewer) return;
@@ -872,6 +1073,9 @@ export function CesiumViewer() {
             <div className="terrainNoticeMessage">{terrainNotice}</div>
           </div>
         ) : null}
+      </div>
+      <div className="absolute right-3 top-3 z-20">
+        <SamplingCard state={samplingCardState} onClose={closeSamplingCard} />
       </div>
     </div>
   );

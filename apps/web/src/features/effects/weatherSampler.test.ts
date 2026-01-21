@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import {
+  createCloudSampler,
   createWeatherSampler,
   precipitationMmToIntensity,
   temperatureCToPrecipitationKind,
@@ -329,5 +330,55 @@ describe('createWeatherSampler', () => {
     });
 
     await expect(sampler.sample({ lon: 0, lat: 0 })).rejects.toThrow('Failed to load tile');
+  });
+});
+
+describe('createCloudSampler', () => {
+  it('samples cloud cover fraction from tile alpha', async () => {
+    const fetchImageData = vi.fn(async () => makeImageData(4, 4, [255, 255, 255, 128]));
+    const sampler = createCloudSampler({
+      zoom: 2,
+      cloud: {
+        urlTemplate: 'http://api.test/api/v1/tiles/cldas/2024011500/TCC/{z}/{x}/{y}.png',
+        tileSize: 4,
+      },
+      fetchImageData,
+    });
+
+    const sample = await sampler.sample({ lon: 0, lat: 0 });
+
+    expect(sample.cloudCoverFraction).toBeCloseTo(128 / 255, 6);
+    expect(fetchImageData).toHaveBeenCalledTimes(1);
+  });
+
+  it('returns null for transparent black nodata pixels', async () => {
+    const sampler = createCloudSampler({
+      zoom: 2,
+      cloud: {
+        urlTemplate: 'http://api.test/api/v1/tiles/cldas/2024011500/TCC/{z}/{x}/{y}.png',
+        tileSize: 4,
+      },
+      fetchImageData: async () => makeImageData(4, 4, [0, 0, 0, 0]),
+    });
+
+    const sample = await sampler.sample({ lon: 0, lat: 0 });
+    expect(sample.cloudCoverFraction).toBeNull();
+  });
+
+  it('caches the last cloud tile', async () => {
+    const fetchImageData = vi.fn(async () => makeImageData(4, 4, [255, 255, 255, 64]));
+    const sampler = createCloudSampler({
+      zoom: 2,
+      cloud: {
+        urlTemplate: 'http://api.test/api/v1/tiles/cldas/2024011500/TCC/{z}/{x}/{y}.png',
+        tileSize: 4,
+      },
+      fetchImageData,
+    });
+
+    await sampler.sample({ lon: 1, lat: 1 });
+    await sampler.sample({ lon: 1, lat: 1 });
+
+    expect(fetchImageData).toHaveBeenCalledTimes(1);
   });
 });
