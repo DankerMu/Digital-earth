@@ -280,6 +280,7 @@ const updateLayer: LayerManagerState['updateLayer'] = (id, partial) => {
     const nextLevel = isFiniteNumber(partial.level) ? partial.level : undefined;
     if (!Object.is(next.level, nextLevel)) {
       if (nextLevel == null) {
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
         const { level: _level, ...rest } = next;
         next = rest;
       } else {
