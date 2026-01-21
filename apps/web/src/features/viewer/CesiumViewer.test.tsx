@@ -2,6 +2,51 @@ import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+const precipitationParticlesMocks = vi.hoisted(() => {
+  return {
+    update: vi.fn(),
+    destroy: vi.fn(),
+    instances: [] as Array<{ update: (args: unknown) => void; destroy: () => void }>,
+  };
+});
+
+vi.mock('../effects/PrecipitationParticles', () => {
+  return {
+    PrecipitationParticles: vi.fn(function () {
+      const instance = {
+        update: precipitationParticlesMocks.update,
+        destroy: precipitationParticlesMocks.destroy,
+      };
+      precipitationParticlesMocks.instances.push(instance);
+      return instance;
+    }),
+  };
+});
+
+const weatherSamplerMocks = vi.hoisted(() => {
+  return {
+    sample: vi.fn(async (): Promise<{
+      precipitationMm: number | null;
+      precipitationIntensity: number;
+      precipitationKind: 'none' | 'rain' | 'snow';
+      temperatureC: number | null;
+    }> => ({
+      precipitationMm: null,
+      precipitationIntensity: 0,
+      precipitationKind: 'none',
+      temperatureC: null,
+    })),
+  };
+});
+
+vi.mock('../effects/weatherSampler', () => {
+  return {
+    createWeatherSampler: vi.fn(() => ({
+      sample: weatherSamplerMocks.sample,
+    })),
+  };
+});
+
 vi.mock('cesium', () => {
   const SceneMode = {
     MORPHING: 0,
@@ -19,6 +64,23 @@ vi.mock('cesium', () => {
 
   let morphCompleteHandler: (() => void) | null = null;
 
+  const makeEvent = () => {
+    const handlers = new Set<() => void>();
+    return {
+      addEventListener: vi.fn((handler: () => void) => {
+        handlers.add(handler);
+      }),
+      removeEventListener: vi.fn((handler: () => void) => {
+        handlers.delete(handler);
+      }),
+      __mocks: {
+        trigger: () => {
+          for (const handler of handlers) handler();
+        },
+      },
+    };
+  };
+
   const camera = {
     heading: 1,
     pitch: 0.5,
@@ -27,7 +89,9 @@ vi.mock('cesium', () => {
     positionCartographic: { longitude: 0.1, latitude: 0.2, height: 123 },
     computeViewRectangle: vi.fn(() => null),
     setView: vi.fn(),
-    flyTo: vi.fn()
+    flyTo: vi.fn(),
+    changed: makeEvent(),
+    moveEnd: makeEvent(),
   };
 
   const beforeExecute = {
@@ -82,7 +146,11 @@ vi.mock('cesium', () => {
       postRender: {
         addEventListener: vi.fn(),
         removeEventListener: vi.fn()
-      }
+      },
+      preUpdate: {
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+      },
     },
     destroy: vi.fn()
   };
@@ -129,6 +197,7 @@ import { DEFAULT_BASEMAP_ID } from '../../config/basemaps';
 import { useBasemapStore } from '../../state/basemap';
 import { DEFAULT_EVENT_LAYER_MODE, useEventLayersStore } from '../../state/eventLayers';
 import { useLayerManagerStore } from '../../state/layerManager';
+import { usePerformanceModeStore } from '../../state/performanceMode';
 import { DEFAULT_SCENE_MODE_ID, useSceneModeStore } from '../../state/sceneMode';
 import { CesiumViewer } from './CesiumViewer';
 
@@ -143,15 +212,18 @@ describe('CesiumViewer', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.unstubAllGlobals();
+    precipitationParticlesMocks.instances.length = 0;
     clearConfigCache();
     localStorage.removeItem('digital-earth.basemap');
     localStorage.removeItem('digital-earth.eventLayers');
     localStorage.removeItem('digital-earth.sceneMode');
     localStorage.removeItem('digital-earth.layers');
+    localStorage.removeItem('digital-earth.performanceMode');
     useBasemapStore.setState({ basemapId: DEFAULT_BASEMAP_ID });
     useEventLayersStore.setState({ enabled: false, mode: DEFAULT_EVENT_LAYER_MODE });
     useSceneModeStore.setState({ sceneModeId: DEFAULT_SCENE_MODE_ID });
     useLayerManagerStore.setState({ layers: [] });
+    usePerformanceModeStore.setState({ enabled: false });
     vi.stubGlobal('fetch', vi.fn(async () => jsonResponse({ apiBaseUrl: 'http://api.test' })));
   });
 
@@ -612,5 +684,99 @@ describe('CesiumViewer', () => {
     } finally {
       setIntervalSpy.mockRestore();
     }
+  });
+
+  it('samples weather and updates precipitation particles when precipitation layer is visible', async () => {
+    weatherSamplerMocks.sample.mockResolvedValueOnce({
+      precipitationMm: 25,
+      precipitationIntensity: 0.8,
+      precipitationKind: 'rain',
+      temperatureC: 10,
+    });
+
+    useLayerManagerStore.setState({
+      layers: [
+        {
+          id: 'temperature',
+          type: 'temperature',
+          variable: 'TMP',
+          opacity: 1,
+          visible: true,
+          zIndex: 10,
+        },
+        {
+          id: 'precipitation',
+          type: 'precipitation',
+          variable: 'precipitation',
+          opacity: 1,
+          visible: true,
+          zIndex: 30,
+        },
+      ],
+    });
+
+    render(<CesiumViewer />);
+
+    await waitFor(() => expect(vi.mocked(Viewer)).toHaveBeenCalledTimes(1));
+
+    await waitFor(() => expect(weatherSamplerMocks.sample).toHaveBeenCalledTimes(1));
+
+    const viewer = vi.mocked(Viewer).mock.results[0].value;
+    expect(viewer.camera.changed.addEventListener).toHaveBeenCalled();
+
+    expect(weatherSamplerMocks.sample).toHaveBeenCalledWith(
+      expect.objectContaining({ lon: 0.1, lat: 0.2 }),
+    );
+
+    await waitFor(() => expect(precipitationParticlesMocks.update).toHaveBeenCalled());
+    expect(precipitationParticlesMocks.update).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        enabled: true,
+        intensity: 0.8,
+        kind: 'rain',
+        performanceModeEnabled: false,
+      }),
+    );
+  });
+
+  it('skips sampling and disables precipitation particles in performance mode', async () => {
+    usePerformanceModeStore.setState({ enabled: true });
+
+    useLayerManagerStore.setState({
+      layers: [
+        {
+          id: 'temperature',
+          type: 'temperature',
+          variable: 'TMP',
+          opacity: 1,
+          visible: true,
+          zIndex: 10,
+        },
+        {
+          id: 'precipitation',
+          type: 'precipitation',
+          variable: 'precipitation',
+          opacity: 1,
+          visible: true,
+          zIndex: 30,
+        },
+      ],
+    });
+
+    render(<CesiumViewer />);
+
+    await waitFor(() => expect(vi.mocked(Viewer)).toHaveBeenCalledTimes(1));
+
+    await waitFor(() =>
+      expect(precipitationParticlesMocks.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          enabled: false,
+          kind: 'none',
+          performanceModeEnabled: true,
+        }),
+      ),
+    );
+
+    expect(weatherSamplerMocks.sample).not.toHaveBeenCalled();
   });
 });
