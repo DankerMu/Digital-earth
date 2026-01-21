@@ -306,7 +306,7 @@ vi.mock('cesium', () => {
   };
 });
 
-import { EllipsoidTerrainProvider, createWorldTerrainAsync, Viewer } from 'cesium';
+import { Cartesian3, EllipsoidTerrainProvider, createWorldTerrainAsync, Viewer } from 'cesium';
 import { clearConfigCache } from '../../config';
 import { DEFAULT_BASEMAP_ID } from '../../config/basemaps';
 import { useBasemapStore } from '../../state/basemap';
@@ -1200,5 +1200,83 @@ describe('CesiumViewer', () => {
       expect(viewer.scene.screenSpaceCameraController.enableLook).toBe(true);
     });
     expect(viewer.camera.flyTo).toHaveBeenCalledTimes(callsAfterForward);
+  });
+
+  it('flies camera to shell height and ensures the selected layer is visible in layerGlobal mode', async () => {
+    useLayerManagerStore.setState({
+      layers: [
+        {
+          id: 'cloud',
+          type: 'cloud',
+          variable: 'tcc',
+          opacity: 0.8,
+          visible: false,
+          zIndex: 10,
+        },
+      ],
+    });
+    useViewModeStore.setState({
+      route: { viewModeId: 'layerGlobal', layerId: 'cloud' },
+      history: [],
+      saved: {},
+    });
+
+    render(<CesiumViewer />);
+
+    await waitFor(() => expect(vi.mocked(Viewer)).toHaveBeenCalledTimes(1));
+    const viewer = vi.mocked(Viewer).mock.results[0].value;
+
+    await waitFor(() =>
+      expect(viewer.camera.flyTo).toHaveBeenCalledWith({
+        destination: { destination: true },
+        orientation: {
+          heading: 0,
+          pitch: -Math.PI / 2,
+          roll: 0,
+        },
+        duration: 2.0,
+      }),
+    );
+
+    expect(vi.mocked(Cartesian3.fromDegrees)).toHaveBeenCalledWith(0, 0, 5000);
+
+    await waitFor(() => {
+      expect(useLayerManagerStore.getState().layers[0]?.visible).toBe(true);
+    });
+  });
+
+  it('flies camera with fallback height when the selected layer is missing', async () => {
+    useLayerManagerStore.setState({
+      layers: [
+        {
+          id: 'temperature',
+          type: 'temperature',
+          variable: 'TMP',
+          opacity: 0.8,
+          visible: true,
+          zIndex: 10,
+        },
+      ],
+    });
+    useViewModeStore.setState({
+      route: { viewModeId: 'layerGlobal', layerId: 'missing-layer' },
+      history: [],
+      saved: {},
+    });
+
+    render(<CesiumViewer />);
+
+    await waitFor(() => expect(vi.mocked(Viewer)).toHaveBeenCalledTimes(1));
+    const viewer = vi.mocked(Viewer).mock.results[0].value;
+
+    await waitFor(() => {
+      expect(viewer.camera.flyTo).toHaveBeenCalledWith(
+        expect.objectContaining({
+          destination: { destination: true },
+          duration: 2.0,
+        }),
+      );
+    });
+    expect(vi.mocked(Cartesian3.fromDegrees)).toHaveBeenCalledWith(0, 0, 5000);
   });
 });

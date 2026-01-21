@@ -66,6 +66,7 @@ export type LocalInfoPanelProps = {
   activeLayer: LayerConfig | null;
   canGoBack: boolean;
   onBack: () => void;
+  onLockLayer: () => void;
 };
 
 export function LocalInfoPanel({
@@ -76,6 +77,7 @@ export function LocalInfoPanel({
   activeLayer,
   canGoBack,
   onBack,
+  onLockLayer,
 }: LocalInfoPanelProps) {
   const cameraPerspectiveId = useCameraPerspectiveStore((state) => state.cameraPerspectiveId);
   const setCameraPerspectiveId = useCameraPerspectiveStore((state) => state.setCameraPerspectiveId);
@@ -141,6 +143,18 @@ export function LocalInfoPanel({
           {formatActiveLayer(activeLayer)}
         </dd>
       </dl>
+
+      {activeLayer ? (
+        <div className="mt-4 flex justify-end">
+          <button
+            type="button"
+            className="rounded-lg border border-blue-500/30 bg-blue-500/10 px-3 py-1.5 text-xs text-blue-100 hover:bg-blue-500/20 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-400"
+            onClick={onLockLayer}
+          >
+            锁定当前层
+          </button>
+        </div>
+      ) : null}
     </aside>
   );
 }

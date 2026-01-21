@@ -20,7 +20,7 @@ import { loadConfig, type MapConfig } from '../../config';
 import { getBasemapById, type BasemapId } from '../../config/basemaps';
 import { useBasemapStore } from '../../state/basemap';
 import { useCameraPerspectiveStore, type CameraPerspectiveId } from '../../state/cameraPerspective';
-import { useLayerManagerStore } from '../../state/layerManager';
+import { useLayerManagerStore, type LayerType } from '../../state/layerManager';
 import { usePerformanceModeStore } from '../../state/performanceMode';
 import { useSceneModeStore } from '../../state/sceneMode';
 import { useViewModeStore } from '../../state/viewMode';
@@ -69,6 +69,13 @@ const WIND_ARROWS_MAX_COUNT = 500;
 const LOCAL_FREE_PITCH = -Math.PI / 4;
 const LOCAL_FORWARD_PITCH = 0;
 const LOCAL_UPWARD_PITCH = CesiumMath.PI_OVER_TWO - Math.PI / 12;
+
+const LAYER_GLOBAL_SHELL_HEIGHT_METERS_BY_LAYER_TYPE: Record<LayerType, number> = {
+  temperature: 2000,
+  cloud: 5000,
+  precipitation: 3000,
+  wind: 8000,
+};
 
 function clampNumber(value: number, min: number, max: number): number {
   if (!Number.isFinite(value)) return min;
@@ -204,6 +211,7 @@ export function CesiumViewer() {
   const sceneModeId = useSceneModeStore((state) => state.sceneModeId);
   const viewModeRoute = useViewModeStore((state) => state.route);
   const enterLocal = useViewModeStore((state) => state.enterLocal);
+  const enterLayerGlobal = useViewModeStore((state) => state.enterLayerGlobal);
   const canGoBack = useViewModeStore((state) => state.canGoBack);
   const goBack = useViewModeStore((state) => state.goBack);
   const layers = useLayerManagerStore((state) => state.layers);
@@ -212,6 +220,7 @@ export function CesiumViewer() {
   const appliedBasemapIdRef = useRef<BasemapId | null>(null);
   const didApplySceneModeRef = useRef(false);
   const localEntryKeyRef = useRef<string | null>(null);
+  const layerGlobalEntryKeyRef = useRef<string | null>(null);
   const appliedCameraPerspectiveRef = useRef<CameraPerspectiveId | null>(null);
   const baseCameraControllerRef = useRef<{ enableTilt?: boolean; enableLook?: boolean } | null>(
     null,
@@ -808,6 +817,39 @@ export function CesiumViewer() {
     });
     appliedCameraPerspectiveRef.current = cameraPerspectiveId;
   }, [cameraPerspectiveId, sceneModeId, viewModeRoute, viewer]);
+
+  useEffect(() => {
+    if (!viewer) return;
+    if (viewModeRoute.viewModeId !== 'layerGlobal') {
+      layerGlobalEntryKeyRef.current = null;
+      return;
+    }
+
+    const targetLayer =
+      layers.find((layer) => layer.id === viewModeRoute.layerId) ?? null;
+    const shellHeightMeters = targetLayer
+      ? LAYER_GLOBAL_SHELL_HEIGHT_METERS_BY_LAYER_TYPE[targetLayer.type]
+      : LAYER_GLOBAL_SHELL_HEIGHT_METERS_BY_LAYER_TYPE.cloud;
+
+    const key = `${sceneModeId}:${viewModeRoute.layerId}:${shellHeightMeters}`;
+    if (layerGlobalEntryKeyRef.current === key) return;
+    layerGlobalEntryKeyRef.current = key;
+
+    if (targetLayer && !targetLayer.visible) {
+      useLayerManagerStore.getState().setLayerVisible(targetLayer.id, true);
+    }
+
+    const destination = Cartesian3.fromDegrees(0, 0, shellHeightMeters);
+    viewer.camera.flyTo({
+      destination,
+      orientation: {
+        heading: 0,
+        pitch: -CesiumMath.PI_OVER_TWO,
+        roll: 0,
+      },
+      duration: 2.0,
+    });
+  }, [layers, sceneModeId, viewModeRoute, viewer]);
 
   useEffect(() => {
     if (!viewer) return;
@@ -1422,6 +1464,10 @@ export function CesiumViewer() {
             activeLayer={activeLayer}
             canGoBack={canGoBack}
             onBack={() => goBack()}
+            onLockLayer={() => {
+              if (!activeLayer) return;
+              enterLayerGlobal({ layerId: activeLayer.id });
+            }}
           />
         ) : null}
         <SamplingCard state={samplingCardState} onClose={closeSamplingCard} />

@@ -26,6 +26,7 @@ describe('LocalInfoPanel', () => {
         }}
         canGoBack={true}
         onBack={() => {}}
+        onLockLayer={() => {}}
       />,
     );
 
@@ -51,6 +52,7 @@ describe('LocalInfoPanel', () => {
         activeLayer={null}
         canGoBack={true}
         onBack={onBack}
+        onLockLayer={() => {}}
       />,
     );
 
@@ -70,6 +72,7 @@ describe('LocalInfoPanel', () => {
         activeLayer={null}
         canGoBack={false}
         onBack={() => {}}
+        onLockLayer={() => {}}
       />,
     );
 
@@ -90,6 +93,7 @@ describe('LocalInfoPanel', () => {
         activeLayer={null}
         canGoBack={false}
         onBack={() => {}}
+        onLockLayer={() => {}}
       />,
     );
 
@@ -102,5 +106,54 @@ describe('LocalInfoPanel', () => {
 
     await user.click(screen.getByRole('button', { name: '平视' }));
     expect(useCameraPerspectiveStore.getState().cameraPerspectiveId).toBe('forward');
+  });
+
+  it('hides lock button when there is no active layer', () => {
+    localStorage.removeItem('digital-earth.cameraPerspective');
+    useCameraPerspectiveStore.setState({ cameraPerspectiveId: DEFAULT_CAMERA_PERSPECTIVE_ID });
+
+    render(
+      <LocalInfoPanel
+        lat={30}
+        lon={120}
+        timeKey={null}
+        activeLayer={null}
+        canGoBack={false}
+        onBack={() => {}}
+        onLockLayer={() => {}}
+      />,
+    );
+
+    expect(screen.queryByRole('button', { name: '锁定当前层' })).toBeNull();
+  });
+
+  it('calls onLockLayer when lock button is clicked', async () => {
+    const user = userEvent.setup();
+    const onLockLayer = vi.fn();
+
+    localStorage.removeItem('digital-earth.cameraPerspective');
+    useCameraPerspectiveStore.setState({ cameraPerspectiveId: DEFAULT_CAMERA_PERSPECTIVE_ID });
+
+    render(
+      <LocalInfoPanel
+        lat={30}
+        lon={120}
+        timeKey={null}
+        activeLayer={{
+          id: 'cloud',
+          type: 'cloud',
+          variable: 'tcc',
+          opacity: 1,
+          visible: true,
+          zIndex: 10,
+        }}
+        canGoBack={false}
+        onBack={() => {}}
+        onLockLayer={onLockLayer}
+      />,
+    );
+
+    await user.click(screen.getByRole('button', { name: '锁定当前层' }));
+    expect(onLockLayer).toHaveBeenCalledTimes(1);
   });
 });
