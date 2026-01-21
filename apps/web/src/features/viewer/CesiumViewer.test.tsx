@@ -25,7 +25,12 @@ vi.mock('../effects/PrecipitationParticles', () => {
 
 const weatherSamplerMocks = vi.hoisted(() => {
   return {
-    sample: vi.fn(async () => ({
+    sample: vi.fn(async (): Promise<{
+      precipitationMm: number | null;
+      precipitationIntensity: number;
+      precipitationKind: 'none' | 'rain' | 'snow';
+      temperatureC: number | null;
+    }> => ({
       precipitationMm: null,
       precipitationIntensity: 0,
       precipitationKind: 'none',

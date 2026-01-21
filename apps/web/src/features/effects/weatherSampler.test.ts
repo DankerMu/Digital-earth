@@ -253,7 +253,7 @@ describe('createWeatherSampler', () => {
 
     vi.stubGlobal('Image', FakeImage as unknown as typeof Image);
 
-    const createObjectUrlImpl = (blob: Blob) =>
+    const createObjectUrlImpl = (blob: Blob | MediaSource) =>
       (blob as unknown as { __url?: string }).__url ?? 'blob:stub';
 
     if (typeof URL.createObjectURL === 'function') {

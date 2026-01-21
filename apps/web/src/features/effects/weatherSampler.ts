@@ -243,7 +243,7 @@ async function defaultFetchImageData(url: string, options: { signal?: AbortSigna
     throw new Error('Canvas 2D context unavailable');
   }
 
-  ctx.drawImage(image, 0, 0);
+  ctx.drawImage(image as CanvasImageSource, 0, 0);
   return ctx.getImageData(0, 0, canvas.width, canvas.height);
 }
 
@@ -283,7 +283,7 @@ type CanvasLike = {
 
 function createCanvas(width: number, height: number): CanvasLike {
   if (typeof OffscreenCanvas !== 'undefined') {
-    return new OffscreenCanvas(width, height);
+    return new OffscreenCanvas(width, height) as unknown as CanvasLike;
   }
   const canvas = document.createElement('canvas');
   canvas.width = width;
