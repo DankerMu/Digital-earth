@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
-import { buildCldasTileUrlTemplate, buildCloudTileUrlTemplate } from './layersApi';
+import {
+  buildCldasTileUrlTemplate,
+  buildCloudTileUrlTemplate,
+  buildPrecipitationTileUrlTemplate,
+} from './layersApi';
 
 describe('layersApi', () => {
   it('builds a Cesium url template without encoding placeholders', () => {
@@ -74,5 +78,43 @@ describe('layersApi', () => {
     });
 
     expect(url).toBe('http://api.test/api/v1/tiles/cldas/2024011500/TCC/{z}/{x}/{y}.png');
+  });
+
+  it('builds precipitation tile templates using the precipitation variable', () => {
+    const url = buildPrecipitationTileUrlTemplate({
+      apiBaseUrl: 'http://api.test/',
+      timeKey: '2024-01-15T00:00:00Z',
+    });
+
+    expect(url).toBe(
+      'http://api.test/api/v1/tiles/cldas/2024-01-15T00%3A00%3A00Z/precipitation/{z}/{x}/{y}.png',
+    );
+    expect(url).toContain('{z}');
+    expect(url).toContain('{x}');
+    expect(url).toContain('{y}');
+  });
+
+  it('appends a threshold query param when present', () => {
+    const url = buildPrecipitationTileUrlTemplate({
+      apiBaseUrl: 'http://api.test/',
+      timeKey: '2024011500',
+      threshold: 2.5,
+    });
+
+    expect(url).toBe(
+      'http://api.test/api/v1/tiles/cldas/2024011500/precipitation/{z}/{x}/{y}.png?threshold=2.5',
+    );
+  });
+
+  it('omits invalid threshold values', () => {
+    const url = buildPrecipitationTileUrlTemplate({
+      apiBaseUrl: 'http://api.test/',
+      timeKey: '2024011500',
+      threshold: Number.NaN,
+    });
+
+    expect(url).toBe(
+      'http://api.test/api/v1/tiles/cldas/2024011500/precipitation/{z}/{x}/{y}.png',
+    );
   });
 });

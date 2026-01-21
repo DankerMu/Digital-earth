@@ -19,6 +19,26 @@ export function buildCldasTileUrlTemplate(options: CldasTileUrlTemplateOptions):
   return `${origin}/api/v1/tiles/cldas/${timeKey}/${variable}/{z}/{x}/{y}.png`;
 }
 
+export type PrecipitationTileUrlTemplateOptions = Omit<
+  CldasTileUrlTemplateOptions,
+  'variable'
+> & {
+  threshold?: number | null;
+};
+
+export function buildPrecipitationTileUrlTemplate(
+  options: PrecipitationTileUrlTemplateOptions,
+): string {
+  const origin = resolveApiOrigin(options.apiBaseUrl);
+  const timeKey = encodeURIComponent(options.timeKey);
+  const base = `${origin}/api/v1/tiles/cldas/${timeKey}/precipitation/{z}/{x}/{y}.png`;
+
+  if (options.threshold == null) return base;
+  if (!Number.isFinite(options.threshold)) return base;
+
+  return `${base}?threshold=${encodeURIComponent(String(options.threshold))}`;
+}
+
 function normalizeCloudVariable(variable: string | undefined): string {
   const trimmed = variable?.trim() ?? '';
   if (!trimmed) return 'TCC';

@@ -476,6 +476,97 @@ describe('CesiumViewer', () => {
     await waitFor(() => expect(imageryLayer.show).toBe(false));
   });
 
+  it('syncs precipitation imagery layers from layerManager and applies threshold filtering', async () => {
+    useLayerManagerStore.setState({
+      layers: [
+        {
+          id: 'precipitation',
+          type: 'precipitation',
+          variable: 'precipitation',
+          opacity: 0.9,
+          visible: true,
+          zIndex: 30,
+          threshold: 1.5,
+        },
+      ],
+    });
+
+    render(<CesiumViewer />);
+
+    await waitFor(() => expect(vi.mocked(Viewer)).toHaveBeenCalledTimes(1));
+
+    const viewer = vi.mocked(Viewer).mock.results[0].value;
+
+    await waitFor(() => expect(viewer.imageryLayers.add).toHaveBeenCalledTimes(1));
+
+    const imageryLayer = viewer.imageryLayers.add.mock.calls[0]?.[0] as {
+      alpha?: number;
+      show?: boolean;
+      provider?: { options?: { url?: string } };
+    };
+
+    expect(imageryLayer.alpha).toBe(0.9);
+    expect(imageryLayer.show).toBe(true);
+    expect(imageryLayer.provider?.options?.url).toContain('/precipitation/');
+    expect(imageryLayer.provider?.options?.url).toContain('threshold=1.5');
+    expect(viewer.imageryLayers.raiseToTop).toHaveBeenCalledWith(imageryLayer);
+
+    viewer.imageryLayers.remove.mockClear();
+
+    useLayerManagerStore.getState().updateLayer('precipitation', { threshold: undefined });
+
+    await waitFor(() => expect(viewer.imageryLayers.add).toHaveBeenCalledTimes(2));
+    expect(viewer.imageryLayers.remove).toHaveBeenCalledWith(imageryLayer, true);
+  });
+
+  it('orders imagery layers by zIndex across types', async () => {
+    useLayerManagerStore.setState({
+      layers: [
+        {
+          id: 'temperature-low',
+          type: 'temperature',
+          variable: 'LOW',
+          opacity: 1,
+          visible: false,
+          zIndex: 10,
+        },
+        {
+          id: 'cloud',
+          type: 'cloud',
+          variable: 'tcc',
+          opacity: 1,
+          visible: false,
+          zIndex: 20,
+        },
+        {
+          id: 'precipitation',
+          type: 'precipitation',
+          variable: 'precipitation',
+          opacity: 1,
+          visible: false,
+          zIndex: 30,
+        },
+      ],
+    });
+
+    render(<CesiumViewer />);
+
+    await waitFor(() => expect(vi.mocked(Viewer)).toHaveBeenCalledTimes(1));
+
+    const viewer = vi.mocked(Viewer).mock.results[0].value;
+
+    await waitFor(() => expect(viewer.imageryLayers.raiseToTop).toHaveBeenCalledTimes(3));
+
+    const raisedUrls = viewer.imageryLayers.raiseToTop.mock.calls.map(
+      ([layer]: [unknown]) =>
+        (layer as { provider?: { options?: { url?: string } } })?.provider?.options?.url ?? '',
+    );
+
+    expect(raisedUrls[0]).toContain('/LOW/');
+    expect(raisedUrls[1]).toContain('/TCC/');
+    expect(raisedUrls[2]).toContain('/precipitation/');
+  });
+
   it('refreshes cloud tiles over time', async () => {
     const CLOUD_LAYER_REFRESH_INTERVAL_MS = 5 * 60 * 1000;
     let triggerRefresh: (() => void) | null = null;
