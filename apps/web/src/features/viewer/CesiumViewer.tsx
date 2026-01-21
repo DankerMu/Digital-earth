@@ -19,6 +19,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { loadConfig, type MapConfig } from '../../config';
 import { getBasemapById, type BasemapId } from '../../config/basemaps';
 import { useBasemapStore } from '../../state/basemap';
+import { useCameraPerspectiveStore, type CameraPerspectiveId } from '../../state/cameraPerspective';
 import { useLayerManagerStore } from '../../state/layerManager';
 import { usePerformanceModeStore } from '../../state/performanceMode';
 import { useSceneModeStore } from '../../state/sceneMode';
@@ -64,6 +65,39 @@ const WEATHER_SAMPLE_THROTTLE_MS = 750;
 const WEATHER_SAMPLE_ZOOM = 8;
 const WIND_VECTOR_THROTTLE_MS = 800;
 const WIND_ARROWS_MAX_COUNT = 500;
+
+const LOCAL_FREE_PITCH = -Math.PI / 4;
+const LOCAL_FORWARD_PITCH = 0;
+const LOCAL_UPWARD_PITCH = CesiumMath.PI_OVER_TWO - Math.PI / 12;
+
+function clampNumber(value: number, min: number, max: number): number {
+  if (!Number.isFinite(value)) return min;
+  return Math.max(min, Math.min(max, value));
+}
+
+function cameraPitchForPerspective(cameraPerspectiveId: CameraPerspectiveId): number | null {
+  if (cameraPerspectiveId === 'upward') return LOCAL_UPWARD_PITCH;
+  if (cameraPerspectiveId === 'forward') return LOCAL_FORWARD_PITCH;
+  return null;
+}
+
+function getViewerCameraHeightMeters(viewer: CesiumViewerInstance): number | null {
+  const camera = viewer.camera as unknown as { positionCartographic?: { height?: number } };
+  const height = camera.positionCartographic?.height;
+  if (typeof height !== 'number' || !Number.isFinite(height)) return null;
+  return height;
+}
+
+function localFrustumForCameraHeight(heightMeters: number): { near: number; far: number } {
+  const near = clampNumber(heightMeters * 0.0005, 0.2, 5);
+  const far = clampNumber(heightMeters * 400, 50_000, 2_000_000);
+  return { near, far: Math.max(far, near + 1) };
+}
+
+function localFogDensityForCameraHeight(heightMeters: number): number {
+  const normalized = clampNumber(heightMeters / 12_000, 0, 1);
+  return 0.00055 * (1 - normalized) + 0.00005;
+}
 
 function wrapLongitudeDegrees(lon: number): number {
   if (!Number.isFinite(lon)) return 0;
@@ -174,8 +208,25 @@ export function CesiumViewer() {
   const goBack = useViewModeStore((state) => state.goBack);
   const layers = useLayerManagerStore((state) => state.layers);
   const performanceModeEnabled = usePerformanceModeStore((state) => state.enabled);
+  const cameraPerspectiveId = useCameraPerspectiveStore((state) => state.cameraPerspectiveId);
   const appliedBasemapIdRef = useRef<BasemapId | null>(null);
   const didApplySceneModeRef = useRef(false);
+  const localEntryKeyRef = useRef<string | null>(null);
+  const appliedCameraPerspectiveRef = useRef<CameraPerspectiveId | null>(null);
+  const baseCameraControllerRef = useRef<{ enableTilt?: boolean; enableLook?: boolean } | null>(
+    null,
+  );
+  const baseLocalEnvironmentRef = useRef<{
+    fog?: {
+      enabled?: boolean;
+      density?: number;
+      screenSpaceErrorFactor?: number;
+      minimumBrightness?: number;
+    };
+    skyBoxShow?: boolean;
+    skyAtmosphereShow?: boolean;
+    frustum?: { near?: number; far?: number };
+  } | null>(null);
   const temperatureLayersRef = useRef<Map<string, TemperatureLayer>>(new Map());
   const cloudLayersRef = useRef<Map<string, CloudLayer>>(new Map());
   const precipitationLayersRef = useRef<Map<string, PrecipitationLayer>>(new Map());
@@ -213,6 +264,52 @@ export function CesiumViewer() {
   }, [activeLayer, cloudTimeKey]);
 
   const basemapProvider = mapConfig?.basemapProvider ?? 'open';
+
+  useEffect(() => {
+    if (!viewer) return;
+
+    if (!baseCameraControllerRef.current) {
+      const controller = viewer.scene.screenSpaceCameraController as unknown as {
+        enableTilt?: boolean;
+        enableLook?: boolean;
+      };
+      baseCameraControllerRef.current = {
+        enableTilt: controller.enableTilt,
+        enableLook: controller.enableLook,
+      };
+    }
+
+    if (!baseLocalEnvironmentRef.current) {
+      const scene = viewer.scene as unknown as {
+        fog?: {
+          enabled?: boolean;
+          density?: number;
+          screenSpaceErrorFactor?: number;
+          minimumBrightness?: number;
+        };
+        skyBox?: { show?: boolean };
+        skyAtmosphere?: { show?: boolean };
+      };
+      const frustum = viewer.camera.frustum as unknown as { near?: number; far?: number };
+
+      baseLocalEnvironmentRef.current = {
+        fog: scene.fog
+          ? {
+              enabled: scene.fog.enabled,
+              density: scene.fog.density,
+              screenSpaceErrorFactor: scene.fog.screenSpaceErrorFactor,
+              minimumBrightness: scene.fog.minimumBrightness,
+            }
+          : undefined,
+        skyBoxShow: scene.skyBox?.show,
+        skyAtmosphereShow: scene.skyAtmosphere?.show,
+        frustum: {
+          near: frustum?.near,
+          far: frustum?.far,
+        },
+      };
+    }
+  }, [viewer]);
 
   useEffect(() => {
     let cancelled = false;
@@ -679,12 +776,19 @@ export function CesiumViewer() {
 
   useEffect(() => {
     if (!viewer) return;
-    if (viewModeRoute.viewModeId !== 'local') return;
+    if (viewModeRoute.viewModeId !== 'local') {
+      localEntryKeyRef.current = null;
+      return;
+    }
 
     const surfaceHeightMeters =
       typeof viewModeRoute.heightMeters === 'number' && Number.isFinite(viewModeRoute.heightMeters)
         ? viewModeRoute.heightMeters
         : 0;
+
+    const key = `${sceneModeId}:${viewModeRoute.lon}:${viewModeRoute.lat}:${surfaceHeightMeters}`;
+    if (localEntryKeyRef.current === key) return;
+    localEntryKeyRef.current = key;
 
     const offsetMeters = sceneModeId === '2d' ? 5000 : 3000;
     const destination = Cartesian3.fromDegrees(
@@ -697,12 +801,159 @@ export function CesiumViewer() {
       destination,
       orientation: {
         heading: viewer.camera.heading,
-        pitch: -Math.PI / 4,
+        pitch: cameraPitchForPerspective(cameraPerspectiveId) ?? LOCAL_FREE_PITCH,
         roll: 0,
       },
       duration: 2.5,
     });
-  }, [sceneModeId, viewModeRoute, viewer]);
+    appliedCameraPerspectiveRef.current = cameraPerspectiveId;
+  }, [cameraPerspectiveId, sceneModeId, viewModeRoute, viewer]);
+
+  useEffect(() => {
+    if (!viewer) return;
+
+    const controller = viewer.scene.screenSpaceCameraController as unknown as {
+      enableTilt?: boolean;
+      enableLook?: boolean;
+    };
+    const baseController = baseCameraControllerRef.current;
+
+    if (viewModeRoute.viewModeId !== 'local') {
+      const previous = appliedCameraPerspectiveRef.current;
+      appliedCameraPerspectiveRef.current = null;
+
+      if (previous && previous !== 'free') {
+        if (baseController && typeof baseController.enableTilt === 'boolean') {
+          controller.enableTilt = baseController.enableTilt;
+        }
+        if (baseController && typeof baseController.enableLook === 'boolean') {
+          controller.enableLook = baseController.enableLook;
+        }
+        viewer.scene.requestRender();
+      }
+      return;
+    }
+
+    if (cameraPerspectiveId === 'free') {
+      if (baseController && typeof baseController.enableTilt === 'boolean') {
+        controller.enableTilt = baseController.enableTilt;
+      }
+      if (baseController && typeof baseController.enableLook === 'boolean') {
+        controller.enableLook = baseController.enableLook;
+      }
+      viewer.scene.requestRender();
+      appliedCameraPerspectiveRef.current = cameraPerspectiveId;
+      return;
+    }
+
+    controller.enableTilt = false;
+    controller.enableLook = false;
+
+    if (appliedCameraPerspectiveRef.current === cameraPerspectiveId) {
+      viewer.scene.requestRender();
+      return;
+    }
+
+    appliedCameraPerspectiveRef.current = cameraPerspectiveId;
+    const pitch = cameraPitchForPerspective(cameraPerspectiveId) ?? LOCAL_FREE_PITCH;
+    viewer.camera.flyTo({
+      destination: Cartesian3.clone(viewer.camera.position),
+      orientation: {
+        heading: viewer.camera.heading,
+        pitch,
+        roll: 0,
+      },
+      duration: 0.6,
+    });
+  }, [cameraPerspectiveId, viewModeRoute.viewModeId, viewer]);
+
+  useEffect(() => {
+    if (!viewer) return;
+    if (viewModeRoute.viewModeId !== 'local') return;
+
+    const base = baseLocalEnvironmentRef.current;
+    if (!base) return;
+
+    const scene = viewer.scene as unknown as {
+      requestRender: () => void;
+      fog?: {
+        enabled?: boolean;
+        density?: number;
+        screenSpaceErrorFactor?: number;
+        minimumBrightness?: number;
+      };
+      skyBox?: { show?: boolean };
+      skyAtmosphere?: { show?: boolean };
+    };
+
+    const camera = viewer.camera as unknown as {
+      frustum?: { near?: number; far?: number };
+      changed?: {
+        addEventListener?: (handler: () => void) => void;
+        removeEventListener?: (handler: () => void) => void;
+      };
+      moveEnd?: {
+        addEventListener?: (handler: () => void) => void;
+        removeEventListener?: (handler: () => void) => void;
+      };
+    };
+
+    const restore = () => {
+      if (scene.skyBox && typeof base.skyBoxShow === 'boolean') {
+        scene.skyBox.show = base.skyBoxShow;
+      }
+      if (scene.skyAtmosphere && typeof base.skyAtmosphereShow === 'boolean') {
+        scene.skyAtmosphere.show = base.skyAtmosphereShow;
+      }
+      if (scene.fog && base.fog) {
+        if (typeof base.fog.enabled === 'boolean') scene.fog.enabled = base.fog.enabled;
+        if (typeof base.fog.density === 'number') scene.fog.density = base.fog.density;
+        if (typeof base.fog.screenSpaceErrorFactor === 'number') {
+          scene.fog.screenSpaceErrorFactor = base.fog.screenSpaceErrorFactor;
+        }
+        if (typeof base.fog.minimumBrightness === 'number') {
+          scene.fog.minimumBrightness = base.fog.minimumBrightness;
+        }
+      }
+      if (camera.frustum && base.frustum) {
+        if (typeof base.frustum.near === 'number') camera.frustum.near = base.frustum.near;
+        if (typeof base.frustum.far === 'number') camera.frustum.far = base.frustum.far;
+      }
+      scene.requestRender();
+    };
+
+    const update = () => {
+      if (scene.skyBox) scene.skyBox.show = true;
+      if (scene.skyAtmosphere) scene.skyAtmosphere.show = true;
+
+      const heightMeters = getViewerCameraHeightMeters(viewer) ?? 0;
+
+      if (camera.frustum) {
+        const { near, far } = localFrustumForCameraHeight(heightMeters);
+        camera.frustum.near = near;
+        camera.frustum.far = far;
+      }
+
+      if (scene.fog) {
+        scene.fog.enabled = true;
+        scene.fog.density = localFogDensityForCameraHeight(heightMeters);
+        scene.fog.screenSpaceErrorFactor = 3.0;
+        scene.fog.minimumBrightness = 0.12;
+      }
+
+      scene.requestRender();
+    };
+
+    update();
+    camera.changed?.addEventListener?.(update);
+    camera.moveEnd?.addEventListener?.(update);
+
+    return () => {
+      camera.changed?.removeEventListener?.(update);
+      camera.moveEnd?.removeEventListener?.(update);
+      restore();
+    };
+  }, [viewModeRoute.viewModeId, viewer]);
 
   useEffect(() => {
     if (!viewer) return;

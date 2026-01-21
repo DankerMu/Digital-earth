@@ -137,6 +137,7 @@ vi.mock('cesium', () => {
     roll: 0.1,
     position: { x: 1, y: 2, z: 3 },
     positionCartographic: { longitude: 0.1, latitude: 0.2, height: 123 },
+    frustum: { near: 0.1, far: 1000 },
     computeViewRectangle: vi.fn(() => null),
     setView: vi.fn(),
     flyTo: vi.fn(),
@@ -229,10 +230,20 @@ vi.mock('cesium', () => {
       globe: {
         ellipsoid: { kind: 'ellipsoid' },
       },
+      fog: {
+        enabled: false,
+        density: 0,
+        screenSpaceErrorFactor: 0,
+        minimumBrightness: 0,
+      },
+      skyBox: { show: false },
+      skyAtmosphere: { show: false },
       pickPosition: vi.fn(() => ({ pickedPosition: true })),
       screenSpaceCameraController: {
         minimumZoomDistance: 0,
-        maximumZoomDistance: 0
+        maximumZoomDistance: 0,
+        enableTilt: true,
+        enableLook: true,
       },
       postRender: {
         addEventListener: vi.fn(),
@@ -299,6 +310,7 @@ import { EllipsoidTerrainProvider, createWorldTerrainAsync, Viewer } from 'cesiu
 import { clearConfigCache } from '../../config';
 import { DEFAULT_BASEMAP_ID } from '../../config/basemaps';
 import { useBasemapStore } from '../../state/basemap';
+import { DEFAULT_CAMERA_PERSPECTIVE_ID, useCameraPerspectiveStore } from '../../state/cameraPerspective';
 import { DEFAULT_EVENT_LAYER_MODE, useEventLayersStore } from '../../state/eventLayers';
 import { useLayerManagerStore } from '../../state/layerManager';
 import { usePerformanceModeStore } from '../../state/performanceMode';
@@ -326,7 +338,9 @@ describe('CesiumViewer', () => {
     localStorage.removeItem('digital-earth.layers');
     localStorage.removeItem('digital-earth.performanceMode');
     localStorage.removeItem('digital-earth.viewMode');
+    localStorage.removeItem('digital-earth.cameraPerspective');
     useBasemapStore.setState({ basemapId: DEFAULT_BASEMAP_ID });
+    useCameraPerspectiveStore.setState({ cameraPerspectiveId: DEFAULT_CAMERA_PERSPECTIVE_ID });
     useEventLayersStore.setState({ enabled: false, mode: DEFAULT_EVENT_LAYER_MODE });
     useSceneModeStore.setState({ sceneModeId: DEFAULT_SCENE_MODE_ID });
     useLayerManagerStore.setState({ layers: [] });
@@ -1100,10 +1114,91 @@ describe('CesiumViewer', () => {
       });
     });
 
+    expect(viewer.scene.skyBox.show).toBe(true);
+    expect(viewer.scene.skyAtmosphere.show).toBe(true);
+    expect(viewer.scene.fog.enabled).toBe(true);
+    expect(viewer.scene.fog.screenSpaceErrorFactor).toBe(3.0);
+    expect(viewer.scene.fog.minimumBrightness).toBe(0.12);
+    expect(viewer.scene.fog.density).toBeGreaterThan(0);
+    expect(viewer.camera.frustum.near).toBe(0.2);
+    expect(viewer.camera.frustum.far).toBe(50_000);
+
     const panel = await screen.findByLabelText('Local info');
     expect(panel).toHaveTextContent('30.0000, 120.0000');
     expect(panel).toHaveTextContent('100');
     expect(panel).toHaveTextContent('2024-01-15T00:00:00Z');
     expect(panel).toHaveTextContent('cloud:tcc');
+  });
+
+  it('applies camera perspective pitch and locks tilt in local mode', async () => {
+    useViewModeStore.setState({
+      route: { viewModeId: 'local', lat: 30, lon: 120, heightMeters: 100 },
+      history: [],
+      saved: {},
+    });
+    useCameraPerspectiveStore.setState({ cameraPerspectiveId: DEFAULT_CAMERA_PERSPECTIVE_ID });
+
+    render(<CesiumViewer />);
+
+    await waitFor(() => expect(vi.mocked(Viewer)).toHaveBeenCalledTimes(1));
+
+    const viewer = vi.mocked(Viewer).mock.results[0].value;
+
+    await waitFor(() =>
+      expect(viewer.camera.flyTo).toHaveBeenCalledWith(
+        expect.objectContaining({
+          duration: 2.5,
+          orientation: expect.objectContaining({
+            pitch: -Math.PI / 4,
+          }),
+        }),
+      ),
+    );
+
+    expect(viewer.scene.screenSpaceCameraController.enableTilt).toBe(true);
+    expect(viewer.scene.screenSpaceCameraController.enableLook).toBe(true);
+
+    const callsBefore = viewer.camera.flyTo.mock.calls.length;
+
+    act(() => {
+      useCameraPerspectiveStore.getState().setCameraPerspectiveId('upward');
+    });
+
+    await waitFor(() => expect(viewer.camera.flyTo).toHaveBeenCalledTimes(callsBefore + 1));
+    expect(viewer.scene.screenSpaceCameraController.enableTilt).toBe(false);
+    expect(viewer.scene.screenSpaceCameraController.enableLook).toBe(false);
+    expect(viewer.camera.flyTo).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        orientation: expect.objectContaining({
+          pitch: Math.PI / 2 - Math.PI / 12,
+        }),
+        duration: 0.6,
+      }),
+    );
+
+    act(() => {
+      useCameraPerspectiveStore.getState().setCameraPerspectiveId('forward');
+    });
+
+    await waitFor(() => expect(viewer.camera.flyTo).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        orientation: expect.objectContaining({
+          pitch: 0,
+        }),
+        duration: 0.6,
+      }),
+    ));
+
+    const callsAfterForward = viewer.camera.flyTo.mock.calls.length;
+
+    act(() => {
+      useCameraPerspectiveStore.getState().setCameraPerspectiveId('free');
+    });
+
+    await waitFor(() => {
+      expect(viewer.scene.screenSpaceCameraController.enableTilt).toBe(true);
+      expect(viewer.scene.screenSpaceCameraController.enableLook).toBe(true);
+    });
+    expect(viewer.camera.flyTo).toHaveBeenCalledTimes(callsAfterForward);
   });
 });

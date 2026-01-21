@@ -2,10 +2,14 @@ import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 
+import { DEFAULT_CAMERA_PERSPECTIVE_ID, useCameraPerspectiveStore } from '../../state/cameraPerspective';
 import { LocalInfoPanel } from './LocalInfoPanel';
 
 describe('LocalInfoPanel', () => {
   it('renders location, height, time key, and active layer', () => {
+    localStorage.removeItem('digital-earth.cameraPerspective');
+    useCameraPerspectiveStore.setState({ cameraPerspectiveId: DEFAULT_CAMERA_PERSPECTIVE_ID });
+
     render(
       <LocalInfoPanel
         lat={30.123456}
@@ -35,6 +39,9 @@ describe('LocalInfoPanel', () => {
     const user = userEvent.setup();
     const onBack = vi.fn();
 
+    localStorage.removeItem('digital-earth.cameraPerspective');
+    useCameraPerspectiveStore.setState({ cameraPerspectiveId: DEFAULT_CAMERA_PERSPECTIVE_ID });
+
     render(
       <LocalInfoPanel
         lat={30}
@@ -52,6 +59,9 @@ describe('LocalInfoPanel', () => {
   });
 
   it('disables back button when canGoBack is false', () => {
+    localStorage.removeItem('digital-earth.cameraPerspective');
+    useCameraPerspectiveStore.setState({ cameraPerspectiveId: DEFAULT_CAMERA_PERSPECTIVE_ID });
+
     render(
       <LocalInfoPanel
         lat={30}
@@ -65,5 +75,32 @@ describe('LocalInfoPanel', () => {
 
     expect(screen.getByRole('button', { name: 'Back to previous view' })).toBeDisabled();
   });
-});
 
+  it('updates cameraPerspectiveId when selecting a new perspective', async () => {
+    const user = userEvent.setup();
+
+    localStorage.removeItem('digital-earth.cameraPerspective');
+    useCameraPerspectiveStore.setState({ cameraPerspectiveId: DEFAULT_CAMERA_PERSPECTIVE_ID });
+
+    render(
+      <LocalInfoPanel
+        lat={30}
+        lon={120}
+        timeKey={null}
+        activeLayer={null}
+        canGoBack={false}
+        onBack={() => {}}
+      />,
+    );
+
+    const group = screen.getByRole('group', { name: 'Camera perspective' });
+    expect(group).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: '仰视' }));
+    expect(useCameraPerspectiveStore.getState().cameraPerspectiveId).toBe('upward');
+    expect(screen.getByRole('button', { name: '仰视' })).toHaveAttribute('aria-pressed', 'true');
+
+    await user.click(screen.getByRole('button', { name: '平视' }));
+    expect(useCameraPerspectiveStore.getState().cameraPerspectiveId).toBe('forward');
+  });
+});
