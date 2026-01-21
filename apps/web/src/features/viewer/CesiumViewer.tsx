@@ -22,11 +22,12 @@ import {
   WebMercatorTilingScheme,
   type Viewer as CesiumViewerInstance
 } from 'cesium';
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { loadConfig, type MapConfig } from '../../config';
 import { getBasemapById, type BasemapId } from '../../config/basemaps';
 import { useBasemapStore } from '../../state/basemap';
 import { useCameraPerspectiveStore, type CameraPerspectiveId } from '../../state/cameraPerspective';
+import { resolveEventLayerTemplateSpec, useEventAutoLayersStore } from '../../state/eventAutoLayers';
 import { useLayerManagerStore, type LayerConfig, type LayerType } from '../../state/layerManager';
 import { usePerformanceModeStore } from '../../state/performanceMode';
 import { useSceneModeStore } from '../../state/sceneMode';
@@ -326,6 +327,10 @@ function sortByZIndex(a: { zIndex: number; id: string }, b: { zIndex: number; id
   return a.zIndex - b.zIndex || a.id.localeCompare(b.id);
 }
 
+function cloneLayerConfigs(configs: LayerConfig[]): LayerConfig[] {
+  return configs.map((layer) => ({ ...layer }));
+}
+
 function normalizeSelfHostedBasemapTemplate(
   urlTemplate: string,
   scheme: 'xyz' | 'tms',
@@ -441,6 +446,10 @@ export function CesiumViewer() {
   const localModeSnapshotRef = useRef<ModeSnapshot | null>(null);
   const pendingLocalCameraRestoreRef = useRef<SavedCameraState | null>(null);
   const previousRouteRef = useRef<ViewModeRoute | null>(null);
+  const eventModeLayersSnapshotRef = useRef<LayerConfig[] | null>(null);
+  const eventAutoLayerTypeRef = useRef<string | null>(null);
+  const eventAutoLayerAppliedRef = useRef(false);
+  const eventAutoLayerProductIdRef = useRef<string | null>(null);
   const {
     state: samplingCardState,
     open: openSamplingCard,
@@ -452,6 +461,44 @@ export function CesiumViewer() {
     () => makeHourlyUtcIso(DEFAULT_LAYER_TIME_KEY, cloudFrameIndex),
     [cloudFrameIndex],
   );
+
+  const maybeApplyEventAutoLayerTemplate = useCallback(() => {
+    if (useViewModeStore.getState().route.viewModeId !== 'event') return;
+    if (eventAutoLayerAppliedRef.current) return;
+
+    const eventType = eventAutoLayerTypeRef.current?.trim() ?? '';
+    if (!eventType) return;
+
+    const layerManager = useLayerManagerStore.getState();
+    const availableLayerIds = layerManager.layers.map((layer) => layer.id);
+
+    const templateSpec = useEventAutoLayersStore.getState().getTemplateSpecForEvent(eventType);
+    if (!templateSpec) {
+      eventAutoLayerAppliedRef.current = true;
+      return;
+    }
+
+    const templateLayerIds = resolveEventLayerTemplateSpec(templateSpec, availableLayerIds);
+    if (templateLayerIds.length === 0) {
+      return;
+    }
+
+    if (!eventModeLayersSnapshotRef.current && layerManager.layers.length > 0) {
+      eventModeLayersSnapshotRef.current = cloneLayerConfigs(layerManager.layers);
+    }
+
+    layerManager.batch(() => {
+      for (const layer of layerManager.layers) {
+        if (!layer.visible) continue;
+        layerManager.setLayerVisible(layer.id, false);
+      }
+      for (const id of templateLayerIds) {
+        layerManager.setLayerVisible(id, true);
+      }
+    });
+
+    eventAutoLayerAppliedRef.current = true;
+  }, []);
 
   const activeLayer = useMemo(() => {
     const visible = layers.filter((layer) => layer.visible).sort(sortByZIndex);
@@ -480,7 +527,14 @@ export function CesiumViewer() {
     const next = viewModeRoute;
     previousRouteRef.current = next;
 
-    if (!prev) return;
+    if (!prev) {
+      if (next.viewModeId === 'event') {
+        eventAutoLayerTypeRef.current = null;
+        eventAutoLayerAppliedRef.current = false;
+        eventModeLayersSnapshotRef.current = null;
+      }
+      return;
+    }
 
     if (prev.viewModeId === 'local' && next.viewModeId === 'layerGlobal') {
       localModeSnapshotRef.current = {
@@ -511,7 +565,35 @@ export function CesiumViewer() {
 
       pendingLocalCameraRestoreRef.current = snapshot.camera;
     }
+
+    if (prev.viewModeId !== 'event' && next.viewModeId === 'event') {
+      eventAutoLayerTypeRef.current = null;
+      eventAutoLayerAppliedRef.current = false;
+
+      const currentLayers = useLayerManagerStore.getState().layers;
+      eventModeLayersSnapshotRef.current =
+        currentLayers.length > 0 ? cloneLayerConfigs(currentLayers) : null;
+      return;
+    }
+
+    if (prev.viewModeId === 'event' && next.viewModeId !== 'event') {
+      const snapshot = eventModeLayersSnapshotRef.current;
+      eventModeLayersSnapshotRef.current = null;
+      eventAutoLayerTypeRef.current = null;
+      eventAutoLayerAppliedRef.current = false;
+
+      const shouldRestore = useEventAutoLayersStore.getState().restoreOnExit;
+      if (!shouldRestore || !snapshot) return;
+
+      useLayerManagerStore.getState().batch(() => {
+        useLayerManagerStore.setState({ layers: snapshot });
+      });
+    }
   }, [cloudFrameIndex, viewModeRoute, viewModeTransition, viewer]);
+
+  useEffect(() => {
+    maybeApplyEventAutoLayerTemplate();
+  }, [layers, maybeApplyEventAutoLayerTemplate]);
 
   useEffect(() => {
     if (!viewer) return;
@@ -1111,6 +1193,7 @@ export function CesiumViewer() {
 
     if (viewModeRoute.viewModeId !== 'event') {
       eventEntryKeyRef.current = null;
+      eventAutoLayerProductIdRef.current = null;
       eventAbortRef.current?.abort();
       eventAbortRef.current = null;
 
@@ -1128,6 +1211,12 @@ export function CesiumViewer() {
 
     const productId = viewModeRoute.productId.trim();
     if (!productId) return;
+
+    if (eventAutoLayerProductIdRef.current !== productId) {
+      eventAutoLayerProductIdRef.current = productId;
+      eventAutoLayerTypeRef.current = null;
+      eventAutoLayerAppliedRef.current = false;
+    }
 
     const key = `${sceneModeId}:${apiBaseUrl}:${productId}`;
     if (eventEntryKeyRef.current === key) return;
@@ -1154,6 +1243,9 @@ export function CesiumViewer() {
         });
         if (controller.signal.aborted) return;
         if (eventEntryKeyRef.current !== key) return;
+
+        eventAutoLayerTypeRef.current = product.title;
+        maybeApplyEventAutoLayerTemplate();
 
         const hazards = product.hazards;
         const destinationBBox = bboxUnion(hazards.map((hazard) => hazard.bbox));
@@ -1204,7 +1296,7 @@ export function CesiumViewer() {
     })();
 
     return () => controller.abort();
-  }, [apiBaseUrl, sceneModeId, viewModeRoute, viewer]);
+  }, [apiBaseUrl, maybeApplyEventAutoLayerTemplate, sceneModeId, viewModeRoute, viewer]);
 
   useEffect(() => {
     if (!viewer) return;
