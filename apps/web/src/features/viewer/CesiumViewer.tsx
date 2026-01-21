@@ -449,6 +449,7 @@ export function CesiumViewer() {
   const eventModeLayersSnapshotRef = useRef<LayerConfig[] | null>(null);
   const eventAutoLayerTypeRef = useRef<string | null>(null);
   const eventAutoLayerAppliedRef = useRef(false);
+  const eventAutoLayerProductIdRef = useRef<string | null>(null);
   const {
     state: samplingCardState,
     open: openSamplingCard,
@@ -479,8 +480,6 @@ export function CesiumViewer() {
 
     const templateLayerIds = resolveEventLayerTemplateSpec(templateSpec, availableLayerIds);
     if (templateLayerIds.length === 0) {
-      if (layerManager.layers.length === 0) return;
-      eventAutoLayerAppliedRef.current = true;
       return;
     }
 
@@ -1194,6 +1193,7 @@ export function CesiumViewer() {
 
     if (viewModeRoute.viewModeId !== 'event') {
       eventEntryKeyRef.current = null;
+      eventAutoLayerProductIdRef.current = null;
       eventAbortRef.current?.abort();
       eventAbortRef.current = null;
 
@@ -1211,6 +1211,12 @@ export function CesiumViewer() {
 
     const productId = viewModeRoute.productId.trim();
     if (!productId) return;
+
+    if (eventAutoLayerProductIdRef.current !== productId) {
+      eventAutoLayerProductIdRef.current = productId;
+      eventAutoLayerTypeRef.current = null;
+      eventAutoLayerAppliedRef.current = false;
+    }
 
     const key = `${sceneModeId}:${apiBaseUrl}:${productId}`;
     if (eventEntryKeyRef.current === key) return;
@@ -1238,10 +1244,8 @@ export function CesiumViewer() {
         if (controller.signal.aborted) return;
         if (eventEntryKeyRef.current !== key) return;
 
-        if (!eventAutoLayerTypeRef.current) {
-          eventAutoLayerTypeRef.current = product.title;
-          maybeApplyEventAutoLayerTemplate();
-        }
+        eventAutoLayerTypeRef.current = product.title;
+        maybeApplyEventAutoLayerTemplate();
 
         const hazards = product.hazards;
         const destinationBBox = bboxUnion(hazards.map((hazard) => hazard.bbox));

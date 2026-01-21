@@ -434,6 +434,19 @@ describe('CesiumViewer', () => {
             ],
           });
         }
+        if (url === 'http://api.test/api/v1/products/2') {
+          return jsonResponse({
+            id: 2,
+            title: 'rain',
+            text: null,
+            issued_at: '2026-01-01T00:00:00Z',
+            valid_from: '2026-01-01T00:00:00Z',
+            valid_to: '2026-01-02T00:00:00Z',
+            version: 1,
+            status: 'published',
+            hazards: [],
+          });
+        }
         if (url.startsWith('http://api.test/api/v1/vectors/')) {
           return jsonResponse({
             vectors: [{ lon: 120, lat: 30, u: 1.5, v: -2 }],
@@ -1923,6 +1936,200 @@ describe('CesiumViewer', () => {
     });
 
     expect(useLayerManagerStore.getState().layers.find((layer) => layer.id === 'wind')?.visible).toBe(false);
+  });
+
+  it('applies user overrides for event auto layers when entering event mode', async () => {
+    useEventAutoLayersStore.getState().setOverride('snow', ['wind', 'cloud']);
+
+    useLayerManagerStore.setState({
+      layers: [
+        {
+          id: 'temperature',
+          type: 'temperature',
+          variable: 'TMP',
+          opacity: 1,
+          visible: false,
+          zIndex: 10,
+        },
+        {
+          id: 'cloud',
+          type: 'cloud',
+          variable: 'tcc',
+          opacity: 0.65,
+          visible: false,
+          zIndex: 20,
+        },
+        {
+          id: 'precipitation',
+          type: 'precipitation',
+          variable: 'precipitation',
+          opacity: 0.9,
+          visible: false,
+          zIndex: 30,
+        },
+        {
+          id: 'wind',
+          type: 'wind',
+          variable: 'wind',
+          opacity: 0.9,
+          visible: true,
+          zIndex: 40,
+        },
+      ],
+    });
+
+    render(<CesiumViewer />);
+    await waitFor(() => expect(vi.mocked(Viewer)).toHaveBeenCalledTimes(1));
+
+    act(() => {
+      useViewModeStore.getState().enterEvent({ productId: '1' });
+    });
+
+    await waitFor(() => {
+      const visible = useLayerManagerStore.getState().getVisibleLayers().map((layer) => layer.id);
+      expect([...visible].sort()).toEqual(['cloud', 'wind']);
+    });
+
+    expect(
+      useLayerManagerStore.getState().layers.find((layer) => layer.id === 'precipitation')?.visible,
+    ).toBe(false);
+    expect(useLayerManagerStore.getState().layers.find((layer) => layer.id === 'temperature')?.visible).toBe(
+      false,
+    );
+  });
+
+  it('retries applying the event layer template when layers load after entering event mode', async () => {
+    useLayerManagerStore.setState({
+      layers: [
+        {
+          id: 'wind',
+          type: 'wind',
+          variable: 'wind',
+          opacity: 0.9,
+          visible: true,
+          zIndex: 40,
+        },
+      ],
+    });
+
+    render(<CesiumViewer />);
+    await waitFor(() => expect(vi.mocked(Viewer)).toHaveBeenCalledTimes(1));
+
+    const viewer = vi.mocked(Viewer).mock.results[0].value;
+
+    act(() => {
+      useViewModeStore.getState().enterEvent({ productId: '1' });
+    });
+
+    await waitFor(() => expect(viewer.entities.add).toHaveBeenCalled());
+
+    act(() => {
+      useLayerManagerStore.setState({
+        layers: [
+          {
+            id: 'temperature',
+            type: 'temperature',
+            variable: 'TMP',
+            opacity: 1,
+            visible: false,
+            zIndex: 10,
+          },
+          {
+            id: 'cloud',
+            type: 'cloud',
+            variable: 'tcc',
+            opacity: 0.65,
+            visible: false,
+            zIndex: 20,
+          },
+          {
+            id: 'precipitation',
+            type: 'precipitation',
+            variable: 'precipitation',
+            opacity: 0.9,
+            visible: false,
+            zIndex: 30,
+          },
+          {
+            id: 'wind',
+            type: 'wind',
+            variable: 'wind',
+            opacity: 0.9,
+            visible: true,
+            zIndex: 40,
+          },
+        ],
+      });
+    });
+
+    await waitFor(() => {
+      const visible = useLayerManagerStore.getState().getVisibleLayers().map((layer) => layer.id);
+      expect([...visible].sort()).toEqual(['cloud', 'precipitation', 'temperature']);
+    });
+
+    expect(useLayerManagerStore.getState().layers.find((layer) => layer.id === 'wind')?.visible).toBe(false);
+  });
+
+  it('re-evaluates event auto layers when switching productId in event mode', async () => {
+    useEventAutoLayersStore.getState().setOverride('rain', ['wind']);
+
+    useLayerManagerStore.setState({
+      layers: [
+        {
+          id: 'temperature',
+          type: 'temperature',
+          variable: 'TMP',
+          opacity: 1,
+          visible: false,
+          zIndex: 10,
+        },
+        {
+          id: 'cloud',
+          type: 'cloud',
+          variable: 'tcc',
+          opacity: 0.65,
+          visible: false,
+          zIndex: 20,
+        },
+        {
+          id: 'precipitation',
+          type: 'precipitation',
+          variable: 'precipitation',
+          opacity: 0.9,
+          visible: false,
+          zIndex: 30,
+        },
+        {
+          id: 'wind',
+          type: 'wind',
+          variable: 'wind',
+          opacity: 0.9,
+          visible: true,
+          zIndex: 40,
+        },
+      ],
+    });
+
+    render(<CesiumViewer />);
+    await waitFor(() => expect(vi.mocked(Viewer)).toHaveBeenCalledTimes(1));
+
+    act(() => {
+      useViewModeStore.getState().enterEvent({ productId: '1' });
+    });
+
+    await waitFor(() => {
+      const visible = useLayerManagerStore.getState().getVisibleLayers().map((layer) => layer.id);
+      expect([...visible].sort()).toEqual(['cloud', 'precipitation', 'temperature']);
+    });
+
+    act(() => {
+      useViewModeStore.getState().enterEvent({ productId: '2' });
+    });
+
+    await waitFor(() => {
+      const visible = useLayerManagerStore.getState().getVisibleLayers().map((layer) => layer.id);
+      expect(visible).toEqual(['wind']);
+    });
   });
 
   it('restores the pre-event layer state when exiting event mode', async () => {
