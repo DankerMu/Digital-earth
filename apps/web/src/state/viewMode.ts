@@ -16,7 +16,7 @@ export function isViewModeId(value: unknown): value is ViewModeId {
 
 export type ViewModeRoute =
   | { viewModeId: 'global' }
-  | { viewModeId: 'local'; lat: number; lon: number }
+  | { viewModeId: 'local'; lat: number; lon: number; heightMeters?: number }
   | { viewModeId: 'event'; productId: string }
   | { viewModeId: 'layerGlobal'; layerId: string };
 
@@ -41,7 +41,7 @@ type ViewModeState = {
   canGoBack: boolean;
   transition: ViewModeTransition | null;
   enterGlobal: () => void;
-  enterLocal: (params: { lat: number; lon: number }) => void;
+  enterLocal: (params: { lat: number; lon: number; heightMeters?: number | null }) => void;
   enterEvent: (params: { productId: string }) => void;
   enterLayerGlobal: (params: { layerId: string }) => void;
   goBack: () => boolean;
@@ -110,7 +110,8 @@ function routesEqual(a: ViewModeRoute, b: ViewModeRoute): boolean {
       return (
         b.viewModeId === 'local' &&
         Object.is(a.lat, b.lat) &&
-        Object.is(a.lon, b.lon)
+        Object.is(a.lon, b.lon) &&
+        Object.is(a.heightMeters, b.heightMeters)
       );
     case 'event':
       return b.viewModeId === 'event' && a.productId === b.productId;
@@ -239,11 +240,23 @@ const enterGlobal: ViewModeState['enterGlobal'] = () => {
   pushRoute({ viewModeId: 'global' });
 };
 
-const enterLocal: ViewModeState['enterLocal'] = ({ lat, lon }) => {
+const enterLocal: ViewModeState['enterLocal'] = ({ lat, lon, heightMeters }) => {
   if (!Number.isFinite(lat) || !Number.isFinite(lon)) return;
   if (lat < -90 || lat > 90) return;
   if (lon < -180 || lon > 180) return;
-  pushRoute({ viewModeId: 'local', lat, lon });
+  const nextRoute: ViewModeRoute = {
+    viewModeId: 'local',
+    lat,
+    lon,
+    ...(typeof heightMeters === 'number' && Number.isFinite(heightMeters) ? { heightMeters } : {}),
+  };
+
+  if (route.viewModeId === 'local' && Object.is(route.lat, lat) && Object.is(route.lon, lon)) {
+    transitionTo(nextRoute, 'replace', history);
+    return;
+  }
+
+  pushRoute(nextRoute);
 };
 
 const enterEvent: ViewModeState['enterEvent'] = ({ productId }) => {

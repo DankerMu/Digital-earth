@@ -7,6 +7,7 @@ import {
   EllipsoidTerrainProvider,
   ImageryLayer,
   Ion,
+  KeyboardEventModifier,
   Math as CesiumMath,
   ScreenSpaceEventType,
   UrlTemplateImageryProvider,
@@ -21,6 +22,7 @@ import { useBasemapStore } from '../../state/basemap';
 import { useLayerManagerStore } from '../../state/layerManager';
 import { usePerformanceModeStore } from '../../state/performanceMode';
 import { useSceneModeStore } from '../../state/sceneMode';
+import { useViewModeStore } from '../../state/viewMode';
 import { PrecipitationParticles } from '../effects/PrecipitationParticles';
 import { WindArrows, windArrowDensityForCameraHeight } from '../effects/WindArrows';
 import { createCloudSampler, createWeatherSampler } from '../effects/weatherSampler';
@@ -34,6 +36,7 @@ import {
   fetchWindVectorData,
   type WindVector,
 } from '../layers/layersApi';
+import { LocalInfoPanel } from '../local/LocalInfoPanel';
 import { SamplingCard } from '../sampling/SamplingCard';
 import { useSamplingCard } from '../sampling/useSamplingCard';
 import { BasemapSelector } from './BasemapSelector';
@@ -165,6 +168,10 @@ export function CesiumViewer() {
   const [terrainNotice, setTerrainNotice] = useState<string | null>(null);
   const basemapId = useBasemapStore((state) => state.basemapId);
   const sceneModeId = useSceneModeStore((state) => state.sceneModeId);
+  const viewModeRoute = useViewModeStore((state) => state.route);
+  const enterLocal = useViewModeStore((state) => state.enterLocal);
+  const canGoBack = useViewModeStore((state) => state.canGoBack);
+  const goBack = useViewModeStore((state) => state.goBack);
   const layers = useLayerManagerStore((state) => state.layers);
   const performanceModeEnabled = usePerformanceModeStore((state) => state.enabled);
   const appliedBasemapIdRef = useRef<BasemapId | null>(null);
@@ -194,6 +201,16 @@ export function CesiumViewer() {
     () => makeHourlyUtcIso(DEFAULT_LAYER_TIME_KEY, cloudFrameIndex),
     [cloudFrameIndex],
   );
+
+  const activeLayer = useMemo(() => {
+    const visible = layers.filter((layer) => layer.visible).sort(sortByZIndex);
+    return visible.length > 0 ? visible[visible.length - 1]! : null;
+  }, [layers]);
+
+  const localTimeKey = useMemo(() => {
+    if (activeLayer?.type === 'cloud') return cloudTimeKey;
+    return DEFAULT_LAYER_TIME_KEY;
+  }, [activeLayer, cloudTimeKey]);
 
   const basemapProvider = mapConfig?.basemapProvider ?? 'open';
 
@@ -529,16 +546,19 @@ export function CesiumViewer() {
     if (!viewer) return;
 
     const handler = viewer.screenSpaceEventHandler as unknown as {
-      setInputAction?: (cb: (movement: { position?: unknown }) => void, type: unknown) => void;
-      removeInputAction?: (type: unknown) => void;
+      setInputAction?: (
+        cb: (movement: { position?: unknown }) => void,
+        type: unknown,
+        modifier?: unknown,
+      ) => void;
+      removeInputAction?: (type: unknown, modifier?: unknown) => void;
     };
 
     if (!handler?.setInputAction) return;
 
-    const onClick = (movement: { position?: unknown }) => {
-      const position = movement.position;
-      if (!position) return;
-
+    const pickLocation = (
+      position: unknown,
+    ): { lon: number; lat: number; heightMeters: number | undefined } | null => {
       const cartesian =
         (viewer.scene as unknown as { pickPosition?: (pos: unknown) => unknown }).pickPosition?.(
           position,
@@ -550,21 +570,57 @@ export function CesiumViewer() {
           (viewer.scene as unknown as { globe?: { ellipsoid?: unknown } }).globe?.ellipsoid,
         );
 
-      if (!cartesian) {
+      if (!cartesian) return null;
+
+      const cartographic = Cartographic.fromCartesian(cartesian as never) as Cartographic & {
+        height?: number;
+      };
+      const lon = CesiumMath.toDegrees(cartographic.longitude);
+      const lat = CesiumMath.toDegrees(cartographic.latitude);
+      const heightMeters = cartographic.height;
+
+      if (!Number.isFinite(lon) || !Number.isFinite(lat)) return null;
+      return {
+        lon,
+        lat,
+        heightMeters:
+          typeof heightMeters === 'number' && Number.isFinite(heightMeters)
+            ? heightMeters
+            : undefined,
+      };
+    };
+
+    const onEnterLocal = (movement: { position?: unknown }) => {
+      const position = movement.position;
+      if (!position) return;
+
+      const picked = pickLocation(position);
+      if (!picked) return;
+
+      // Cancel any ongoing sampling and close the card to avoid conflict with double-click
+      samplingAbortRef.current?.abort();
+      closeSamplingCard();
+
+      enterLocal({
+        lon: picked.lon,
+        lat: picked.lat,
+        heightMeters: picked.heightMeters ?? null,
+      });
+    };
+
+    const onClick = (movement: { position?: unknown }) => {
+      const position = movement.position;
+      if (!position) return;
+
+      const picked = pickLocation(position);
+
+      if (!picked) {
         openSamplingCard({ lon: Number.NaN, lat: Number.NaN });
         setSamplingError('无法获取点击位置');
         return;
       }
 
-      const cartographic = Cartographic.fromCartesian(cartesian as never);
-      const lon = CesiumMath.toDegrees(cartographic.longitude);
-      const lat = CesiumMath.toDegrees(cartographic.latitude);
-
-      if (!Number.isFinite(lon) || !Number.isFinite(lat)) {
-        openSamplingCard({ lon: Number.NaN, lat: Number.NaN });
-        setSamplingError('无法获取经纬度');
-        return;
-      }
+      const { lon, lat } = picked;
 
       samplingAbortRef.current?.abort();
       const controller = new AbortController();
@@ -611,11 +667,42 @@ export function CesiumViewer() {
     };
 
     handler.setInputAction(onClick, ScreenSpaceEventType.LEFT_CLICK);
+    handler.setInputAction(onEnterLocal, ScreenSpaceEventType.LEFT_CLICK, KeyboardEventModifier.CTRL);
+    handler.setInputAction(onEnterLocal, ScreenSpaceEventType.LEFT_DOUBLE_CLICK);
 
     return () => {
       handler.removeInputAction?.(ScreenSpaceEventType.LEFT_CLICK);
+      handler.removeInputAction?.(ScreenSpaceEventType.LEFT_CLICK, KeyboardEventModifier.CTRL);
+      handler.removeInputAction?.(ScreenSpaceEventType.LEFT_DOUBLE_CLICK);
     };
-  }, [openSamplingCard, setSamplingData, setSamplingError, viewer]);
+  }, [closeSamplingCard, enterLocal, openSamplingCard, setSamplingData, setSamplingError, viewer]);
+
+  useEffect(() => {
+    if (!viewer) return;
+    if (viewModeRoute.viewModeId !== 'local') return;
+
+    const surfaceHeightMeters =
+      typeof viewModeRoute.heightMeters === 'number' && Number.isFinite(viewModeRoute.heightMeters)
+        ? viewModeRoute.heightMeters
+        : 0;
+
+    const offsetMeters = sceneModeId === '2d' ? 5000 : 3000;
+    const destination = Cartesian3.fromDegrees(
+      viewModeRoute.lon,
+      viewModeRoute.lat,
+      surfaceHeightMeters + offsetMeters,
+    );
+
+    viewer.camera.flyTo({
+      destination,
+      orientation: {
+        heading: viewer.camera.heading,
+        pitch: -Math.PI / 4,
+        roll: 0,
+      },
+      duration: 2.5,
+    });
+  }, [sceneModeId, viewModeRoute, viewer]);
 
   useEffect(() => {
     if (!viewer) return;
@@ -1074,7 +1161,18 @@ export function CesiumViewer() {
           </div>
         ) : null}
       </div>
-      <div className="absolute right-3 top-3 z-20">
+      <div className="absolute right-3 top-3 z-20 flex flex-col gap-3">
+        {viewModeRoute.viewModeId === 'local' ? (
+          <LocalInfoPanel
+            lat={viewModeRoute.lat}
+            lon={viewModeRoute.lon}
+            heightMeters={viewModeRoute.heightMeters}
+            timeKey={localTimeKey}
+            activeLayer={activeLayer}
+            canGoBack={canGoBack}
+            onBack={() => goBack()}
+          />
+        ) : null}
         <SamplingCard state={samplingCardState} onClose={closeSamplingCard} />
       </div>
     </div>
