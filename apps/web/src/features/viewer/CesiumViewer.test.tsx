@@ -353,6 +353,7 @@ import { Cartesian3, EllipsoidTerrainProvider, Rectangle, createWorldTerrainAsyn
 import { clearConfigCache } from '../../config';
 import { DEFAULT_BASEMAP_ID } from '../../config/basemaps';
 import { clearProductsCache } from '../products/productsApi';
+import { clearCldasTileProbeCache } from '../layers/layersApi';
 import { useBasemapStore } from '../../state/basemap';
 import { DEFAULT_CAMERA_PERSPECTIVE_ID, useCameraPerspectiveStore } from '../../state/cameraPerspective';
 import { useEventAutoLayersStore } from '../../state/eventAutoLayers';
@@ -378,6 +379,7 @@ describe('CesiumViewer', () => {
     windArrowsMocks.instances.length = 0;
     clearConfigCache();
     clearProductsCache();
+    clearCldasTileProbeCache();
     localStorage.removeItem('digital-earth.basemap');
     localStorage.removeItem('digital-earth.eventLayers');
     localStorage.removeItem('digital-earth.eventAutoLayers');
@@ -821,6 +823,46 @@ describe('CesiumViewer', () => {
     expect(viewer.imageryLayers.remove).toHaveBeenCalledWith(imageryLayer, true);
   });
 
+  it('syncs snow depth imagery layers from layerManager and applies opacity/visibility', async () => {
+    useLayerManagerStore.setState({
+      layers: [
+        {
+          id: 'snow-depth',
+          type: 'snow-depth',
+          variable: 'SNOD',
+          opacity: 0.55,
+          visible: true,
+          zIndex: 50,
+        },
+      ],
+    });
+
+    render(<CesiumViewer />);
+
+    await waitFor(() => expect(vi.mocked(Viewer)).toHaveBeenCalledTimes(1));
+
+    const viewer = vi.mocked(Viewer).mock.results[0].value;
+
+    await waitFor(() => expect(viewer.imageryLayers.add).toHaveBeenCalledTimes(1));
+
+    const imageryLayer = viewer.imageryLayers.add.mock.calls[0]?.[0] as {
+      alpha?: number;
+      show?: boolean;
+      provider?: { options?: { url?: string } };
+    };
+
+    expect(imageryLayer.alpha).toBe(0.55);
+    expect(imageryLayer.show).toBe(true);
+    expect(imageryLayer.provider?.options?.url).toContain('/SNOD/');
+    expect(viewer.imageryLayers.raiseToTop).toHaveBeenCalledWith(imageryLayer);
+
+    useLayerManagerStore.getState().setLayerOpacity('snow-depth', 0.25);
+    await waitFor(() => expect(imageryLayer.alpha).toBe(0.25));
+
+    useLayerManagerStore.getState().setLayerVisible('snow-depth', false);
+    await waitFor(() => expect(imageryLayer.show).toBe(false));
+  });
+
   it('orders imagery layers by zIndex across types', async () => {
     useLayerManagerStore.setState({
       layers: [
@@ -848,6 +890,14 @@ describe('CesiumViewer', () => {
           visible: false,
           zIndex: 30,
         },
+        {
+          id: 'snow-depth',
+          type: 'snow-depth',
+          variable: 'SNOD',
+          opacity: 1,
+          visible: false,
+          zIndex: 50,
+        },
       ],
     });
 
@@ -857,7 +907,7 @@ describe('CesiumViewer', () => {
 
     const viewer = vi.mocked(Viewer).mock.results[0].value;
 
-    await waitFor(() => expect(viewer.imageryLayers.raiseToTop).toHaveBeenCalledTimes(3));
+    await waitFor(() => expect(viewer.imageryLayers.raiseToTop).toHaveBeenCalledTimes(4));
 
     const raisedUrls = viewer.imageryLayers.raiseToTop.mock.calls.map(
       ([layer]: [unknown]) =>
@@ -867,6 +917,7 @@ describe('CesiumViewer', () => {
     expect(raisedUrls[0]).toContain('/LOW/');
     expect(raisedUrls[1]).toContain('/TCC/');
     expect(raisedUrls[2]).toContain('/precipitation/');
+    expect(raisedUrls[3]).toContain('/SNOD/');
   });
 
   it('refreshes cloud tiles over time', async () => {
@@ -1920,6 +1971,14 @@ describe('CesiumViewer', () => {
           visible: true,
           zIndex: 40,
         },
+        {
+          id: 'snow-depth',
+          type: 'snow-depth',
+          variable: 'SNOD',
+          opacity: 0.75,
+          visible: false,
+          zIndex: 50,
+        },
       ],
     });
 
@@ -1932,7 +1991,7 @@ describe('CesiumViewer', () => {
 
     await waitFor(() => {
       const visible = useLayerManagerStore.getState().getVisibleLayers().map((layer) => layer.id);
-      expect([...visible].sort()).toEqual(['cloud', 'precipitation', 'temperature']);
+      expect([...visible].sort()).toEqual(['cloud', 'precipitation', 'snow-depth', 'temperature']);
     });
 
     expect(useLayerManagerStore.getState().layers.find((layer) => layer.id === 'wind')?.visible).toBe(false);
@@ -1975,6 +2034,14 @@ describe('CesiumViewer', () => {
           visible: true,
           zIndex: 40,
         },
+        {
+          id: 'snow-depth',
+          type: 'snow-depth',
+          variable: 'SNOD',
+          opacity: 0.75,
+          visible: false,
+          zIndex: 50,
+        },
       ],
     });
 
@@ -1994,6 +2061,9 @@ describe('CesiumViewer', () => {
       useLayerManagerStore.getState().layers.find((layer) => layer.id === 'precipitation')?.visible,
     ).toBe(false);
     expect(useLayerManagerStore.getState().layers.find((layer) => layer.id === 'temperature')?.visible).toBe(
+      false,
+    );
+    expect(useLayerManagerStore.getState().layers.find((layer) => layer.id === 'snow-depth')?.visible).toBe(
       false,
     );
   });
@@ -2058,13 +2128,21 @@ describe('CesiumViewer', () => {
             visible: true,
             zIndex: 40,
           },
+          {
+            id: 'snow-depth',
+            type: 'snow-depth',
+            variable: 'SNOD',
+            opacity: 0.75,
+            visible: false,
+            zIndex: 50,
+          },
         ],
       });
     });
 
     await waitFor(() => {
       const visible = useLayerManagerStore.getState().getVisibleLayers().map((layer) => layer.id);
-      expect([...visible].sort()).toEqual(['cloud', 'precipitation', 'temperature']);
+      expect([...visible].sort()).toEqual(['cloud', 'precipitation', 'snow-depth', 'temperature']);
     });
 
     expect(useLayerManagerStore.getState().layers.find((layer) => layer.id === 'wind')?.visible).toBe(false);
@@ -2107,6 +2185,14 @@ describe('CesiumViewer', () => {
           visible: true,
           zIndex: 40,
         },
+        {
+          id: 'snow-depth',
+          type: 'snow-depth',
+          variable: 'SNOD',
+          opacity: 0.75,
+          visible: false,
+          zIndex: 50,
+        },
       ],
     });
 
@@ -2119,7 +2205,7 @@ describe('CesiumViewer', () => {
 
     await waitFor(() => {
       const visible = useLayerManagerStore.getState().getVisibleLayers().map((layer) => layer.id);
-      expect([...visible].sort()).toEqual(['cloud', 'precipitation', 'temperature']);
+      expect([...visible].sort()).toEqual(['cloud', 'precipitation', 'snow-depth', 'temperature']);
     });
 
     act(() => {
@@ -2345,6 +2431,126 @@ describe('CesiumViewer', () => {
     expect(Rectangle.fromDegrees).toHaveBeenCalledWith(170, 10, -170, 20);
     expect(viewer.camera.flyTo).toHaveBeenCalledWith(
       expect.objectContaining({ duration: 1.8 }),
+    );
+  });
+
+  it('aligns snow depth monitoring tiles to the most recent hour and crops to the event bbox', async () => {
+    useLayerManagerStore.setState({
+      layers: [
+        {
+          id: 'snow-depth',
+          type: 'snow-depth',
+          variable: 'SNOD',
+          opacity: 1,
+          visible: false,
+          zIndex: 50,
+        },
+      ],
+    });
+
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+        if (url.endsWith('/config.json')) {
+          return jsonResponse({ apiBaseUrl: 'http://api.test' });
+        }
+        if (url === 'http://api.test/api/v1/products/1') {
+          return jsonResponse({
+            id: 1,
+            title: '降雪',
+            text: '降雪预警',
+            issued_at: '2026-01-01T00:00:00Z',
+            valid_from: '2026-01-01T00:45:00Z',
+            valid_to: '2026-01-02T00:00:00Z',
+            version: 1,
+            status: 'published',
+            hazards: [
+              {
+                id: 11,
+                severity: 'high',
+                geometry: null,
+                bbox: { min_x: 126, min_y: 45, max_x: 127, max_y: 46 },
+                valid_from: '2026-01-01T00:45:00Z',
+                valid_to: '2026-01-02T00:00:00Z',
+              },
+            ],
+          });
+        }
+        if (url.startsWith('http://api.test/api/v1/vectors/')) {
+          return jsonResponse({
+            vectors: [{ lon: 120, lat: 30, u: 1.5, v: -2 }],
+          });
+        }
+        return jsonResponse({});
+      }),
+    );
+
+    render(<CesiumViewer />);
+    await waitFor(() => expect(vi.mocked(Viewer)).toHaveBeenCalledTimes(1));
+
+    const viewer = vi.mocked(Viewer).mock.results[0].value;
+    await waitFor(() => expect(viewer.imageryLayers.add).toHaveBeenCalledTimes(1));
+    viewer.imageryLayers.add.mockClear();
+
+    act(() => {
+      useViewModeStore.getState().enterEvent({ productId: '1' });
+    });
+
+    await waitFor(() => {
+      const layersAdded = viewer.imageryLayers.add.mock.calls.map(([layer]: [unknown]) => layer as {
+        provider?: { options?: { url?: string; rectangle?: unknown } };
+      });
+      const snow = layersAdded.find((layer: {
+        provider?: { options?: { url?: string; rectangle?: unknown } };
+      }) => {
+        const url = layer.provider?.options?.url ?? '';
+        return url.includes('/SNOD/') && Boolean(layer.provider?.options?.rectangle);
+      });
+      expect(snow?.provider?.options?.url).toContain('/20260101T000000Z/');
+      expect(snow?.provider?.options?.rectangle).toEqual({
+        west: 126,
+        south: 45,
+        east: 127,
+        north: 46,
+      });
+    });
+  });
+
+  it('shows a monitoring notice when snow depth tiles are missing', async () => {
+    useLayerManagerStore.setState({
+      layers: [
+        {
+          id: 'snow-depth',
+          type: 'snow-depth',
+          variable: 'SNOD',
+          opacity: 1,
+          visible: true,
+          zIndex: 50,
+        },
+      ],
+    });
+
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+        if (url.endsWith('/config.json')) {
+          return jsonResponse({ apiBaseUrl: 'http://api.test' });
+        }
+        if (url.includes('/api/v1/tiles/cldas/')) {
+          return new Response('missing', { status: 404 });
+        }
+        return jsonResponse({});
+      }),
+    );
+
+    render(<CesiumViewer />);
+
+    await waitFor(() => expect(vi.mocked(Viewer)).toHaveBeenCalledTimes(1));
+
+    expect(await screen.findByRole('alert', { name: 'monitoring-notice' })).toHaveTextContent(
+      '暂无雪深监测数据',
     );
   });
 

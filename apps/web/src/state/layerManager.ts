@@ -1,6 +1,6 @@
 import { useSyncExternalStore } from 'react';
 
-export type LayerType = 'temperature' | 'cloud' | 'precipitation' | 'wind';
+export type LayerType = 'temperature' | 'cloud' | 'precipitation' | 'wind' | 'snow-depth';
 
 export type LayerConfig = {
   id: string;
@@ -59,7 +59,8 @@ export function isLayerType(value: unknown): value is LayerType {
     value === 'temperature' ||
     value === 'cloud' ||
     value === 'precipitation' ||
-    value === 'wind'
+    value === 'wind' ||
+    value === 'snow-depth'
   );
 }
 

@@ -75,6 +75,12 @@ function parseWindVectorData(payload: unknown): WindVectorData {
   return { vectors };
 }
 
+function isAbortError(error: unknown, signal?: AbortSignal): boolean {
+  if (signal?.aborted) return true;
+  if (!isRecord(error)) return false;
+  return error.name === 'AbortError';
+}
+
 export async function fetchWindVectorData(options: {
   apiBaseUrl: string;
   timeKey: string;
@@ -105,6 +111,13 @@ export function buildCldasTileUrlTemplate(options: CldasTileUrlTemplateOptions):
   // CLDAS tiles are served in an XYZ-style scheme (y=0 at the north). If the backend ever
   // switches to a TMS (south-origin) scheme, use Cesium's `{reverseY}` placeholder instead.
   return `${origin}/api/v1/tiles/cldas/${timeKey}/${variable}/{z}/{x}/{y}.png`;
+}
+
+export function buildCldasTileUrl(options: CldasTileUrlTemplateOptions & { z: number; x: number; y: number }): string {
+  const origin = resolveApiOrigin(options.apiBaseUrl);
+  const timeKey = encodeURIComponent(options.timeKey);
+  const variable = encodeURIComponent(options.variable);
+  return `${origin}/api/v1/tiles/cldas/${timeKey}/${variable}/${options.z}/${options.x}/${options.y}.png`;
 }
 
 export type PrecipitationTileUrlTemplateOptions = Omit<
@@ -157,4 +170,106 @@ export function buildCloudTileUrlTemplate(options: CloudTileUrlTemplateOptions):
     timeKey: options.timeKey,
     variable: normalizeCloudVariable(options.variable),
   });
+}
+
+const CLDAS_TILE_PROBE_CACHE_MAX_ENTRIES = 200;
+const CLDAS_TILE_PROBE_CACHE_TTL_MS = 5 * 60_000;
+
+type CacheEntry<T> = { value: T; expiresAt: number };
+const cldasTileProbeCache = new Map<string, CacheEntry<CldasTileProbeResult>>();
+
+function readCache<T>(cache: Map<string, CacheEntry<T>>, key: string): T | undefined {
+  const entry = cache.get(key);
+  if (!entry) return undefined;
+  if (Date.now() >= entry.expiresAt) {
+    cache.delete(key);
+    return undefined;
+  }
+
+  cache.delete(key);
+  cache.set(key, entry);
+  return entry.value;
+}
+
+function writeCache<T>(
+  cache: Map<string, CacheEntry<T>>,
+  key: string,
+  value: T,
+  options: { maxEntries: number; ttlMs: number },
+) {
+  const entry: CacheEntry<T> = { value, expiresAt: Date.now() + options.ttlMs };
+  cache.delete(key);
+  cache.set(key, entry);
+
+  while (cache.size > options.maxEntries) {
+    const oldest = cache.keys().next().value as string | undefined;
+    if (!oldest) break;
+    cache.delete(oldest);
+  }
+}
+
+export type CldasTileProbeResult =
+  | { status: 'available'; httpStatus: number }
+  | { status: 'missing'; httpStatus: number }
+  | { status: 'error'; httpStatus: number };
+
+export function clearCldasTileProbeCache() {
+  cldasTileProbeCache.clear();
+}
+
+export async function probeCldasTileAvailability(options: {
+  apiBaseUrl: string;
+  timeKey: string;
+  variable: string;
+  signal?: AbortSignal;
+  cache?: 'default' | 'no-cache';
+}): Promise<CldasTileProbeResult> {
+  const url = buildCldasTileUrl({
+    apiBaseUrl: options.apiBaseUrl,
+    timeKey: options.timeKey,
+    variable: options.variable,
+    z: 0,
+    x: 0,
+    y: 0,
+  });
+  const key = url;
+
+  const cached = options.cache !== 'no-cache' ? readCache(cldasTileProbeCache, key) : undefined;
+  if (cached) return cached;
+
+  try {
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: { Accept: 'image/png' },
+      signal: options.signal,
+      cache: options.cache === 'no-cache' ? 'no-store' : undefined,
+    });
+
+    const result: CldasTileProbeResult = response.ok
+      ? { status: 'available', httpStatus: response.status }
+      : response.status === 404
+        ? { status: 'missing', httpStatus: response.status }
+        : { status: 'error', httpStatus: response.status };
+
+    if (options.cache !== 'no-cache') {
+      writeCache(cldasTileProbeCache, key, result, {
+        maxEntries: CLDAS_TILE_PROBE_CACHE_MAX_ENTRIES,
+        ttlMs: CLDAS_TILE_PROBE_CACHE_TTL_MS,
+      });
+    }
+
+    return result;
+  } catch (error) {
+    const result: CldasTileProbeResult = { status: 'error', httpStatus: 0 };
+    if (isAbortError(error, options.signal)) {
+      return result;
+    }
+    if (options.cache !== 'no-cache') {
+      writeCache(cldasTileProbeCache, key, result, {
+        maxEntries: CLDAS_TILE_PROBE_CACHE_MAX_ENTRIES,
+        ttlMs: CLDAS_TILE_PROBE_CACHE_TTL_MS,
+      });
+    }
+    return result;
+  }
 }

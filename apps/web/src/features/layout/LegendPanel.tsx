@@ -3,7 +3,8 @@ import { useMemo } from 'react';
 import { LAYER_META } from '../legend/layerMeta';
 import { LegendScale } from '../legend/LegendScale';
 import { useLegendConfig } from '../legend/useLegendConfig';
-import type { LayerType } from '../legend/types';
+import { SUPPORTED_LAYER_TYPES, type LayerType } from '../legend/types';
+import type { LayerConfig } from '../../state/layerManager';
 import { useLayerManagerStore } from '../../state/layerManager';
 import { useViewModeStore } from '../../state/viewMode';
 
@@ -28,24 +29,37 @@ function pickActiveLayerType(params: {
   return topmost.type;
 }
 
+function isLegendLayerType(value: unknown): value is LayerType {
+  return SUPPORTED_LAYER_TYPES.includes(value as LayerType);
+}
+
 export function LegendPanel({ collapsed, onToggleCollapsed }: LegendPanelProps) {
   const layers = useLayerManagerStore((state) => state.layers);
   const route = useViewModeStore((state) => state.route);
 
   const selectedLayerId = route.viewModeId === 'layerGlobal' ? route.layerId : null;
-
-  const layerType = useMemo(
+  const legendLayers = useMemo(
     () =>
-      pickActiveLayerType({
-        selectedLayerId,
-        layers: layers.map((layer) => ({
+      layers
+        .filter(
+          (layer): layer is LayerConfig & { type: LayerType } => isLegendLayerType(layer.type),
+        )
+        .map((layer) => ({
           id: layer.id,
           type: layer.type,
           zIndex: layer.zIndex,
           visible: layer.visible,
         })),
+    [layers],
+  );
+
+  const layerType = useMemo(
+    () =>
+      pickActiveLayerType({
+        selectedLayerId,
+        layers: legendLayers,
       }),
-    [layers, selectedLayerId],
+    [legendLayers, selectedLayerId],
   );
 
   const state = useLegendConfig(layerType);
@@ -105,4 +119,3 @@ export function LegendPanel({ collapsed, onToggleCollapsed }: LegendPanelProps) 
     </section>
   );
 }
-

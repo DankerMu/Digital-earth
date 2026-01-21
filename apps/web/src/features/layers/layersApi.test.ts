@@ -1,9 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
+  buildCldasTileUrl,
   buildCldasTileUrlTemplate,
   buildCloudTileUrlTemplate,
   buildPrecipitationTileUrlTemplate,
+  clearCldasTileProbeCache,
+  probeCldasTileAvailability,
   fetchWindVectorData,
 } from './layersApi';
 
@@ -18,6 +21,7 @@ describe('layersApi', () => {
   beforeEach(() => {
     vi.unstubAllGlobals();
     vi.clearAllMocks();
+    clearCldasTileProbeCache();
   });
 
   it('builds a Cesium url template without encoding placeholders', () => {
@@ -34,6 +38,21 @@ describe('layersApi', () => {
     expect(url).toContain('{x}');
     expect(url).toContain('{y}');
     expect(url).not.toContain('%7Bz%7D');
+  });
+
+  it('builds a concrete CLDAS tile url without placeholders', () => {
+    const url = buildCldasTileUrl({
+      apiBaseUrl: 'http://api.test/some/prefix/',
+      timeKey: '2024-01-15T00:00:00Z',
+      variable: 'TMP',
+      z: 0,
+      x: 0,
+      y: 0,
+    });
+
+    expect(url).toBe(
+      'http://api.test/api/v1/tiles/cldas/2024-01-15T00%3A00%3A00Z/TMP/0/0/0.png',
+    );
   });
 
   it('drops any apiBaseUrl pathname when joining absolute api routes', () => {
@@ -190,5 +209,90 @@ describe('layersApi', () => {
         density: 10,
       }),
     ).rejects.toThrow(/Failed to fetch wind vectors: 500/);
+  });
+
+  it('probes tile availability and caches results', async () => {
+    const fetchMock = vi.fn(async () => new Response('nope', { status: 404 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const first = await probeCldasTileAvailability({
+      apiBaseUrl: 'http://api.test',
+      timeKey: '2024011500',
+      variable: 'SNOD',
+    });
+    const second = await probeCldasTileAvailability({
+      apiBaseUrl: 'http://api.test',
+      timeKey: '2024011500',
+      variable: 'SNOD',
+    });
+
+    expect(first).toEqual({ status: 'missing', httpStatus: 404 });
+    expect(second).toEqual({ status: 'missing', httpStatus: 404 });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('returns error probe status when fetch throws', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => {
+      throw new Error('boom');
+    }));
+
+    const result = await probeCldasTileAvailability({
+      apiBaseUrl: 'http://api.test',
+      timeKey: '2024011500',
+      variable: 'SNOD',
+    });
+
+    expect(result).toEqual({ status: 'error', httpStatus: 0 });
+  });
+
+  it('does not cache probe results when requests are aborted', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockRejectedValueOnce(new DOMException('aborted', 'AbortError'))
+      .mockResolvedValueOnce(new Response('nope', { status: 404 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const controller = new AbortController();
+    controller.abort();
+
+    const abortedResult = await probeCldasTileAvailability({
+      apiBaseUrl: 'http://api.test',
+      timeKey: '2024011500',
+      variable: 'SNOD',
+      signal: controller.signal,
+    });
+
+    const retryResult = await probeCldasTileAvailability({
+      apiBaseUrl: 'http://api.test',
+      timeKey: '2024011500',
+      variable: 'SNOD',
+    });
+
+    expect(abortedResult).toEqual({ status: 'error', httpStatus: 0 });
+    expect(retryResult).toEqual({ status: 'missing', httpStatus: 404 });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not cache AbortError results even without an AbortSignal', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockRejectedValueOnce(new DOMException('aborted', 'AbortError'))
+      .mockResolvedValueOnce(new Response('ok', { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const first = await probeCldasTileAvailability({
+      apiBaseUrl: 'http://api.test',
+      timeKey: '2024011500',
+      variable: 'SNOD',
+    });
+    const second = await probeCldasTileAvailability({
+      apiBaseUrl: 'http://api.test',
+      timeKey: '2024011500',
+      variable: 'SNOD',
+    });
+
+    expect(first).toEqual({ status: 'error', httpStatus: 0 });
+    expect(second).toEqual({ status: 'available', httpStatus: 200 });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 });
