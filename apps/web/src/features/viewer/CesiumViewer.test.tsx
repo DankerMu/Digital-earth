@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -436,5 +436,90 @@ describe('CesiumViewer', () => {
 
     expect(raisedUrls[0]).toContain('/LOW/');
     expect(raisedUrls[1]).toContain('/HIGH/');
+  });
+
+  it('syncs cloud imagery layers from layerManager and applies opacity/visibility', async () => {
+    useLayerManagerStore.setState({
+      layers: [
+        {
+          id: 'cloud',
+          type: 'cloud',
+          variable: 'tcc',
+          opacity: 0.65,
+          visible: true,
+          zIndex: 20,
+        },
+      ],
+    });
+
+    render(<CesiumViewer />);
+
+    await waitFor(() => expect(vi.mocked(Viewer)).toHaveBeenCalledTimes(1));
+
+    const viewer = vi.mocked(Viewer).mock.results[0].value;
+
+    await waitFor(() => expect(viewer.imageryLayers.add).toHaveBeenCalledTimes(1));
+
+    const imageryLayer = viewer.imageryLayers.add.mock.calls[0]?.[0] as {
+      alpha?: number;
+      show?: boolean;
+    };
+
+    expect(imageryLayer.alpha).toBe(0.65);
+    expect(imageryLayer.show).toBe(true);
+    expect(viewer.imageryLayers.raiseToTop).toHaveBeenCalledWith(imageryLayer);
+
+    useLayerManagerStore.getState().setLayerOpacity('cloud', 0.3);
+    await waitFor(() => expect(imageryLayer.alpha).toBe(0.3));
+
+    useLayerManagerStore.getState().setLayerVisible('cloud', false);
+    await waitFor(() => expect(imageryLayer.show).toBe(false));
+  });
+
+  it('refreshes cloud tiles over time', async () => {
+    const CLOUD_LAYER_REFRESH_INTERVAL_MS = 5 * 60 * 1000;
+    let triggerRefresh: (() => void) | null = null;
+    const setIntervalSpy = vi
+      .spyOn(window, 'setInterval')
+      .mockImplementation((handler: TimerHandler, timeout?: number, ...args: unknown[]) => {
+        void args;
+        if (timeout === CLOUD_LAYER_REFRESH_INTERVAL_MS && typeof handler === 'function') {
+          triggerRefresh = handler as () => void;
+        }
+        return 1 as unknown as ReturnType<typeof window.setInterval>;
+      });
+
+    try {
+      useLayerManagerStore.setState({
+        layers: [
+          {
+            id: 'cloud',
+            type: 'cloud',
+            variable: 'tcc',
+            opacity: 0.65,
+            visible: true,
+            zIndex: 20,
+          },
+        ],
+      });
+
+      render(<CesiumViewer />);
+
+      await waitFor(() => expect(vi.mocked(Viewer)).toHaveBeenCalledTimes(1));
+
+      const viewer = vi.mocked(Viewer).mock.results[0].value;
+
+      await waitFor(() => expect(viewer.imageryLayers.add).toHaveBeenCalledTimes(1));
+
+      await waitFor(() => expect(triggerRefresh).not.toBeNull());
+      act(() => {
+        triggerRefresh?.();
+      });
+
+      await waitFor(() => expect(viewer.imageryLayers.add).toHaveBeenCalledTimes(2));
+      expect(viewer.imageryLayers.remove).toHaveBeenCalledTimes(1);
+    } finally {
+      setIntervalSpy.mockRestore();
+    }
   });
 });

@@ -1,0 +1,103 @@
+import {
+  GeographicTilingScheme,
+  ImageryLayer,
+  UrlTemplateImageryProvider,
+  type Viewer,
+} from 'cesium';
+
+import { buildCloudTileUrlTemplate } from './layersApi';
+import type { CloudLayerParams } from './types';
+
+const MAX_TILE_LEVEL = 22;
+
+function clampOpacity(value: number): number {
+  if (!Number.isFinite(value)) return 1;
+  if (value < 0) return 0;
+  if (value > 1) return 1;
+  return value;
+}
+
+export class CloudLayer {
+  public readonly id: string;
+  private readonly viewer: Viewer;
+  private current: CloudLayerParams;
+  private imageryLayer: ImageryLayer | null = null;
+  private urlTemplate: string | null = null;
+
+  constructor(viewer: Viewer, params: CloudLayerParams) {
+    this.viewer = viewer;
+    this.id = params.id;
+    this.current = params;
+    this.sync({ forceRecreate: true });
+  }
+
+  get layer(): ImageryLayer | null {
+    return this.imageryLayer;
+  }
+
+  get zIndex(): number {
+    return this.current.zIndex;
+  }
+
+  update(params: CloudLayerParams): void {
+    if (params.id !== this.id) {
+      throw new Error(`CloudLayer id mismatch: ${params.id}`);
+    }
+
+    this.current = params;
+    this.sync();
+  }
+
+  destroy(): void {
+    if (!this.imageryLayer) return;
+    this.viewer.imageryLayers.remove(this.imageryLayer, true);
+    this.imageryLayer = null;
+    this.urlTemplate = null;
+    this.viewer.scene.requestRender();
+  }
+
+  private createUrlTemplate(params: CloudLayerParams): string {
+    return buildCloudTileUrlTemplate({
+      apiBaseUrl: params.apiBaseUrl,
+      timeKey: params.timeKey,
+      variable: params.variable,
+    });
+  }
+
+  private sync(options: { forceRecreate?: boolean } = {}): void {
+    const nextTemplate = this.createUrlTemplate(this.current);
+    const shouldRecreate =
+      options.forceRecreate ||
+      this.imageryLayer === null ||
+      this.urlTemplate !== nextTemplate;
+
+    if (shouldRecreate) {
+      if (this.imageryLayer) {
+        this.viewer.imageryLayers.remove(this.imageryLayer, true);
+      }
+
+      const provider = new UrlTemplateImageryProvider({
+        url: nextTemplate,
+        tilingScheme: new GeographicTilingScheme(),
+        maximumLevel: MAX_TILE_LEVEL,
+        tileWidth: 256,
+        tileHeight: 256,
+        credit: 'Cloud tiles',
+      });
+
+      this.imageryLayer = new ImageryLayer(provider, {
+        alpha: clampOpacity(this.current.opacity),
+        show: this.current.visible,
+      });
+      this.viewer.imageryLayers.add(this.imageryLayer);
+      this.urlTemplate = nextTemplate;
+    }
+
+    if (!this.imageryLayer) return;
+
+    this.imageryLayer.alpha = clampOpacity(this.current.opacity);
+    this.imageryLayer.show = this.current.visible;
+    this.viewer.scene.requestRender();
+  }
+}
+
