@@ -318,6 +318,7 @@ describe('layerManager store', () => {
       type: 'wind',
       variable: 'wind',
       level: 850,
+      threshold: 2,
       opacity: 1,
       visible: true,
       zIndex: 0,
@@ -327,6 +328,7 @@ describe('layerManager store', () => {
       opacity: 0.25,
       zIndex: 5,
       level: undefined,
+      threshold: undefined,
     });
 
     const updated = useLayerManagerStore.getState().layers.find((layer) => layer.id === 'wind-850');
@@ -337,6 +339,7 @@ describe('layerManager store', () => {
       visible: true,
     });
     expect(updated).not.toHaveProperty('level');
+    expect(updated).not.toHaveProperty('threshold');
   });
 
   it('updateLayer supports type/variable/level updates and ignores invalid patches', async () => {

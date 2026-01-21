@@ -7,13 +7,17 @@ export type LayerConfig = {
   type: LayerType;
   variable: string;
   level?: number;
+  threshold?: number;
   opacity: number;
   visible: boolean;
   zIndex: number;
 };
 
 export type LayerUpdate = Partial<
-  Pick<LayerConfig, 'type' | 'variable' | 'level' | 'opacity' | 'visible' | 'zIndex'>
+  Pick<
+    LayerConfig,
+    'type' | 'variable' | 'level' | 'threshold' | 'opacity' | 'visible' | 'zIndex'
+  >
 >;
 
 type LayerManagerState = {
@@ -78,6 +82,8 @@ function sanitizeLayerConfig(value: unknown): LayerConfig | null {
 
   const levelRaw = value.level;
   const level = isFiniteNumber(levelRaw) ? levelRaw : undefined;
+  const thresholdRaw = value.threshold;
+  const threshold = isFiniteNumber(thresholdRaw) ? thresholdRaw : undefined;
   const opacity = clampOpacity(value.opacity);
   const visible = value.visible === true;
   const zIndex = isFiniteNumber(value.zIndex) ? value.zIndex : 0;
@@ -87,6 +93,7 @@ function sanitizeLayerConfig(value: unknown): LayerConfig | null {
     type,
     variable: variable.trim(),
     ...(level == null ? {} : { level }),
+    ...(threshold == null ? {} : { threshold }),
     opacity,
     visible,
     zIndex,
@@ -99,6 +106,7 @@ function layerConfigsEqual(a: LayerConfig, b: LayerConfig): boolean {
     a.type === b.type &&
     a.variable === b.variable &&
     Object.is(a.level, b.level) &&
+    Object.is(a.threshold, b.threshold) &&
     Object.is(a.opacity, b.opacity) &&
     a.visible === b.visible &&
     Object.is(a.zIndex, b.zIndex)
@@ -290,6 +298,20 @@ const updateLayer: LayerManagerState['updateLayer'] = (id, partial) => {
     }
   }
 
+  if ('threshold' in partial) {
+    const nextThreshold = isFiniteNumber(partial.threshold) ? partial.threshold : undefined;
+    if (!Object.is(next.threshold, nextThreshold)) {
+      if (nextThreshold == null) {
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
+        const { threshold: _threshold, ...rest } = next;
+        next = rest;
+      } else {
+        next = { ...next, threshold: nextThreshold };
+      }
+      didChange = true;
+    }
+  }
+
   if (typeof partial.opacity === 'number') {
     const nextOpacity = clampOpacity(partial.opacity);
     if (!Object.is(next.opacity, nextOpacity)) {
@@ -394,4 +416,3 @@ export const useLayerManagerStore: StoreHook = Object.assign(useLayerManagerStor
   getState,
   setState,
 });
-

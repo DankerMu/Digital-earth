@@ -17,3 +17,11 @@ export type CloudLayerParams = CldasTileUrlTemplateOptions & {
   visible: boolean;
   zIndex: number;
 };
+
+export type PrecipitationLayerParams = Omit<CldasTileUrlTemplateOptions, 'variable'> & {
+  id: string;
+  opacity: number;
+  visible: boolean;
+  zIndex: number;
+  threshold?: number | null;
+};

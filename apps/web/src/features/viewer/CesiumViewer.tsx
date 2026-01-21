@@ -18,6 +18,7 @@ import { useBasemapStore } from '../../state/basemap';
 import { useLayerManagerStore } from '../../state/layerManager';
 import { useSceneModeStore } from '../../state/sceneMode';
 import { CloudLayer } from '../layers/CloudLayer';
+import { PrecipitationLayer } from '../layers/PrecipitationLayer';
 import { TemperatureLayer } from '../layers/TemperatureLayer';
 import { BasemapSelector } from './BasemapSelector';
 import { CompassControl } from './CompassControl';
@@ -81,6 +82,7 @@ export function CesiumViewer() {
   const didApplySceneModeRef = useRef(false);
   const temperatureLayersRef = useRef<Map<string, TemperatureLayer>>(new Map());
   const cloudLayersRef = useRef<Map<string, CloudLayer>>(new Map());
+  const precipitationLayersRef = useRef<Map<string, PrecipitationLayer>>(new Map());
   const [cloudFrameIndex, setCloudFrameIndex] = useState(0);
   const cloudTimeKey = useMemo(
     () => makeHourlyUtcIso(DEFAULT_LAYER_TIME_KEY, cloudFrameIndex),
@@ -300,6 +302,18 @@ export function CesiumViewer() {
 
   useEffect(() => {
     if (!viewer) return;
+
+    const existing = precipitationLayersRef.current;
+    return () => {
+      for (const layer of existing.values()) {
+        layer.destroy();
+      }
+      existing.clear();
+    };
+  }, [viewer]);
+
+  useEffect(() => {
+    if (!viewer) return;
     if (!apiBaseUrl) return;
     const hasCloudLayer = layers.some((layer) => layer.type === 'cloud');
     if (!hasCloudLayer) return;
@@ -387,12 +401,49 @@ export function CesiumViewer() {
 
   useEffect(() => {
     if (!viewer) return;
+    if (!apiBaseUrl) return;
+
+    const existing = precipitationLayersRef.current;
+    const nextIds = new Set<string>();
+    const nextConfigs = layers.filter((layer) => layer.type === 'precipitation');
+
+    for (const config of nextConfigs) {
+      nextIds.add(config.id);
+
+      const params = {
+        id: config.id,
+        apiBaseUrl,
+        timeKey: DEFAULT_LAYER_TIME_KEY,
+        opacity: config.opacity,
+        visible: config.visible,
+        zIndex: config.zIndex,
+        threshold: config.threshold,
+      };
+
+      const current = existing.get(config.id);
+      if (current) {
+        current.update(params);
+      } else {
+        existing.set(config.id, new PrecipitationLayer(viewer, params));
+      }
+    }
+
+    for (const [id, layer] of existing.entries()) {
+      if (nextIds.has(id)) continue;
+      layer.destroy();
+      existing.delete(id);
+    }
+  }, [apiBaseUrl, layers, viewer]);
+
+  useEffect(() => {
+    if (!viewer) return;
 
     const sorted = [...layers].sort(sortByZIndex);
     for (const config of sorted) {
       const layer =
         temperatureLayersRef.current.get(config.id)?.layer ??
-        cloudLayersRef.current.get(config.id)?.layer;
+        cloudLayersRef.current.get(config.id)?.layer ??
+        precipitationLayersRef.current.get(config.id)?.layer;
       if (!layer) continue;
       viewer.imageryLayers.raiseToTop(layer);
     }
