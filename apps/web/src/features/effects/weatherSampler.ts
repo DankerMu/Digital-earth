@@ -14,6 +14,10 @@ export type WeatherSample = {
   temperatureC: number | null;
 };
 
+export type CloudSample = {
+  cloudCoverFraction: number | null;
+};
+
 export type TileTemplate = {
   urlTemplate: string;
   tileSize?: number;
@@ -22,6 +26,14 @@ export type TileTemplate = {
 export type WeatherSamplerConfig = {
   precipitation: TileTemplate;
   temperature: TileTemplate;
+  zoom: number;
+  levelZeroTilesX?: number;
+  levelZeroTilesY?: number;
+  fetchImageData?: (url: string, options: { signal?: AbortSignal }) => Promise<ImageData>;
+};
+
+export type CloudSamplerConfig = {
+  cloud: TileTemplate;
   zoom: number;
   levelZeroTilesX?: number;
   levelZeroTilesY?: number;
@@ -358,3 +370,57 @@ export function createWeatherSampler(config: WeatherSamplerConfig): {
   return { sample };
 }
 
+export function createCloudSampler(config: CloudSamplerConfig): {
+  sample: (options: { lon: number; lat: number; signal?: AbortSignal }) => Promise<CloudSample>;
+} {
+  const tileSize = config.cloud.tileSize ?? 256;
+  const levelZeroTilesX = config.levelZeroTilesX ?? 2;
+  const levelZeroTilesY = config.levelZeroTilesY ?? 1;
+  const fetchImageData = config.fetchImageData ?? defaultFetchImageData;
+
+  let cached: { url: string; image: ImageData } | null = null;
+
+  const getImage = async (
+    url: string,
+    cache: typeof cached,
+    signal: AbortSignal | undefined,
+  ): Promise<{ image: ImageData; cache: { url: string; image: ImageData } }> => {
+    if (cache?.url === url) return { image: cache.image, cache };
+    const image = await fetchImageData(url, { signal });
+    return { image, cache: { url, image } };
+  };
+
+  const sample = async (options: {
+    lon: number;
+    lat: number;
+    signal?: AbortSignal;
+  }): Promise<CloudSample> => {
+    const { lon, lat, signal } = options;
+    const { x, y } = tileXYForLonLatDegrees({
+      lon,
+      lat,
+      zoom: config.zoom,
+      levelZeroTilesX,
+      levelZeroTilesY,
+    });
+
+    const url = fillUrlTemplate(config.cloud.urlTemplate, { z: config.zoom, x, y });
+    const bounds = tileBoundsForXY({ x, y, zoom: config.zoom, levelZeroTilesX, levelZeroTilesY });
+    const px = pixelXYForLonLatDegrees({ lon, lat, bounds, tileSize });
+
+    const result = await getImage(url, cached, signal);
+    cached = result.cache;
+
+    const rgba = rgbaAt(result.image, px.x, px.y);
+
+    // Cloud tiles encode coverage as alpha in [0, 255] (0 is valid = clear sky).
+    // Treat fully transparent black as missing; some raster layers use rgba(0,0,0,0) for nodata.
+    if (rgba.a <= 0 && rgba.r === 0 && rgba.g === 0 && rgba.b === 0) {
+      return { cloudCoverFraction: null };
+    }
+
+    return { cloudCoverFraction: clamp01(rgba.a / 255) };
+  };
+
+  return { sample };
+}

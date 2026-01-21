@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -62,10 +62,21 @@ const weatherSamplerMocks = vi.hoisted(() => {
   };
 });
 
+const cloudSamplerMocks = vi.hoisted(() => {
+  return {
+    sample: vi.fn(async (): Promise<{ cloudCoverFraction: number | null }> => ({
+      cloudCoverFraction: null,
+    })),
+  };
+});
+
 vi.mock('../effects/weatherSampler', () => {
   return {
     createWeatherSampler: vi.fn(() => ({
       sample: weatherSamplerMocks.sample,
+    })),
+    createCloudSampler: vi.fn(() => ({
+      sample: cloudSamplerMocks.sample,
     })),
   };
 });
@@ -78,6 +89,10 @@ vi.mock('cesium', () => {
     SCENE3D: 3
   };
 
+  const ScreenSpaceEventType = {
+    LEFT_CLICK: 0,
+  };
+
   const createWorldTerrainAsync = vi.fn(async () => ({ terrain: true }));
   const EllipsoidTerrainProvider = vi.fn(function () {
     return { ellipsoidTerrain: true };
@@ -86,6 +101,11 @@ vi.mock('cesium', () => {
   const GeographicTilingScheme = vi.fn(() => ({ kind: 'geographic' }));
 
   let morphCompleteHandler: (() => void) | null = null;
+  let leftClickHandler: ((movement: { position?: unknown }) => void) | null = null;
+
+  const Cartographic = {
+    fromCartesian: vi.fn(() => ({ longitude: 0, latitude: 0 })),
+  };
 
   const makeEvent = () => {
     const handlers = new Set<() => void>();
@@ -113,6 +133,7 @@ vi.mock('cesium', () => {
     computeViewRectangle: vi.fn(() => null),
     setView: vi.fn(),
     flyTo: vi.fn(),
+    pickEllipsoid: vi.fn(() => ({ pickedEllipsoid: true })),
     changed: makeEvent(),
     moveEnd: makeEvent(),
   };
@@ -131,6 +152,21 @@ vi.mock('cesium', () => {
     removeEventListener: vi.fn()
   };
 
+  const screenSpaceEventHandler = {
+    setInputAction: vi.fn(
+      (handler: (movement: { position?: unknown }) => void, type: unknown) => {
+        if (type === ScreenSpaceEventType.LEFT_CLICK) {
+          leftClickHandler = handler;
+        }
+      },
+    ),
+    removeInputAction: vi.fn((type: unknown) => {
+      if (type === ScreenSpaceEventType.LEFT_CLICK) {
+        leftClickHandler = null;
+      }
+    }),
+  };
+
   const viewer = {
     camera,
     homeButton: {
@@ -140,6 +176,7 @@ vi.mock('cesium', () => {
         }
       }
     },
+    screenSpaceEventHandler,
     imageryLayers: {
       get: vi.fn(() => baseLayer),
       remove: vi.fn(),
@@ -162,6 +199,10 @@ vi.mock('cesium', () => {
       morphToColumbusView: vi.fn(() => {
         viewer.scene.mode = SceneMode.COLUMBUS_VIEW;
       }),
+      globe: {
+        ellipsoid: { kind: 'ellipsoid' },
+      },
+      pickPosition: vi.fn(() => ({ pickedPosition: true })),
       screenSpaceCameraController: {
         minimumZoomDistance: 0,
         maximumZoomDistance: 0
@@ -180,6 +221,8 @@ vi.mock('cesium', () => {
 
   return {
     SceneMode,
+    ScreenSpaceEventType,
+    Cartographic,
     Viewer: vi.fn(function () {
       return viewer;
     }),
@@ -208,6 +251,9 @@ vi.mock('cesium', () => {
     __mocks: {
       getMorphCompleteHandler: () => morphCompleteHandler,
       getCamera: () => camera,
+      triggerLeftClick: (movement: { position?: unknown }) => {
+        leftClickHandler?.(movement);
+      },
     },
     createWorldTerrainAsync,
     EllipsoidTerrainProvider,
@@ -862,5 +908,105 @@ describe('CesiumViewer', () => {
     expect(windCall?.[0]).toContain(
       'http://api.test/api/v1/vectors/cldas/2024-01-15T00%3A00%3A00Z/wind?bbox=10,20,30,40&density=12',
     );
+  });
+
+  it('opens sampling card and displays sampled values on map click', async () => {
+    const user = userEvent.setup();
+
+    weatherSamplerMocks.sample.mockResolvedValueOnce({
+      precipitationMm: 12.3,
+      precipitationIntensity: 0.1,
+      precipitationKind: 'rain',
+      temperatureC: 5,
+    });
+    cloudSamplerMocks.sample.mockResolvedValueOnce({ cloudCoverFraction: 0.33 });
+
+    useLayerManagerStore.setState({
+      layers: [
+        {
+          id: 'temperature',
+          type: 'temperature',
+          variable: 'TMP',
+          opacity: 1,
+          visible: true,
+          zIndex: 10,
+        },
+        {
+          id: 'precipitation',
+          type: 'precipitation',
+          variable: 'precipitation',
+          opacity: 1,
+          visible: false,
+          zIndex: 30,
+        },
+        {
+          id: 'cloud',
+          type: 'cloud',
+          variable: 'tcc',
+          opacity: 0.65,
+          visible: true,
+          zIndex: 20,
+        },
+        {
+          id: 'wind',
+          type: 'wind',
+          variable: 'wind',
+          opacity: 0.7,
+          visible: true,
+          zIndex: 15,
+        },
+      ],
+    });
+
+    const cesium = await import('cesium');
+    (
+      cesium as unknown as {
+        Cartographic: { fromCartesian: ReturnType<typeof vi.fn> };
+        __mocks: { getCamera: () => { computeViewRectangle: ReturnType<typeof vi.fn> } };
+      }
+    ).Cartographic.fromCartesian.mockReturnValue({
+      longitude: 120,
+      latitude: 30,
+    });
+    (
+      cesium as unknown as {
+        __mocks: { getCamera: () => { computeViewRectangle: ReturnType<typeof vi.fn> } };
+      }
+    ).__mocks.getCamera().computeViewRectangle.mockReturnValue({
+      west: 10,
+      south: 20,
+      east: 30,
+      north: 40,
+    });
+
+    render(<CesiumViewer />);
+
+    await waitFor(() => expect(vi.mocked(Viewer)).toHaveBeenCalledTimes(1));
+
+    await waitFor(() =>
+      expect(windArrowsMocks.update).toHaveBeenCalledWith(
+        expect.objectContaining({ enabled: true }),
+      ),
+    );
+
+    act(() => {
+      (
+        cesium as unknown as {
+          __mocks: { triggerLeftClick: (movement: { position?: unknown }) => void };
+        }
+      ).__mocks.triggerLeftClick({ position: { x: 12, y: 34 } });
+    });
+
+    const card = await screen.findByLabelText('Sampling data');
+    const queries = within(card);
+
+    await waitFor(() => expect(queries.getByText('5.0')).toBeInTheDocument());
+    expect(queries.getByText('12.3')).toBeInTheDocument();
+    expect(queries.getByText(/2\.5/)).toBeInTheDocument();
+    expect(queries.getByText(/143°/)).toBeInTheDocument();
+    expect(queries.getByText('33')).toBeInTheDocument();
+
+    await user.click(queries.getByRole('button', { name: 'Close sampling card' }));
+    await waitFor(() => expect(screen.queryByLabelText('Sampling data')).not.toBeInTheDocument());
   });
 });
