@@ -597,6 +597,10 @@ export function CesiumViewer() {
       const picked = pickLocation(position);
       if (!picked) return;
 
+      // Cancel any ongoing sampling and close the card to avoid conflict with double-click
+      samplingAbortRef.current?.abort();
+      closeSamplingCard();
+
       enterLocal({
         lon: picked.lon,
         lat: picked.lat,
@@ -671,7 +675,7 @@ export function CesiumViewer() {
       handler.removeInputAction?.(ScreenSpaceEventType.LEFT_CLICK, KeyboardEventModifier.CTRL);
       handler.removeInputAction?.(ScreenSpaceEventType.LEFT_DOUBLE_CLICK);
     };
-  }, [enterLocal, openSamplingCard, setSamplingData, setSamplingError, viewer]);
+  }, [closeSamplingCard, enterLocal, openSamplingCard, setSamplingData, setSamplingError, viewer]);
 
   useEffect(() => {
     if (!viewer) return;
