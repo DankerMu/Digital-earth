@@ -37,11 +37,14 @@ import { WindArrows, windArrowDensityForCameraHeight } from '../effects/WindArro
 import { createCloudSampler, createWeatherSampler } from '../effects/weatherSampler';
 import { CloudLayer } from '../layers/CloudLayer';
 import { PrecipitationLayer } from '../layers/PrecipitationLayer';
+import { SnowDepthLayer } from '../layers/SnowDepthLayer';
 import { TemperatureLayer } from '../layers/TemperatureLayer';
+import { alignToMostRecentHourTimeKey, normalizeSnowDepthVariable } from '../layers/cldasTime';
 import {
   buildCldasTileUrlTemplate,
   buildCloudTileUrlTemplate,
   buildPrecipitationTileUrlTemplate,
+  probeCldasTileAvailability,
   fetchWindVectorData,
   type WindVector,
 } from '../layers/layersApi';
@@ -87,6 +90,7 @@ const LAYER_GLOBAL_SHELL_HEIGHT_METERS_BY_LAYER_TYPE: Record<LayerType, number> 
   cloud: 5000,
   precipitation: 3000,
   wind: 8000,
+  'snow-depth': 2500,
 };
 
 type LongitudeInterval = { start: number; end: number };
@@ -394,6 +398,7 @@ export function CesiumViewer() {
   const [mapConfig, setMapConfig] = useState<MapConfig | undefined>(undefined);
   const [apiBaseUrl, setApiBaseUrl] = useState<string | null>(null);
   const [terrainNotice, setTerrainNotice] = useState<string | null>(null);
+  const [monitoringNotice, setMonitoringNotice] = useState<string | null>(null);
   const basemapId = useBasemapStore((state) => state.basemapId);
   const sceneModeId = useSceneModeStore((state) => state.sceneModeId);
   const viewModeRoute = useViewModeStore((state) => state.route);
@@ -430,6 +435,7 @@ export function CesiumViewer() {
   const temperatureLayersRef = useRef<Map<string, TemperatureLayer>>(new Map());
   const cloudLayersRef = useRef<Map<string, CloudLayer>>(new Map());
   const precipitationLayersRef = useRef<Map<string, PrecipitationLayer>>(new Map());
+  const snowDepthLayersRef = useRef<Map<string, SnowDepthLayer>>(new Map());
   const precipitationParticlesRef = useRef<PrecipitationParticles | null>(null);
   const windArrowsRef = useRef<WindArrows | null>(null);
   const windAbortRef = useRef<AbortController | null>(null);
@@ -443,6 +449,13 @@ export function CesiumViewer() {
   const cloudSamplerRef = useRef<ReturnType<typeof createCloudSampler> | null>(null);
   const samplingAbortRef = useRef<AbortController | null>(null);
   const [cloudFrameIndex, setCloudFrameIndex] = useState(0);
+  const [eventMonitoringTimeKey, setEventMonitoringTimeKey] = useState<string | null>(null);
+  const [eventMonitoringRectangle, setEventMonitoringRectangle] = useState<{
+    west: number;
+    south: number;
+    east: number;
+    north: number;
+  } | null>(null);
   const localModeSnapshotRef = useRef<ModeSnapshot | null>(null);
   const pendingLocalCameraRestoreRef = useRef<SavedCameraState | null>(null);
   const previousRouteRef = useRef<ViewModeRoute | null>(null);
@@ -509,6 +522,13 @@ export function CesiumViewer() {
     if (activeLayer?.type === 'cloud') return cloudTimeKey;
     return DEFAULT_LAYER_TIME_KEY;
   }, [activeLayer, cloudTimeKey]);
+
+  const snowDepthTimeKey = useMemo(() => {
+    if (viewModeRoute.viewModeId === 'event' && eventMonitoringTimeKey) {
+      return eventMonitoringTimeKey;
+    }
+    return DEFAULT_LAYER_TIME_KEY;
+  }, [eventMonitoringTimeKey, viewModeRoute.viewModeId]);
 
   const layerGlobalLayerId =
     viewModeRoute.viewModeId === 'layerGlobal' ? viewModeRoute.layerId : null;
@@ -925,6 +945,11 @@ export function CesiumViewer() {
     return visible ?? layers.find((layer) => layer.type === 'precipitation') ?? null;
   }, [layers]);
 
+  const snowDepthLayerConfig = useMemo(() => {
+    const visible = layers.find((layer) => layer.type === 'snow-depth' && layer.visible);
+    return visible ?? layers.find((layer) => layer.type === 'snow-depth') ?? null;
+  }, [layers]);
+
   const windLayerConfig = useMemo(() => {
     const visible = layers.find((layer) => layer.type === 'wind' && layer.visible);
     return visible ?? layers.find((layer) => layer.type === 'wind') ?? null;
@@ -1204,6 +1229,9 @@ export function CesiumViewer() {
         eventEntitiesRef.current = [];
         viewer.scene.requestRender();
       }
+
+      setEventMonitoringTimeKey(null);
+      setEventMonitoringRectangle(null);
       return;
     }
 
@@ -1250,6 +1278,18 @@ export function CesiumViewer() {
         const hazards = product.hazards;
         const destinationBBox = bboxUnion(hazards.map((hazard) => hazard.bbox));
 
+        setEventMonitoringTimeKey(product.valid_from);
+        if (destinationBBox) {
+          setEventMonitoringRectangle({
+            west: destinationBBox.min_x,
+            south: destinationBBox.min_y,
+            east: destinationBBox.max_x,
+            north: destinationBBox.max_y,
+          });
+        } else {
+          setEventMonitoringRectangle(null);
+        }
+
         const nextEntities: Entity[] = [];
 
         for (const hazard of hazards) {
@@ -1289,6 +1329,8 @@ export function CesiumViewer() {
         if (controller.signal.aborted) return;
         if (eventEntryKeyRef.current !== key) return;
         console.warn('[Digital Earth] failed to plot event polygon', error);
+        setEventMonitoringTimeKey(null);
+        setEventMonitoringRectangle(null);
         viewer.scene.requestRender();
       } finally {
         if (eventAbortRef.current === controller) eventAbortRef.current = null;
@@ -1297,6 +1339,41 @@ export function CesiumViewer() {
 
     return () => controller.abort();
   }, [apiBaseUrl, maybeApplyEventAutoLayerTemplate, sceneModeId, viewModeRoute, viewer]);
+
+  useEffect(() => {
+    if (!apiBaseUrl) {
+      setMonitoringNotice(null);
+      return;
+    }
+    if (!snowDepthLayerConfig?.visible) {
+      setMonitoringNotice(null);
+      return;
+    }
+
+    const controller = new AbortController();
+    const timeKey = alignToMostRecentHourTimeKey(snowDepthTimeKey);
+    const variable = normalizeSnowDepthVariable(snowDepthLayerConfig.variable);
+
+    void probeCldasTileAvailability({
+      apiBaseUrl,
+      timeKey,
+      variable,
+      signal: controller.signal,
+    }).then((result) => {
+      if (controller.signal.aborted) return;
+      if (result.status === 'missing') {
+        setMonitoringNotice('暂无雪深监测数据');
+        return;
+      }
+      if (result.status === 'error') {
+        setMonitoringNotice('雪深监测数据加载失败');
+        return;
+      }
+      setMonitoringNotice(null);
+    });
+
+    return () => controller.abort();
+  }, [apiBaseUrl, snowDepthLayerConfig?.variable, snowDepthLayerConfig?.visible, snowDepthTimeKey]);
 
   useEffect(() => {
     if (!viewer) return;
@@ -1977,6 +2054,43 @@ export function CesiumViewer() {
 
   useEffect(() => {
     if (!viewer) return;
+    if (!apiBaseUrl) return;
+
+    const existing = snowDepthLayersRef.current;
+    const nextIds = new Set<string>();
+    const nextConfigs = layers.filter((layer) => layer.type === 'snow-depth');
+
+    for (const config of nextConfigs) {
+      nextIds.add(config.id);
+
+      const params = {
+        id: config.id,
+        apiBaseUrl,
+        timeKey: snowDepthTimeKey,
+        variable: config.variable,
+        opacity: config.opacity,
+        visible: config.visible,
+        zIndex: config.zIndex,
+        rectangle: viewModeRoute.viewModeId === 'event' ? eventMonitoringRectangle : null,
+      };
+
+      const current = existing.get(config.id);
+      if (current) {
+        current.update(params);
+      } else {
+        existing.set(config.id, new SnowDepthLayer(viewer, params));
+      }
+    }
+
+    for (const [id, layer] of existing.entries()) {
+      if (nextIds.has(id)) continue;
+      layer.destroy();
+      existing.delete(id);
+    }
+  }, [apiBaseUrl, eventMonitoringRectangle, layers, snowDepthTimeKey, viewModeRoute.viewModeId, viewer]);
+
+  useEffect(() => {
+    if (!viewer) return;
 
     const sorted = [...layers].sort(sortByZIndex);
     let didReorder = false;
@@ -1984,7 +2098,8 @@ export function CesiumViewer() {
       const layer =
         temperatureLayersRef.current.get(config.id)?.layer ??
         cloudLayersRef.current.get(config.id)?.layer ??
-        precipitationLayersRef.current.get(config.id)?.layer;
+        precipitationLayersRef.current.get(config.id)?.layer ??
+        snowDepthLayersRef.current.get(config.id)?.layer;
       if (!layer) continue;
       viewer.imageryLayers.raiseToTop(layer);
       didReorder = true;
@@ -2006,6 +2121,12 @@ export function CesiumViewer() {
           <div className="terrainNoticePanel" role="alert" aria-label="terrain-notice">
             <div className="terrainNoticeTitle">地形</div>
             <div className="terrainNoticeMessage">{terrainNotice}</div>
+          </div>
+        ) : null}
+        {monitoringNotice ? (
+          <div className="terrainNoticePanel" role="alert" aria-label="monitoring-notice">
+            <div className="terrainNoticeTitle">监测</div>
+            <div className="terrainNoticeMessage">{monitoringNotice}</div>
           </div>
         ) : null}
       </div>

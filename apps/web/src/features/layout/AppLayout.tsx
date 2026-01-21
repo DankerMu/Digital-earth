@@ -42,6 +42,14 @@ const DEFAULT_LAYERS: LayerConfig[] = [
     visible: false,
     zIndex: 40,
   },
+  {
+    id: 'snow-depth',
+    type: 'snow-depth',
+    variable: 'SNOD',
+    opacity: 0.75,
+    visible: false,
+    zIndex: 50,
+  },
 ];
 
 export function AppLayout() {

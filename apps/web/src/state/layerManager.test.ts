@@ -612,6 +612,7 @@ describe('isLayerType', () => {
     expect(isLayerType('cloud')).toBe(true);
     expect(isLayerType('precipitation')).toBe(true);
     expect(isLayerType('wind')).toBe(true);
+    expect(isLayerType('snow-depth')).toBe(true);
 
     expect(isLayerType('nope')).toBe(false);
     expect(isLayerType(123)).toBe(false);
