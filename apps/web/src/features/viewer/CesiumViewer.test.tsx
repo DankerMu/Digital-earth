@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -478,38 +478,48 @@ describe('CesiumViewer', () => {
 
   it('refreshes cloud tiles over time', async () => {
     const CLOUD_LAYER_REFRESH_INTERVAL_MS = 5 * 60 * 1000;
+    let triggerRefresh: (() => void) | null = null;
     const setIntervalSpy = vi
       .spyOn(window, 'setInterval')
       .mockImplementation((handler: TimerHandler, timeout?: number, ...args: unknown[]) => {
         void args;
         if (timeout === CLOUD_LAYER_REFRESH_INTERVAL_MS && typeof handler === 'function') {
-          handler();
+          triggerRefresh = handler;
         }
         return 1 as unknown as ReturnType<typeof window.setInterval>;
       });
 
-    useLayerManagerStore.setState({
-      layers: [
-        {
-          id: 'cloud',
-          type: 'cloud',
-          variable: 'tcc',
-          opacity: 0.65,
-          visible: true,
-          zIndex: 20,
-        },
-      ],
-    });
+    try {
+      useLayerManagerStore.setState({
+        layers: [
+          {
+            id: 'cloud',
+            type: 'cloud',
+            variable: 'tcc',
+            opacity: 0.65,
+            visible: true,
+            zIndex: 20,
+          },
+        ],
+      });
 
-    render(<CesiumViewer />);
+      render(<CesiumViewer />);
 
-    await waitFor(() => expect(vi.mocked(Viewer)).toHaveBeenCalledTimes(1));
+      await waitFor(() => expect(vi.mocked(Viewer)).toHaveBeenCalledTimes(1));
 
-    const viewer = vi.mocked(Viewer).mock.results[0].value;
+      const viewer = vi.mocked(Viewer).mock.results[0].value;
 
-    await waitFor(() => expect(viewer.imageryLayers.add).toHaveBeenCalledTimes(2));
-    expect(viewer.imageryLayers.remove).toHaveBeenCalledTimes(1);
+      await waitFor(() => expect(viewer.imageryLayers.add).toHaveBeenCalledTimes(1));
 
-    setIntervalSpy.mockRestore();
+      await waitFor(() => expect(triggerRefresh).not.toBeNull());
+      act(() => {
+        triggerRefresh?.();
+      });
+
+      await waitFor(() => expect(viewer.imageryLayers.add).toHaveBeenCalledTimes(2));
+      expect(viewer.imageryLayers.remove).toHaveBeenCalledTimes(1);
+    } finally {
+      setIntervalSpy.mockRestore();
+    }
   });
 });
