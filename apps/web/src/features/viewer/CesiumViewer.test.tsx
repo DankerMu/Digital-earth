@@ -484,7 +484,7 @@ describe('CesiumViewer', () => {
       .mockImplementation((handler: TimerHandler, timeout?: number, ...args: unknown[]) => {
         void args;
         if (timeout === CLOUD_LAYER_REFRESH_INTERVAL_MS && typeof handler === 'function') {
-          triggerRefresh = handler;
+          triggerRefresh = handler as () => void;
         }
         return 1 as unknown as ReturnType<typeof window.setInterval>;
       });
