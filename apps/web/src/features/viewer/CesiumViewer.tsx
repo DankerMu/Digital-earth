@@ -10,6 +10,7 @@ import {
   Ion,
   KeyboardEventModifier,
   Math as CesiumMath,
+  SceneMode,
   ScreenSpaceEventType,
   UrlTemplateImageryProvider,
   Viewer,
@@ -865,7 +866,8 @@ export function CesiumViewer() {
       useLayerManagerStore.getState().setLayerVisible(targetLayer.id, true);
     }
 
-    const destination = Cartesian3.fromDegrees(0, 0, shellHeightMeters);
+    const heightOffsetMeters = Math.max(shellHeightMeters * 0.5, 1000);
+    const destination = Cartesian3.fromDegrees(0, 0, shellHeightMeters + heightOffsetMeters);
     viewer.camera.flyTo({
       destination,
       orientation: {
@@ -880,6 +882,7 @@ export function CesiumViewer() {
   useEffect(() => {
     if (!viewer) return;
     if (layerGlobalShellHeightMeters == null) return;
+    if (viewer.scene.mode !== SceneMode.SCENE3D) return;
 
     const globe = viewer.scene.globe;
     const baseEllipsoid = globe.ellipsoid;
@@ -901,7 +904,7 @@ export function CesiumViewer() {
       viewer.terrainProvider = baseTerrainProvider;
       viewer.scene.requestRender();
     };
-  }, [layerGlobalShellHeightMeters, viewer]);
+  }, [layerGlobalShellHeightMeters, sceneModeId, viewer]);
 
   useEffect(() => {
     if (!viewer) return;
@@ -1481,6 +1484,7 @@ export function CesiumViewer() {
     if (!viewer) return;
 
     const sorted = [...layers].sort(sortByZIndex);
+    let didReorder = false;
     for (const config of sorted) {
       const layer =
         temperatureLayersRef.current.get(config.id)?.layer ??
@@ -1488,6 +1492,10 @@ export function CesiumViewer() {
         precipitationLayersRef.current.get(config.id)?.layer;
       if (!layer) continue;
       viewer.imageryLayers.raiseToTop(layer);
+      didReorder = true;
+    }
+    if (didReorder) {
+      viewer.scene.requestRender();
     }
   }, [apiBaseUrl, cloudTimeKey, layers, viewer]);
 

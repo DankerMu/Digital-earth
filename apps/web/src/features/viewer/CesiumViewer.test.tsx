@@ -1218,7 +1218,7 @@ describe('CesiumViewer', () => {
     expect(viewer.camera.flyTo).toHaveBeenCalledTimes(callsAfterForward);
   });
 
-  it('flies camera to shell height and ensures the selected layer is visible in layerGlobal mode', async () => {
+  it('flies camera above the shell and ensures the selected layer is visible in layerGlobal mode', async () => {
     useLayerManagerStore.setState({
       layers: [
         {
@@ -1254,7 +1254,7 @@ describe('CesiumViewer', () => {
       }),
     );
 
-    expect(vi.mocked(Cartesian3.fromDegrees)).toHaveBeenCalledWith(0, 0, 5000);
+    expect(vi.mocked(Cartesian3.fromDegrees)).toHaveBeenCalledWith(0, 0, 7500);
 
     await waitFor(() => {
       expect(useLayerManagerStore.getState().layers[0]?.visible).toBe(true);
@@ -1277,6 +1277,46 @@ describe('CesiumViewer', () => {
       }),
     );
   });
+
+  it.each(['2d', 'columbus'] as const)(
+    'does not override the globe ellipsoid in %s scene mode',
+    async (sceneModeId) => {
+      useSceneModeStore.setState({ sceneModeId });
+      useLayerManagerStore.setState({
+        layers: [
+          {
+            id: 'cloud',
+            type: 'cloud',
+            variable: 'tcc',
+            opacity: 0.8,
+            visible: true,
+            zIndex: 10,
+          },
+        ],
+      });
+      useViewModeStore.setState({
+        route: { viewModeId: 'layerGlobal', layerId: 'cloud' },
+        history: [],
+        saved: {},
+      });
+
+      render(<CesiumViewer />);
+
+      await waitFor(() => expect(vi.mocked(Viewer)).toHaveBeenCalledTimes(1));
+      const viewer = vi.mocked(Viewer).mock.results[0].value;
+
+      await waitFor(() => {
+        const radii = (
+          viewer.scene.globe.ellipsoid as { radii?: { x?: number; y?: number; z?: number } }
+        ).radii;
+        expect(radii?.x).toBe(10);
+        expect(radii?.y).toBe(10);
+        expect(radii?.z).toBe(9);
+      });
+
+      expect(vi.mocked(EllipsoidTerrainProvider)).not.toHaveBeenCalled();
+    },
+  );
 
   it('restores the globe ellipsoid when leaving layerGlobal mode', async () => {
     useLayerManagerStore.setState({
@@ -1355,6 +1395,6 @@ describe('CesiumViewer', () => {
         }),
       );
     });
-    expect(vi.mocked(Cartesian3.fromDegrees)).toHaveBeenCalledWith(0, 0, 5000);
+    expect(vi.mocked(Cartesian3.fromDegrees)).toHaveBeenCalledWith(0, 0, 7500);
   });
 });

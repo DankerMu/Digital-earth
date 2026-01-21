@@ -102,6 +102,8 @@ export function buildCldasTileUrlTemplate(options: CldasTileUrlTemplateOptions):
   const origin = resolveApiOrigin(options.apiBaseUrl);
   const timeKey = encodeURIComponent(options.timeKey);
   const variable = encodeURIComponent(options.variable);
+  // CLDAS tiles are served in an XYZ-style scheme (y=0 at the north). If the backend ever
+  // switches to a TMS (south-origin) scheme, use Cesium's `{reverseY}` placeholder instead.
   return `${origin}/api/v1/tiles/cldas/${timeKey}/${variable}/{z}/{x}/{y}.png`;
 }
 
