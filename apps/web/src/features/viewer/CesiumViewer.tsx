@@ -20,11 +20,17 @@ import { useLayerManagerStore } from '../../state/layerManager';
 import { usePerformanceModeStore } from '../../state/performanceMode';
 import { useSceneModeStore } from '../../state/sceneMode';
 import { PrecipitationParticles } from '../effects/PrecipitationParticles';
+import { WindArrows, windArrowDensityForCameraHeight } from '../effects/WindArrows';
 import { createWeatherSampler } from '../effects/weatherSampler';
 import { CloudLayer } from '../layers/CloudLayer';
 import { PrecipitationLayer } from '../layers/PrecipitationLayer';
 import { TemperatureLayer } from '../layers/TemperatureLayer';
-import { buildCldasTileUrlTemplate, buildPrecipitationTileUrlTemplate } from '../layers/layersApi';
+import {
+  buildCldasTileUrlTemplate,
+  buildPrecipitationTileUrlTemplate,
+  fetchWindVectorData,
+  type WindVector,
+} from '../layers/layersApi';
 import { BasemapSelector } from './BasemapSelector';
 import { CompassControl } from './CompassControl';
 import { EventLayersToggle } from './EventLayersToggle';
@@ -48,6 +54,8 @@ const CLOUD_LAYER_FRAME_COUNT = 24;
 const CLOUD_LAYER_FRAME_STEP_MS = 60 * 60 * 1000;
 const WEATHER_SAMPLE_THROTTLE_MS = 750;
 const WEATHER_SAMPLE_ZOOM = 8;
+const WIND_VECTOR_THROTTLE_MS = 800;
+const WIND_ARROWS_MAX_COUNT = 500;
 
 function toUtcIsoNoMillis(date: Date): string {
   return date.toISOString().replace(/\.\d{3}Z$/, 'Z');
@@ -92,6 +100,11 @@ export function CesiumViewer() {
   const cloudLayersRef = useRef<Map<string, CloudLayer>>(new Map());
   const precipitationLayersRef = useRef<Map<string, PrecipitationLayer>>(new Map());
   const precipitationParticlesRef = useRef<PrecipitationParticles | null>(null);
+  const windArrowsRef = useRef<WindArrows | null>(null);
+  const windAbortRef = useRef<AbortController | null>(null);
+  const windVectorsRef = useRef<WindVector[]>([]);
+  const windViewKeyRef = useRef<string | null>(null);
+  const windStyleKeyRef = useRef<string | null>(null);
   const weatherSamplerRef = useRef<ReturnType<typeof createWeatherSampler> | null>(null);
   const weatherAbortRef = useRef<AbortController | null>(null);
   const [cloudFrameIndex, setCloudFrameIndex] = useState(0);
@@ -335,9 +348,40 @@ export function CesiumViewer() {
     };
   }, [viewer]);
 
+  useEffect(() => {
+    if (!viewer) return;
+
+    windAbortRef.current?.abort();
+    windAbortRef.current = null;
+    windVectorsRef.current = [];
+    windViewKeyRef.current = null;
+    windStyleKeyRef.current = null;
+
+    const windArrows = new WindArrows(viewer, {
+      maxArrows: WIND_ARROWS_MAX_COUNT,
+      maxArrowsPerformance: 0,
+    });
+    windArrowsRef.current = windArrows;
+
+    return () => {
+      windAbortRef.current?.abort();
+      windAbortRef.current = null;
+      windVectorsRef.current = [];
+      windViewKeyRef.current = null;
+      windStyleKeyRef.current = null;
+      windArrows.destroy();
+      windArrowsRef.current = null;
+    };
+  }, [viewer]);
+
   const precipitationLayerConfig = useMemo(() => {
     const visible = layers.find((layer) => layer.type === 'precipitation' && layer.visible);
     return visible ?? layers.find((layer) => layer.type === 'precipitation') ?? null;
+  }, [layers]);
+
+  const windLayerConfig = useMemo(() => {
+    const visible = layers.find((layer) => layer.type === 'wind' && layer.visible);
+    return visible ?? layers.find((layer) => layer.type === 'wind') ?? null;
   }, [layers]);
 
   const temperatureLayerConfig = useMemo(() => {
@@ -371,6 +415,203 @@ export function CesiumViewer() {
       temperature: { urlTemplate: temperatureTemplate },
     });
   }, [apiBaseUrl, precipitationLayerConfig, temperatureLayerConfig]);
+
+  useEffect(() => {
+    if (!viewer) return;
+
+    const windArrows = windArrowsRef.current;
+    if (!windArrows) return;
+
+    let timeoutId: number | null = null;
+    let lastSampleAt = 0;
+    let pending = false;
+
+    const clearTimer = () => {
+      if (timeoutId == null) return;
+      window.clearTimeout(timeoutId);
+      timeoutId = null;
+    };
+
+    const cancelInFlight = () => {
+      windAbortRef.current?.abort();
+      windAbortRef.current = null;
+    };
+
+    const disableArrows = () => {
+      cancelInFlight();
+      windVectorsRef.current = [];
+      windViewKeyRef.current = null;
+      windStyleKeyRef.current = null;
+      windArrows.update({
+        enabled: false,
+        opacity: windLayerConfig?.opacity ?? 1,
+        vectors: [],
+        performanceModeEnabled,
+      });
+    };
+
+    const getCameraHeightMeters = (): number | null => {
+      const camera = viewer.camera as unknown as { positionCartographic?: { height?: number } };
+      const height = camera.positionCartographic?.height;
+      if (typeof height !== 'number' || !Number.isFinite(height)) return null;
+      return height;
+    };
+
+    const requestWindVectors = async (options: {
+      bbox: { west: number; south: number; east: number; north: number };
+      density: number;
+      signal: AbortSignal;
+    }): Promise<WindVector[]> => {
+      if (options.bbox.east < options.bbox.west) {
+        const [first, second] = await Promise.all([
+          fetchWindVectorData({
+            apiBaseUrl: apiBaseUrl ?? '',
+            timeKey: DEFAULT_LAYER_TIME_KEY,
+            bbox: { ...options.bbox, east: 180 },
+            density: options.density,
+            signal: options.signal,
+          }),
+          fetchWindVectorData({
+            apiBaseUrl: apiBaseUrl ?? '',
+            timeKey: DEFAULT_LAYER_TIME_KEY,
+            bbox: { ...options.bbox, west: -180 },
+            density: options.density,
+            signal: options.signal,
+          }),
+        ]);
+        return [...first.vectors, ...second.vectors];
+      }
+
+      const data = await fetchWindVectorData({
+        apiBaseUrl: apiBaseUrl ?? '',
+        timeKey: DEFAULT_LAYER_TIME_KEY,
+        bbox: options.bbox,
+        density: options.density,
+        signal: options.signal,
+      });
+      return data.vectors;
+    };
+
+    const runUpdate = async () => {
+      clearTimer();
+
+      const windVisible = windLayerConfig?.visible === true;
+      if (!apiBaseUrl || !windLayerConfig || !windVisible || performanceModeEnabled) {
+        disableArrows();
+        return;
+      }
+
+      const rectangle = viewer.camera.computeViewRectangle();
+      if (!rectangle) {
+        disableArrows();
+        return;
+      }
+
+      const bboxRaw = {
+        west: CesiumMath.toDegrees(rectangle.west),
+        south: CesiumMath.toDegrees(rectangle.south),
+        east: CesiumMath.toDegrees(rectangle.east),
+        north: CesiumMath.toDegrees(rectangle.north),
+      };
+
+      if (!Object.values(bboxRaw).every((value) => Number.isFinite(value))) {
+        disableArrows();
+        return;
+      }
+
+      const bbox = {
+        west: Math.round(bboxRaw.west * 100) / 100,
+        south: Math.round(bboxRaw.south * 100) / 100,
+        east: Math.round(bboxRaw.east * 100) / 100,
+        north: Math.round(bboxRaw.north * 100) / 100,
+      };
+
+      const density = windArrowDensityForCameraHeight({
+        cameraHeightMeters: getCameraHeightMeters(),
+        performanceModeEnabled,
+      });
+
+      const viewKey = `${DEFAULT_LAYER_TIME_KEY}:${density}:${bbox.west},${bbox.south},${bbox.east},${bbox.north}`;
+      const styleKey = `${windLayerConfig.opacity}:${windVisible}:${performanceModeEnabled}`;
+
+      if (windViewKeyRef.current === viewKey) {
+        if (windStyleKeyRef.current !== styleKey && windVectorsRef.current.length > 0) {
+          windStyleKeyRef.current = styleKey;
+          windArrows.update({
+            enabled: true,
+            opacity: windLayerConfig.opacity,
+            vectors: windVectorsRef.current,
+            performanceModeEnabled,
+          });
+        }
+        return;
+      }
+
+      windViewKeyRef.current = viewKey;
+      windStyleKeyRef.current = styleKey;
+
+      cancelInFlight();
+      const controller = new AbortController();
+      windAbortRef.current = controller;
+
+      try {
+        const vectors = await requestWindVectors({
+          bbox,
+          density,
+          signal: controller.signal,
+        });
+        if (controller.signal.aborted) return;
+        windVectorsRef.current = vectors;
+        windArrows.update({
+          enabled: true,
+          opacity: windLayerConfig.opacity,
+          vectors,
+          performanceModeEnabled,
+        });
+      } catch (error) {
+        if (controller.signal.aborted) return;
+        console.warn('[Digital Earth] failed to fetch wind vectors', error);
+        disableArrows();
+      }
+    };
+
+    const scheduleUpdate = () => {
+      const now = Date.now();
+      const elapsed = now - lastSampleAt;
+
+      if (elapsed >= WIND_VECTOR_THROTTLE_MS && timeoutId == null) {
+        lastSampleAt = now;
+        void runUpdate();
+        return;
+      }
+
+      pending = true;
+      if (timeoutId != null) return;
+      timeoutId = window.setTimeout(() => {
+        timeoutId = null;
+        if (!pending) return;
+        pending = false;
+        lastSampleAt = Date.now();
+        void runUpdate();
+      }, Math.max(0, WIND_VECTOR_THROTTLE_MS - elapsed));
+    };
+
+    const camera = viewer.camera as unknown as {
+      changed?: { addEventListener?: (handler: () => void) => void; removeEventListener?: (handler: () => void) => void };
+      moveEnd?: { addEventListener?: (handler: () => void) => void; removeEventListener?: (handler: () => void) => void };
+    };
+
+    camera.changed?.addEventListener?.(scheduleUpdate);
+    camera.moveEnd?.addEventListener?.(scheduleUpdate);
+    scheduleUpdate();
+
+    return () => {
+      camera.changed?.removeEventListener?.(scheduleUpdate);
+      camera.moveEnd?.removeEventListener?.(scheduleUpdate);
+      clearTimer();
+      cancelInFlight();
+    };
+  }, [apiBaseUrl, performanceModeEnabled, viewer, windLayerConfig]);
 
   useEffect(() => {
     if (!viewer) return;

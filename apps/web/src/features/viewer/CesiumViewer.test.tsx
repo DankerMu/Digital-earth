@@ -23,6 +23,29 @@ vi.mock('../effects/PrecipitationParticles', () => {
   };
 });
 
+const windArrowsMocks = vi.hoisted(() => {
+  return {
+    update: vi.fn(),
+    destroy: vi.fn(),
+    instances: [] as Array<{ update: (args: unknown) => void; destroy: () => void }>,
+    density: vi.fn(() => 12),
+  };
+});
+
+vi.mock('../effects/WindArrows', () => {
+  return {
+    WindArrows: vi.fn(function () {
+      const instance = {
+        update: windArrowsMocks.update,
+        destroy: windArrowsMocks.destroy,
+      };
+      windArrowsMocks.instances.push(instance);
+      return instance;
+    }),
+    windArrowDensityForCameraHeight: windArrowsMocks.density,
+  };
+});
+
 const weatherSamplerMocks = vi.hoisted(() => {
   return {
     sample: vi.fn(async (): Promise<{
@@ -184,6 +207,7 @@ vi.mock('cesium', () => {
     },
     __mocks: {
       getMorphCompleteHandler: () => morphCompleteHandler,
+      getCamera: () => camera,
     },
     createWorldTerrainAsync,
     EllipsoidTerrainProvider,
@@ -213,6 +237,7 @@ describe('CesiumViewer', () => {
     vi.clearAllMocks();
     vi.unstubAllGlobals();
     precipitationParticlesMocks.instances.length = 0;
+    windArrowsMocks.instances.length = 0;
     clearConfigCache();
     localStorage.removeItem('digital-earth.basemap');
     localStorage.removeItem('digital-earth.eventLayers');
@@ -224,7 +249,21 @@ describe('CesiumViewer', () => {
     useSceneModeStore.setState({ sceneModeId: DEFAULT_SCENE_MODE_ID });
     useLayerManagerStore.setState({ layers: [] });
     usePerformanceModeStore.setState({ enabled: false });
-    vi.stubGlobal('fetch', vi.fn(async () => jsonResponse({ apiBaseUrl: 'http://api.test' })));
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+        if (url.endsWith('/config.json')) {
+          return jsonResponse({ apiBaseUrl: 'http://api.test' });
+        }
+        if (url.startsWith('http://api.test/api/v1/vectors/')) {
+          return jsonResponse({
+            vectors: [{ lon: 120, lat: 30, u: 1.5, v: -2 }],
+          });
+        }
+        return jsonResponse({});
+      }),
+    );
   });
 
   it('initializes and destroys Cesium Viewer', async () => {
@@ -778,5 +817,50 @@ describe('CesiumViewer', () => {
     );
 
     expect(weatherSamplerMocks.sample).not.toHaveBeenCalled();
+  });
+
+  it('fetches wind vectors and updates wind arrows when wind layer is visible', async () => {
+    useLayerManagerStore.setState({
+      layers: [
+        {
+          id: 'wind',
+          type: 'wind',
+          variable: 'wind',
+          opacity: 0.7,
+          visible: true,
+          zIndex: 15,
+        },
+      ],
+    });
+
+    const cesium = await import('cesium');
+    (
+      cesium as unknown as {
+        __mocks: { getCamera: () => { computeViewRectangle: ReturnType<typeof vi.fn> } };
+      }
+    ).__mocks.getCamera().computeViewRectangle.mockReturnValue({
+      west: 10,
+      south: 20,
+      east: 30,
+      north: 40,
+    });
+
+    render(<CesiumViewer />);
+
+    await waitFor(() => expect(vi.mocked(Viewer)).toHaveBeenCalledTimes(1));
+
+    await waitFor(() =>
+      expect(windArrowsMocks.update).toHaveBeenCalledWith(
+        expect.objectContaining({ enabled: true, opacity: 0.7 }),
+      ),
+    );
+
+    const fetchMock = vi.mocked(globalThis.fetch);
+    const windCall = fetchMock.mock.calls.find(
+      ([url]) => typeof url === 'string' && url.includes('/api/v1/vectors/cldas/'),
+    );
+    expect(windCall?.[0]).toContain(
+      'http://api.test/api/v1/vectors/cldas/2024-01-15T00%3A00%3A00Z/wind?bbox=10,20,30,40&density=12',
+    );
   });
 });

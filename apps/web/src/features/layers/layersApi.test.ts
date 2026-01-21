@@ -1,12 +1,25 @@
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   buildCldasTileUrlTemplate,
   buildCloudTileUrlTemplate,
   buildPrecipitationTileUrlTemplate,
+  fetchWindVectorData,
 } from './layersApi';
 
+function jsonResponse(payload: unknown) {
+  return new Response(JSON.stringify(payload), {
+    status: 200,
+    headers: { 'content-type': 'application/json' },
+  });
+}
+
 describe('layersApi', () => {
+  beforeEach(() => {
+    vi.unstubAllGlobals();
+    vi.clearAllMocks();
+  });
+
   it('builds a Cesium url template without encoding placeholders', () => {
     const url = buildCldasTileUrlTemplate({
       apiBaseUrl: 'http://api.test/',
@@ -116,5 +129,66 @@ describe('layersApi', () => {
     expect(url).toBe(
       'http://api.test/api/v1/tiles/cldas/2024011500/precipitation/{z}/{x}/{y}.png',
     );
+  });
+
+  it('fetches wind vector data using bbox and density params', async () => {
+    const fetchMock = vi.fn(async () =>
+      jsonResponse({
+        vectors: [
+          { lon: 120, lat: 30, u: 1.5, v: -2 },
+          { lon: 121, lat: 31, u: 0, v: 0.1 },
+        ],
+      }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await fetchWindVectorData({
+      apiBaseUrl: 'http://api.test/some/prefix/',
+      timeKey: '2024-01-15T00:00:00Z',
+      bbox: { west: 110, south: 20, east: 130, north: 40 },
+      density: 24,
+    });
+
+    expect(result.vectors).toHaveLength(2);
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://api.test/api/v1/vectors/cldas/2024-01-15T00%3A00%3A00Z/wind?bbox=110,20,130,40&density=24',
+      expect.objectContaining({ signal: undefined }),
+    );
+  });
+
+  it('filters invalid vector entries and clamps density', async () => {
+    const fetchMock = vi.fn(async (url: string) => {
+      expect(url).toContain('density=1');
+      return jsonResponse({
+        vectors: [{ lon: 120, lat: 30, u: 1.5, v: -2 }, { lon: 0, lat: 1, u: 'x' }],
+      });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await fetchWindVectorData({
+      apiBaseUrl: 'http://api.test/',
+      timeKey: '2024011500',
+      bbox: { west: -10, south: -20, east: 10, north: 20 },
+      density: 0,
+    });
+
+    expect(result.vectors).toEqual([{ lon: 120, lat: 30, u: 1.5, v: -2 }]);
+  });
+
+  it('throws when wind vector fetch returns a non-200 response', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('nope', { status: 500 })),
+    );
+
+    await expect(
+      fetchWindVectorData({
+        apiBaseUrl: 'http://api.test',
+        timeKey: '2024011500',
+        bbox: { west: 0, south: 0, east: 1, north: 1 },
+        density: 10,
+      }),
+    ).rejects.toThrow(/Failed to fetch wind vectors: 500/);
   });
 });

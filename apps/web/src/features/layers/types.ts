@@ -25,3 +25,12 @@ export type PrecipitationLayerParams = Omit<CldasTileUrlTemplateOptions, 'variab
   zIndex: number;
   threshold?: number | null;
 };
+
+export type WindLayerParams = Omit<CldasTileUrlTemplateOptions, 'variable'> & {
+  id: string;
+  opacity: number;
+  visible: boolean;
+  zIndex: number;
+  density: number;
+  maxArrows?: number;
+};
