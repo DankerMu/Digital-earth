@@ -86,6 +86,54 @@ export async function evaluateRisk(options: {
   bbox?: [number, number, number, number] | null;
   signal?: AbortSignal;
 }): Promise<RiskEvaluateResponse> {
+  const mergeEvaluateResponses = (responses: RiskEvaluateResponse[]): RiskEvaluateResponse => {
+    const resultsById = new Map<number, RiskEvaluateResponse['results'][number]>();
+    let duration_ms = 0;
+    const reasons: Record<string, number> = {};
+
+    for (const response of responses) {
+      duration_ms += response.summary.duration_ms;
+      for (const [key, value] of Object.entries(response.summary.reasons)) {
+        reasons[key] = (reasons[key] ?? 0) + value;
+      }
+      for (const result of response.results) {
+        resultsById.set(result.poi_id, result);
+      }
+    }
+
+    const results = [...resultsById.values()].sort((a, b) => a.poi_id - b.poi_id);
+    const level_counts: Record<string, number> = {};
+    let max_level: number | null = null;
+    let sumScore = 0;
+
+    for (const result of results) {
+      const key = String(Math.round(result.level));
+      level_counts[key] = (level_counts[key] ?? 0) + 1;
+      max_level = max_level == null ? result.level : Math.max(max_level, result.level);
+      sumScore += result.score;
+    }
+
+    return {
+      results,
+      summary: {
+        total: results.length,
+        duration_ms,
+        level_counts,
+        reasons,
+        max_level,
+        avg_score: results.length ? sumScore / results.length : null,
+      },
+    };
+  };
+
+  const evaluateRiskOnce = async (options: {
+    apiBaseUrl: string;
+    productId: string | number;
+    validTime: string;
+    poiIds?: number[] | null;
+    bbox?: [number, number, number, number] | null;
+    signal?: AbortSignal;
+  }): Promise<RiskEvaluateResponse> => {
   const base = normalizeApiBaseUrl(options.apiBaseUrl);
   const url = new URL('/api/v1/risk/evaluate', base);
 
@@ -124,4 +172,29 @@ export async function evaluateRisk(options: {
     }
     throw error;
   }
+  };
+
+  if (options.poiIds == null && options.bbox != null) {
+    const bboxes = splitBBoxAtDateline({
+      min_x: options.bbox[0],
+      min_y: options.bbox[1],
+      max_x: options.bbox[2],
+      max_y: options.bbox[3],
+    });
+
+    if (bboxes.length > 1) {
+      const responses = await Promise.all(
+        bboxes.map((bbox) =>
+          evaluateRiskOnce({
+            ...options,
+            bbox: [bbox.min_x, bbox.min_y, bbox.max_x, bbox.max_y],
+          }),
+        ),
+      );
+
+      return mergeEvaluateResponses(responses);
+    }
+  }
+
+  return evaluateRiskOnce(options);
 }

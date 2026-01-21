@@ -497,6 +497,27 @@ describe('CesiumViewer', () => {
             vectors: [{ lon: 120, lat: 30, u: 1.5, v: -2 }],
           });
         }
+        if (url.startsWith('http://api.test/api/v1/risk/pois')) {
+          return jsonResponse({
+            page: 1,
+            page_size: 1000,
+            total: 0,
+            items: [],
+          });
+        }
+        if (url === 'http://api.test/api/v1/risk/evaluate') {
+          return jsonResponse({
+            summary: {
+              total: 0,
+              duration_ms: 0,
+              level_counts: {},
+              reasons: {},
+              max_level: null,
+              avg_score: null,
+            },
+            results: [],
+          });
+        }
         return jsonResponse({});
       }),
     );
@@ -2504,7 +2525,20 @@ describe('CesiumViewer', () => {
     const [dataSource] = customDataSourceMocks.instances;
     await waitFor(() => expect(dataSource?.entities.add).toHaveBeenCalled());
 
-    const [entity] = vi.mocked(dataSource!.entities.add).mock.calls[0] ?? [];
+    await waitFor(() => {
+      const entities = vi
+        .mocked(dataSource!.entities.add)
+        .mock.calls.map((call) => call[0])
+        .filter(Boolean);
+      expect(entities.some((entity) => (entity as { label?: { text?: string } }).label?.text === '4')).toBe(
+        true,
+      );
+    });
+
+    const entity = vi
+      .mocked(dataSource!.entities.add)
+      .mock.calls.map((call) => call[0])
+      .find((item) => (item as { label?: { text?: string } }).label?.text === '4');
     expect(entity).toMatchObject({
       id: 'risk-poi:101',
       label: expect.objectContaining({ text: '4' }),
@@ -2520,6 +2554,208 @@ describe('CesiumViewer', () => {
     camera.changed.__mocks.trigger();
     expect(dataSource!.clustering.enabled).toBe(true);
     expect(dataSource!.clustering.pixelRange).toBe(60);
+  });
+
+  it('renders risk POIs even when risk evaluation fails', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url =
+        typeof input === 'string'
+          ? input
+          : input instanceof URL
+            ? input.toString()
+            : input.url;
+      if (url.endsWith('/config.json')) {
+        return jsonResponse({ apiBaseUrl: 'http://api.test' });
+      }
+      if (url === 'http://api.test/api/v1/products/1') {
+        return jsonResponse({
+          id: 1,
+          title: '降雪',
+          text: '降雪预警',
+          issued_at: '2026-01-01T00:00:00Z',
+          valid_from: '2026-01-01T00:00:00Z',
+          valid_to: '2026-01-02T00:00:00Z',
+          version: 1,
+          status: 'published',
+          hazards: [
+            {
+              id: 11,
+              severity: 'high',
+              geometry: null,
+              bbox: { min_x: 126, min_y: 45, max_x: 127, max_y: 46 },
+              valid_from: '2026-01-01T00:00:00Z',
+              valid_to: '2026-01-02T00:00:00Z',
+            },
+          ],
+        });
+      }
+      if (url.startsWith('http://api.test/api/v1/risk/pois')) {
+        return jsonResponse({
+          page: 1,
+          page_size: 1000,
+          total: 1,
+          items: [
+            {
+              id: 101,
+              name: 'poi-a',
+              type: 'fire',
+              lon: 126.5,
+              lat: 45.5,
+              alt: null,
+              weight: 1,
+              tags: null,
+              risk_level: 3,
+            },
+          ],
+        });
+      }
+      if (url === 'http://api.test/api/v1/risk/evaluate') {
+        return new Response('Internal Server Error', { status: 500 });
+      }
+      return jsonResponse({});
+    });
+
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<CesiumViewer />);
+    await waitFor(() => expect(vi.mocked(Viewer)).toHaveBeenCalledTimes(1));
+
+    act(() => {
+      useViewModeStore.getState().enterEvent({ productId: '1' });
+    });
+
+    await waitFor(() => expect(customDataSourceMocks.instances.length).toBe(1));
+    const [dataSource] = customDataSourceMocks.instances;
+    await waitFor(() => expect(dataSource?.entities.add).toHaveBeenCalled());
+
+    const entity = vi
+      .mocked(dataSource!.entities.add)
+      .mock.calls.map((call) => call[0])
+      .find((item) => (item as { id?: string }).id === 'risk-poi:101');
+    expect(entity).toMatchObject({
+      id: 'risk-poi:101',
+      label: expect.objectContaining({ text: '3' }),
+    });
+
+    expect(warnSpy).toHaveBeenCalledWith(
+      '[Digital Earth] failed to evaluate risk levels',
+      expect.anything(),
+    );
+    warnSpy.mockRestore();
+  });
+
+  it('posts risk evaluation using bbox instead of all poi ids', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url =
+        typeof input === 'string'
+          ? input
+          : input instanceof URL
+            ? input.toString()
+            : input.url;
+      if (url.endsWith('/config.json')) {
+        return jsonResponse({ apiBaseUrl: 'http://api.test' });
+      }
+      if (url === 'http://api.test/api/v1/products/1') {
+        return jsonResponse({
+          id: 1,
+          title: '降雪',
+          text: '降雪预警',
+          issued_at: '2026-01-01T00:00:00Z',
+          valid_from: '2026-01-01T00:00:00Z',
+          valid_to: '2026-01-02T00:00:00Z',
+          version: 1,
+          status: 'published',
+          hazards: [
+            {
+              id: 11,
+              severity: 'high',
+              geometry: null,
+              bbox: { min_x: 126, min_y: 45, max_x: 127, max_y: 46 },
+              valid_from: '2026-01-01T00:00:00Z',
+              valid_to: '2026-01-02T00:00:00Z',
+            },
+          ],
+        });
+      }
+      if (url.startsWith('http://api.test/api/v1/risk/pois')) {
+        return jsonResponse({
+          page: 1,
+          page_size: 1000,
+          total: 1,
+          items: [
+            {
+              id: 101,
+              name: 'poi-a',
+              type: 'fire',
+              lon: 126.5,
+              lat: 45.5,
+              alt: null,
+              weight: 1,
+              tags: null,
+              risk_level: null,
+            },
+          ],
+        });
+      }
+      if (url === 'http://api.test/api/v1/risk/evaluate') {
+        const body = JSON.parse(String(init?.body ?? '')) as { bbox?: unknown; poi_ids?: unknown };
+        expect(body.poi_ids).toBeUndefined();
+        expect(body.bbox).toEqual([126, 45, 127, 46]);
+        return jsonResponse({
+          summary: {
+            total: 1,
+            duration_ms: 1,
+            level_counts: {},
+            reasons: {},
+            max_level: null,
+            avg_score: null,
+          },
+          results: [],
+        });
+      }
+      return jsonResponse({});
+    });
+
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<CesiumViewer />);
+    await waitFor(() => expect(vi.mocked(Viewer)).toHaveBeenCalledTimes(1));
+
+    act(() => {
+      useViewModeStore.getState().enterEvent({ productId: '1' });
+    });
+
+    await waitFor(() => {
+      const didEvaluate = fetchMock.mock.calls.some((call) => {
+        const url = typeof call[0] === 'string' ? call[0] : (call[0] as URL).toString();
+        return url === 'http://api.test/api/v1/risk/evaluate';
+      });
+      expect(didEvaluate).toBe(true);
+    });
+  });
+
+  it('tears down risk clustering when unmounting in event mode', async () => {
+    const { unmount } = render(<CesiumViewer />);
+    await waitFor(() => expect(vi.mocked(Viewer)).toHaveBeenCalledTimes(1));
+    const viewer = vi.mocked(Viewer).mock.results[0].value;
+
+    act(() => {
+      useViewModeStore.getState().enterEvent({ productId: '1' });
+    });
+
+    await waitFor(() => expect(customDataSourceMocks.instances.length).toBe(1));
+    const [dataSource] = customDataSourceMocks.instances;
+
+    expect(viewer.camera.changed.addEventListener).toHaveBeenCalled();
+    expect(viewer.camera.moveEnd.addEventListener).toHaveBeenCalled();
+
+    unmount();
+
+    expect(viewer.camera.changed.removeEventListener).toHaveBeenCalled();
+    expect(viewer.camera.moveEnd.removeEventListener).toHaveBeenCalled();
+    expect(dataSource.clustering.clusterEvent.removeEventListener).toHaveBeenCalled();
   });
 
   it('opens a risk POI popup on click and can jump to disaster demo', async () => {
@@ -2640,9 +2876,9 @@ describe('CesiumViewer', () => {
     });
 
     expect(await screen.findByLabelText('Risk POI details')).toHaveTextContent('poi-a');
-    expect(screen.getByText('Wind')).toBeInTheDocument();
-    expect(screen.getByText('8.10')).toBeInTheDocument();
-    expect(screen.getByText('5.00')).toBeInTheDocument();
+    expect(await screen.findByText('Wind')).toBeInTheDocument();
+    expect(await screen.findByText('8.10')).toBeInTheDocument();
+    expect(await screen.findByText('5.00')).toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: '查看灾害演示' }));
     expect(await screen.findByRole('dialog', { name: '灾害演示' })).toBeInTheDocument();
@@ -2699,6 +2935,27 @@ describe('CesiumViewer', () => {
                 valid_to: '2026-01-02T00:00:00Z',
               },
             ],
+          });
+        }
+        if (url.startsWith('http://api.test/api/v1/risk/pois')) {
+          return jsonResponse({
+            page: 1,
+            page_size: 1000,
+            total: 0,
+            items: [],
+          });
+        }
+        if (url === 'http://api.test/api/v1/risk/evaluate') {
+          return jsonResponse({
+            summary: {
+              total: 0,
+              duration_ms: 0,
+              level_counts: {},
+              reasons: {},
+              max_level: null,
+              avg_score: null,
+            },
+            results: [],
           });
         }
         return jsonResponse({});
@@ -2770,6 +3027,27 @@ describe('CesiumViewer', () => {
         if (url.startsWith('http://api.test/api/v1/vectors/')) {
           return jsonResponse({
             vectors: [{ lon: 120, lat: 30, u: 1.5, v: -2 }],
+          });
+        }
+        if (url.startsWith('http://api.test/api/v1/risk/pois')) {
+          return jsonResponse({
+            page: 1,
+            page_size: 1000,
+            total: 0,
+            items: [],
+          });
+        }
+        if (url === 'http://api.test/api/v1/risk/evaluate') {
+          return jsonResponse({
+            summary: {
+              total: 0,
+              duration_ms: 0,
+              level_counts: {},
+              reasons: {},
+              max_level: null,
+              avg_score: null,
+            },
+            results: [],
           });
         }
         return jsonResponse({});

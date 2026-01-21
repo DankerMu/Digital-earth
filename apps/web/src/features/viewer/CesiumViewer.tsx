@@ -818,12 +818,12 @@ export function CesiumViewer() {
     };
   }, []);
 
-  useEffect(() => {
-    const defaultDestination = Cartesian3.fromDegrees(
-      DEFAULT_CAMERA.longitude,
-      DEFAULT_CAMERA.latitude,
-      DEFAULT_CAMERA.heightMeters
-    );
+	  useEffect(() => {
+	    const defaultDestination = Cartesian3.fromDegrees(
+	      DEFAULT_CAMERA.longitude,
+	      DEFAULT_CAMERA.latitude,
+	      DEFAULT_CAMERA.heightMeters
+	    );
 
     const initialBasemapId = useBasemapStore.getState().basemapId;
     const initialBasemap = getBasemapById(initialBasemapId);
@@ -863,12 +863,14 @@ export function CesiumViewer() {
       newViewer.camera.flyTo({ destination: defaultDestination, duration: 0.8 });
     });
 
-    setViewer(newViewer);
+	    setViewer(newViewer);
 
-    return () => {
-      newViewer.destroy();
-    };
-  }, []);
+	    return () => {
+	      riskClusterTeardownRef.current?.();
+	      riskClusterTeardownRef.current = null;
+	      newViewer.destroy();
+	    };
+	  }, []);
 
   useEffect(() => {
     if (!viewer) return;
@@ -1618,75 +1620,86 @@ export function CesiumViewer() {
       viewer.scene.requestRender();
     }
 
-    riskPoisByIdRef.current.clear();
-    riskEvalByIdRef.current.clear();
+	    riskPoisByIdRef.current.clear();
+	    riskEvalByIdRef.current.clear();
 
-    void (async () => {
-      try {
-        const pois = await getRiskPois({
-          apiBaseUrl,
-          bbox,
-          signal: controller.signal,
-        });
-        if (controller.signal.aborted) return;
-        if (riskEntryKeyRef.current !== key) return;
+	    void (async () => {
+	      try {
+	        const pois = await getRiskPois({
+	          apiBaseUrl,
+	          bbox,
+	          signal: controller.signal,
+	        });
+	        if (controller.signal.aborted) return;
+	        if (riskEntryKeyRef.current !== key) return;
 
-        const poiById = new Map<number, RiskPOI>();
-        for (const poi of pois) poiById.set(poi.id, poi);
-        riskPoisByIdRef.current = poiById;
+	        const poiById = new Map<number, RiskPOI>();
+	        for (const poi of pois) poiById.set(poi.id, poi);
+	        riskPoisByIdRef.current = poiById;
 
-        const ids = pois.map((poi) => poi.id);
-        let evaluated: POIRiskResult[] = [];
-        if (ids.length > 0) {
-          const evaluation = await evaluateRisk({
-            apiBaseUrl,
-            productId,
-            validTime: eventMonitoringTimeKey,
-            poiIds: ids,
-            signal: controller.signal,
-          });
-          evaluated = evaluation.results;
-        }
+	        const plotPois = (evalMap: Map<number, POIRiskResult>) => {
+	          dataSource.entities.removeAll();
+	          for (const poi of pois) {
+	            const result = evalMap.get(poi.id);
+	            const level = result?.level ?? poi.risk_level;
+	            const color = colorForRiskLevel(level);
+	            dataSource.entities.add(
+	              new Entity({
+	                id: `risk-poi:${poi.id}`,
+	                position: Cartesian3.fromDegrees(poi.lon, poi.lat, poi.alt ?? 0),
+	                point: {
+	                  pixelSize: 12,
+	                  color: color.withAlpha(0.85),
+	                  outlineColor: Color.WHITE.withAlpha(0.9),
+	                  outlineWidth: 2,
+	                  disableDepthTestDistance: Number.POSITIVE_INFINITY,
+	                },
+	                label: {
+	                  text: formatRiskLevel(level),
+	                  font: 'bold 14px sans-serif',
+	                  fillColor: Color.WHITE,
+	                  showBackground: true,
+	                  backgroundColor: color.withAlpha(0.85),
+	                  disableDepthTestDistance: Number.POSITIVE_INFINITY,
+	                },
+	              }),
+	            );
+	          }
+	        };
 
-        if (controller.signal.aborted) return;
-        if (riskEntryKeyRef.current !== key) return;
+	        // Render POIs immediately using the base `risk_level` values so a risk evaluation
+	        // failure does not result in an empty layer.
+	        plotPois(riskEvalByIdRef.current);
 
-        const evalMap = riskEvalByIdRef.current;
-        evalMap.clear();
-        for (const result of evaluated) evalMap.set(result.poi_id, result);
+	        viewer.scene.requestRender();
 
-        for (const poi of pois) {
-          const result = evalMap.get(poi.id);
-          const level = result?.level ?? poi.risk_level;
-          const color = colorForRiskLevel(level);
-          dataSource.entities.add(
-            new Entity({
-              id: `risk-poi:${poi.id}`,
-              position: Cartesian3.fromDegrees(poi.lon, poi.lat, poi.alt ?? 0),
-              point: {
-                pixelSize: 12,
-                color: color.withAlpha(0.85),
-                outlineColor: Color.WHITE.withAlpha(0.9),
-                outlineWidth: 2,
-                disableDepthTestDistance: Number.POSITIVE_INFINITY,
-              },
-              label: {
-                text: formatRiskLevel(level),
-                font: 'bold 14px sans-serif',
-                fillColor: Color.WHITE,
-                showBackground: true,
-                backgroundColor: color.withAlpha(0.85),
-                disableDepthTestDistance: Number.POSITIVE_INFINITY,
-              },
-            }),
-          );
-        }
+	        try {
+	          if (pois.length === 0) return;
+	          const evaluation = await evaluateRisk({
+	            apiBaseUrl,
+	            productId,
+	            validTime: eventMonitoringTimeKey,
+	            bbox: [bbox.min_x, bbox.min_y, bbox.max_x, bbox.max_y],
+	            signal: controller.signal,
+	          });
 
-        viewer.scene.requestRender();
-      } catch (error) {
-        if (controller.signal.aborted) return;
-        if (riskEntryKeyRef.current !== key) return;
-        console.warn('[Digital Earth] failed to load risk POIs', error);
+	          if (controller.signal.aborted) return;
+	          if (riskEntryKeyRef.current !== key) return;
+
+	          const nextEvalMap = new Map<number, POIRiskResult>();
+	          for (const result of evaluation.results) nextEvalMap.set(result.poi_id, result);
+	          riskEvalByIdRef.current = nextEvalMap;
+	          plotPois(nextEvalMap);
+	          viewer.scene.requestRender();
+	        } catch (error) {
+	          if (controller.signal.aborted) return;
+	          if (riskEntryKeyRef.current !== key) return;
+	          console.warn('[Digital Earth] failed to evaluate risk levels', error);
+	        }
+	      } catch (error) {
+	        if (controller.signal.aborted) return;
+	        if (riskEntryKeyRef.current !== key) return;
+	        console.warn('[Digital Earth] failed to load risk POIs', error);
         riskPoisByIdRef.current.clear();
         riskEvalByIdRef.current.clear();
         dataSource.entities.removeAll();
