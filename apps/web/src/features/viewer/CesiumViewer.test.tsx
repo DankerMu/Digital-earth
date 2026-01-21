@@ -1488,6 +1488,67 @@ describe('CesiumViewer', () => {
     }
   });
 
+  it('does not restore local snapshot when entering local from layerGlobal (forward transition)', async () => {
+    useLayerManagerStore.setState({
+      layers: [
+        {
+          id: 'cloud',
+          type: 'cloud',
+          variable: 'tcc',
+          opacity: 0.8,
+          visible: true,
+          zIndex: 10,
+        },
+      ],
+    });
+    useViewModeStore.setState({
+      route: { viewModeId: 'local', lat: 30, lon: 120, heightMeters: 0 },
+      history: [],
+      saved: {},
+    });
+
+    const cesium = await import('cesium');
+    (
+      cesium as unknown as {
+        Cartographic: { fromCartesian: ReturnType<typeof vi.fn> };
+      }
+    ).Cartographic.fromCartesian.mockReturnValue({
+      longitude: 110,
+      latitude: 35,
+      height: 200,
+    });
+
+    render(<CesiumViewer />);
+
+    await waitFor(() => expect(vi.mocked(Viewer)).toHaveBeenCalledTimes(1));
+    const viewer = vi.mocked(Viewer).mock.results[0].value;
+
+    act(() => {
+      useViewModeStore.getState().enterLayerGlobal({ layerId: 'cloud' });
+    });
+
+    await waitFor(() => expect(useViewModeStore.getState().route.viewModeId).toBe('layerGlobal'));
+
+    const callsBeforeEnterLocal = viewer.camera.flyTo.mock.calls.length;
+
+    act(() => {
+      (
+        cesium as unknown as {
+          __mocks: { triggerCtrlLeftClick: (movement: { position?: unknown }) => void };
+        }
+      ).__mocks.triggerCtrlLeftClick({ position: { x: 12, y: 34 } });
+    });
+
+    await waitFor(() => expect(useViewModeStore.getState().route.viewModeId).toBe('local'));
+    await waitFor(() =>
+      expect(viewer.camera.flyTo).toHaveBeenCalledTimes(callsBeforeEnterLocal + 1),
+    );
+
+    expect(viewer.camera.flyTo).toHaveBeenLastCalledWith(
+      expect.objectContaining({ duration: 2.5 }),
+    );
+  });
+
   it('caches wind vector requests for repeated view keys', async () => {
     const nowSpy = vi.spyOn(Date, 'now');
     let now = 0;
@@ -1586,6 +1647,161 @@ describe('CesiumViewer', () => {
         ([url]) => typeof url === 'string' && url.includes('/api/v1/vectors/cldas/'),
       ).length;
       expect(callsAfterCacheHit).toBe(callsBeforeCacheHit);
+    } finally {
+      nowSpy.mockRestore();
+    }
+  });
+
+  it('cancels in-flight wind requests when serving cached vectors', async () => {
+    const nowSpy = vi.spyOn(Date, 'now');
+    let now = 0;
+    nowSpy.mockImplementation(() => (now += 1000));
+
+    const vectorsA = [{ lon: 10, lat: 20, u: 1, v: 2 }];
+    const vectorsB = [{ lon: 99, lat: 88, u: -3, v: 4 }];
+
+    let resolveSecondFetch:
+      | ((response: { ok: boolean; json: () => Promise<unknown> }) => void)
+      | null = null;
+    let secondSignal: AbortSignal | undefined;
+    let secondAborted = false;
+    let resolveSecondJson: (() => void) | null = null;
+    const secondJsonRead = new Promise<void>((resolve) => {
+      resolveSecondJson = resolve;
+    });
+
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+        const url =
+          typeof input === 'string'
+            ? input
+            : input instanceof URL
+              ? input.toString()
+              : input.url;
+        if (url.endsWith('/config.json')) {
+          return Promise.resolve(jsonResponse({ apiBaseUrl: 'http://api.test' }));
+        }
+        if (url.startsWith('http://api.test/api/v1/vectors/')) {
+          if (url.includes('bbox=10,20,30,40')) {
+            return Promise.resolve(jsonResponse({ vectors: vectorsA }));
+	          }
+	          if (url.includes('bbox=1,2,3,4')) {
+	            secondSignal = init?.signal ?? undefined;
+	            if (secondSignal) {
+	              secondAborted = secondSignal.aborted;
+	              secondSignal.addEventListener('abort', () => {
+	                secondAborted = true;
+	              });
+            }
+            return new Promise((resolve) => {
+              resolveSecondFetch = resolve;
+            });
+          }
+          return Promise.resolve(jsonResponse({ vectors: [] }));
+        }
+        return Promise.resolve(jsonResponse({}));
+      }),
+    );
+
+    try {
+      useLayerManagerStore.setState({
+        layers: [
+          {
+            id: 'wind',
+            type: 'wind',
+            variable: 'wind',
+            opacity: 0.7,
+            visible: true,
+            zIndex: 10,
+          },
+        ],
+      });
+
+      const cesium = await import('cesium');
+      (
+        cesium as unknown as {
+          __mocks: { getCamera: () => { computeViewRectangle: ReturnType<typeof vi.fn> } };
+        }
+      ).__mocks.getCamera().computeViewRectangle.mockReturnValue({
+        west: 10,
+        south: 20,
+        east: 30,
+        north: 40,
+      });
+
+      render(<CesiumViewer />);
+
+      await waitFor(() => expect(vi.mocked(Viewer)).toHaveBeenCalledTimes(1));
+      const viewer = vi.mocked(Viewer).mock.results[0].value;
+
+      await waitFor(() =>
+        expect(windArrowsMocks.update).toHaveBeenCalledWith(
+          expect.objectContaining({
+            enabled: true,
+            vectors: vectorsA,
+          }),
+        ),
+      );
+
+      (
+        cesium as unknown as {
+          __mocks: { getCamera: () => { computeViewRectangle: ReturnType<typeof vi.fn> } };
+        }
+      ).__mocks.getCamera().computeViewRectangle.mockReturnValue({
+        west: 1,
+        south: 2,
+        east: 3,
+        north: 4,
+      });
+
+      act(() => {
+        (
+          viewer.camera.changed as unknown as { __mocks?: { trigger: () => void } }
+        ).__mocks?.trigger();
+      });
+
+      await waitFor(() => expect(resolveSecondFetch).not.toBeNull());
+      expect(secondSignal).toBeTruthy();
+
+      (
+        cesium as unknown as {
+          __mocks: { getCamera: () => { computeViewRectangle: ReturnType<typeof vi.fn> } };
+        }
+      ).__mocks.getCamera().computeViewRectangle.mockReturnValue({
+        west: 10,
+        south: 20,
+        east: 30,
+        north: 40,
+      });
+
+      act(() => {
+        (
+          viewer.camera.changed as unknown as { __mocks?: { trigger: () => void } }
+        ).__mocks?.trigger();
+      });
+
+      await waitFor(() => expect(secondAborted).toBe(true));
+      expect(secondSignal?.aborted).toBe(true);
+
+      act(() => {
+        resolveSecondFetch?.({
+          ok: true,
+          json: async () => {
+            resolveSecondJson?.();
+            return { vectors: vectorsB };
+          },
+        });
+      });
+
+      await secondJsonRead;
+      await Promise.resolve();
+
+      expect(windArrowsMocks.update).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          vectors: vectorsA,
+        }),
+      );
     } finally {
       nowSpy.mockRestore();
     }
