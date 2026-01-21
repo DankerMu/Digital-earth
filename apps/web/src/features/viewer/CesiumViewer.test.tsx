@@ -117,6 +117,7 @@ import { EllipsoidTerrainProvider, createWorldTerrainAsync, Viewer } from 'cesiu
 import { clearConfigCache } from '../../config';
 import { DEFAULT_BASEMAP_ID } from '../../config/basemaps';
 import { useBasemapStore } from '../../state/basemap';
+import { DEFAULT_EVENT_LAYER_MODE, useEventLayersStore } from '../../state/eventLayers';
 import { DEFAULT_SCENE_MODE_ID, useSceneModeStore } from '../../state/sceneMode';
 import { CesiumViewer } from './CesiumViewer';
 
@@ -133,8 +134,10 @@ describe('CesiumViewer', () => {
     vi.unstubAllGlobals();
     clearConfigCache();
     localStorage.removeItem('digital-earth.basemap');
+    localStorage.removeItem('digital-earth.eventLayers');
     localStorage.removeItem('digital-earth.sceneMode');
     useBasemapStore.setState({ basemapId: DEFAULT_BASEMAP_ID });
+    useEventLayersStore.setState({ enabled: false, mode: DEFAULT_EVENT_LAYER_MODE });
     useSceneModeStore.setState({ sceneModeId: DEFAULT_SCENE_MODE_ID });
     vi.stubGlobal('fetch', vi.fn(async () => jsonResponse({ apiBaseUrl: 'http://api.test' })));
   });

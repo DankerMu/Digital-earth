@@ -18,6 +18,7 @@ import { useBasemapStore } from '../../state/basemap';
 import { useSceneModeStore } from '../../state/sceneMode';
 import { BasemapSelector } from './BasemapSelector';
 import { CompassControl } from './CompassControl';
+import { EventLayersToggle } from './EventLayersToggle';
 import { SceneModeToggle } from './SceneModeToggle';
 import { createImageryProviderForBasemap, setViewerBasemap, setViewerImageryProvider } from './cesiumBasemap';
 import { switchViewerSceneMode } from './cesiumSceneMode';
@@ -242,6 +243,7 @@ export function CesiumViewer() {
       <div className="viewerOverlay">
         {viewer ? <CompassControl viewer={viewer} /> : null}
         <SceneModeToggle />
+        <EventLayersToggle />
         {basemapProvider === 'open' ? <BasemapSelector /> : null}
         {terrainNotice ? (
           <div className="terrainNoticePanel" role="alert" aria-label="terrain-notice">
