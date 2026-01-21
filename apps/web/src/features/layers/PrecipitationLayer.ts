@@ -1,6 +1,8 @@
 import {
   GeographicTilingScheme,
   ImageryLayer,
+  TextureMagnificationFilter,
+  TextureMinificationFilter,
   UrlTemplateImageryProvider,
   type Viewer,
 } from 'cesium';
@@ -78,7 +80,10 @@ export class PrecipitationLayer {
 
       const provider = new UrlTemplateImageryProvider({
         url: nextTemplate,
-        tilingScheme: new GeographicTilingScheme(),
+        tilingScheme: new GeographicTilingScheme({
+          numberOfLevelZeroTilesX: 1,
+          numberOfLevelZeroTilesY: 1,
+        }),
         maximumLevel: MAX_TILE_LEVEL,
         tileWidth: 256,
         tileHeight: 256,
@@ -90,6 +95,8 @@ export class PrecipitationLayer {
         show: this.current.visible,
       });
       this.viewer.imageryLayers.add(this.imageryLayer);
+      this.imageryLayer.minificationFilter = TextureMinificationFilter.NEAREST;
+      this.imageryLayer.magnificationFilter = TextureMagnificationFilter.NEAREST;
       this.urlTemplate = nextTemplate;
     }
 
@@ -100,4 +107,3 @@ export class PrecipitationLayer {
     this.viewer.scene.requestRender();
   }
 }
-

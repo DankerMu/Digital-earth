@@ -1,6 +1,8 @@
 import {
   GeographicTilingScheme,
   ImageryLayer,
+  TextureMagnificationFilter,
+  TextureMinificationFilter,
   UrlTemplateImageryProvider,
   type Viewer,
 } from 'cesium';
@@ -97,7 +99,10 @@ export class TemperatureLayer {
 
       const provider = new UrlTemplateImageryProvider({
         url: nextTemplate,
-        tilingScheme: new GeographicTilingScheme(),
+        tilingScheme: new GeographicTilingScheme({
+          numberOfLevelZeroTilesX: 1,
+          numberOfLevelZeroTilesY: 1,
+        }),
         maximumLevel: MAX_TILE_LEVEL,
         tileWidth: 256,
         tileHeight: 256,
@@ -109,6 +114,8 @@ export class TemperatureLayer {
         show: this.current.visible,
       });
       this.viewer.imageryLayers.add(this.imageryLayer);
+      this.imageryLayer.minificationFilter = TextureMinificationFilter.NEAREST;
+      this.imageryLayer.magnificationFilter = TextureMagnificationFilter.NEAREST;
       this.urlTemplate = nextTemplate;
     }
 
@@ -119,4 +126,3 @@ export class TemperatureLayer {
     this.viewer.scene.requestRender();
   }
 }
-

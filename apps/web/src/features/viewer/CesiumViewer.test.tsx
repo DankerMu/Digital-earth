@@ -99,11 +99,23 @@ vi.mock('cesium', () => {
   };
 
   const createWorldTerrainAsync = vi.fn(async () => ({ terrain: true }));
-  const EllipsoidTerrainProvider = vi.fn(function () {
-    return { ellipsoidTerrain: true };
+  const EllipsoidTerrainProvider = vi.fn(function (options?: unknown) {
+    return { ellipsoidTerrain: true, options };
   });
   const Ion = { defaultAccessToken: '' };
   const GeographicTilingScheme = vi.fn(() => ({ kind: 'geographic' }));
+  const TextureMinificationFilter = { LINEAR: 'linear', NEAREST: 'nearest' };
+  const TextureMagnificationFilter = { LINEAR: 'linear', NEAREST: 'nearest' };
+
+  class Ellipsoid {
+    radii: { x: number; y: number; z: number };
+
+    constructor(x = 1, y = 1, z = 1) {
+      this.radii = { x, y, z };
+    }
+  }
+
+  const baseEllipsoid = new Ellipsoid(10, 10, 9);
 
   let morphCompleteHandler: (() => void) | null = null;
   let leftClickHandler: ((movement: { position?: unknown }) => void) | null = null;
@@ -205,17 +217,18 @@ vi.mock('cesium', () => {
       }
     },
     screenSpaceEventHandler,
-    imageryLayers: {
-      get: vi.fn(() => baseLayer),
-      remove: vi.fn(),
-      addImageryProvider: vi.fn(() => baseLayer),
-      add: vi.fn((layer: unknown) => layer),
-      raiseToTop: vi.fn(),
-    },
-    scene: {
-      requestRenderMode: false,
-      maximumRenderTimeChange: 0,
-      requestRender: vi.fn(),
+	    imageryLayers: {
+	      get: vi.fn(() => baseLayer),
+	      remove: vi.fn(),
+	      addImageryProvider: vi.fn(() => baseLayer),
+	      add: vi.fn((layer: unknown) => layer),
+	      raiseToTop: vi.fn(),
+	    },
+	    terrainProvider: { kind: 'base-terrain' },
+	    scene: {
+	      requestRenderMode: false,
+	      maximumRenderTimeChange: 0,
+	      requestRender: vi.fn(),
       mode: SceneMode.SCENE3D,
       morphComplete,
       morphTo2D: vi.fn(() => {
@@ -224,12 +237,12 @@ vi.mock('cesium', () => {
       morphTo3D: vi.fn(() => {
         viewer.scene.mode = SceneMode.SCENE3D;
       }),
-      morphToColumbusView: vi.fn(() => {
-        viewer.scene.mode = SceneMode.COLUMBUS_VIEW;
-      }),
-      globe: {
-        ellipsoid: { kind: 'ellipsoid' },
-      },
+	      morphToColumbusView: vi.fn(() => {
+	        viewer.scene.mode = SceneMode.COLUMBUS_VIEW;
+	      }),
+	      globe: {
+	        ellipsoid: baseEllipsoid,
+	      },
       fog: {
         enabled: false,
         density: 0,
@@ -281,12 +294,14 @@ vi.mock('cesium', () => {
     UrlTemplateImageryProvider: vi.fn(function (options: unknown) {
       return { kind: 'url-template', options };
     }),
-    WebMercatorTilingScheme: vi.fn(),
-    GeographicTilingScheme,
-    Math: {
-      toDegrees: vi.fn((radians: number) => radians),
-      PI_OVER_TWO: Math.PI / 2
-    },
+	    WebMercatorTilingScheme: vi.fn(),
+	    GeographicTilingScheme,
+	    TextureMinificationFilter,
+	    TextureMagnificationFilter,
+	    Math: {
+	      toDegrees: vi.fn((radians: number) => radians),
+	      PI_OVER_TWO: Math.PI / 2
+	    },
     __mocks: {
       getMorphCompleteHandler: () => morphCompleteHandler,
       getCamera: () => camera,
@@ -299,11 +314,12 @@ vi.mock('cesium', () => {
       triggerLeftDoubleClick: (movement: { position?: unknown }) => {
         leftDoubleClickHandler?.(movement);
       },
-    },
-    createWorldTerrainAsync,
-    EllipsoidTerrainProvider,
-    Ion,
-  };
+	    },
+	    createWorldTerrainAsync,
+	    Ellipsoid,
+	    EllipsoidTerrainProvider,
+	    Ion,
+	  };
 });
 
 import { Cartesian3, EllipsoidTerrainProvider, createWorldTerrainAsync, Viewer } from 'cesium';
@@ -1202,7 +1218,7 @@ describe('CesiumViewer', () => {
     expect(viewer.camera.flyTo).toHaveBeenCalledTimes(callsAfterForward);
   });
 
-  it('flies camera to shell height and ensures the selected layer is visible in layerGlobal mode', async () => {
+  it('flies camera above the shell and ensures the selected layer is visible in layerGlobal mode', async () => {
     useLayerManagerStore.setState({
       layers: [
         {
@@ -1238,10 +1254,112 @@ describe('CesiumViewer', () => {
       }),
     );
 
-    expect(vi.mocked(Cartesian3.fromDegrees)).toHaveBeenCalledWith(0, 0, 5000);
+    expect(vi.mocked(Cartesian3.fromDegrees)).toHaveBeenCalledWith(0, 0, 7500);
 
     await waitFor(() => {
       expect(useLayerManagerStore.getState().layers[0]?.visible).toBe(true);
+    });
+
+    await waitFor(() => {
+      const radii = (
+        viewer.scene.globe.ellipsoid as { radii?: { x?: number; y?: number; z?: number } }
+      ).radii;
+      expect(radii?.x).toBe(5010);
+      expect(radii?.y).toBe(5010);
+      expect(radii?.z).toBe(5009);
+    });
+
+    expect(vi.mocked(EllipsoidTerrainProvider)).toHaveBeenCalledWith(
+      expect.objectContaining({
+        ellipsoid: expect.objectContaining({
+          radii: expect.objectContaining({ x: 5010, y: 5010, z: 5009 }),
+        }),
+      }),
+    );
+  });
+
+  it.each(['2d', 'columbus'] as const)(
+    'does not override the globe ellipsoid in %s scene mode',
+    async (sceneModeId) => {
+      useSceneModeStore.setState({ sceneModeId });
+      useLayerManagerStore.setState({
+        layers: [
+          {
+            id: 'cloud',
+            type: 'cloud',
+            variable: 'tcc',
+            opacity: 0.8,
+            visible: true,
+            zIndex: 10,
+          },
+        ],
+      });
+      useViewModeStore.setState({
+        route: { viewModeId: 'layerGlobal', layerId: 'cloud' },
+        history: [],
+        saved: {},
+      });
+
+      render(<CesiumViewer />);
+
+      await waitFor(() => expect(vi.mocked(Viewer)).toHaveBeenCalledTimes(1));
+      const viewer = vi.mocked(Viewer).mock.results[0].value;
+
+      await waitFor(() => {
+        const radii = (
+          viewer.scene.globe.ellipsoid as { radii?: { x?: number; y?: number; z?: number } }
+        ).radii;
+        expect(radii?.x).toBe(10);
+        expect(radii?.y).toBe(10);
+        expect(radii?.z).toBe(9);
+      });
+
+      expect(vi.mocked(EllipsoidTerrainProvider)).not.toHaveBeenCalled();
+    },
+  );
+
+  it('restores the globe ellipsoid when leaving layerGlobal mode', async () => {
+    useLayerManagerStore.setState({
+      layers: [
+        {
+          id: 'cloud',
+          type: 'cloud',
+          variable: 'tcc',
+          opacity: 0.8,
+          visible: true,
+          zIndex: 10,
+        },
+      ],
+    });
+    useViewModeStore.setState({
+      route: { viewModeId: 'layerGlobal', layerId: 'cloud' },
+      history: [],
+      saved: {},
+    });
+
+    render(<CesiumViewer />);
+
+    await waitFor(() => expect(vi.mocked(Viewer)).toHaveBeenCalledTimes(1));
+    const viewer = vi.mocked(Viewer).mock.results[0].value;
+
+    await waitFor(() => {
+      const radii = (
+        viewer.scene.globe.ellipsoid as { radii?: { x?: number; y?: number; z?: number } }
+      ).radii;
+      expect(radii?.x).toBe(5010);
+    });
+
+    act(() => {
+      useViewModeStore.setState({ route: { viewModeId: 'global' }, history: [], saved: {} });
+    });
+
+    await waitFor(() => {
+      const radii = (
+        viewer.scene.globe.ellipsoid as { radii?: { x?: number; y?: number; z?: number } }
+      ).radii;
+      expect(radii?.x).toBe(10);
+      expect(radii?.y).toBe(10);
+      expect(radii?.z).toBe(9);
     });
   });
 
@@ -1277,6 +1395,6 @@ describe('CesiumViewer', () => {
         }),
       );
     });
-    expect(vi.mocked(Cartesian3.fromDegrees)).toHaveBeenCalledWith(0, 0, 5000);
+    expect(vi.mocked(Cartesian3.fromDegrees)).toHaveBeenCalledWith(0, 0, 7500);
   });
 });
