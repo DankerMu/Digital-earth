@@ -2,14 +2,19 @@ import {
   Cartographic,
   Cartesian3,
   CesiumTerrainProvider,
+  Color,
   createWorldImageryAsync,
   createWorldTerrainAsync,
   Ellipsoid,
   EllipsoidTerrainProvider,
+  Entity,
   ImageryLayer,
   Ion,
   KeyboardEventModifier,
   Math as CesiumMath,
+  PolygonGraphics,
+  PolygonHierarchy,
+  Rectangle,
   SceneMode,
   ScreenSpaceEventType,
   UrlTemplateImageryProvider,
@@ -49,6 +54,8 @@ import { SceneModeToggle } from './SceneModeToggle';
 import { createImageryProviderForBasemap, setViewerBasemap, setViewerImageryProvider } from './cesiumBasemap';
 import { switchViewerSceneMode } from './cesiumSceneMode';
 import 'cesium/Build/Cesium/Widgets/widgets.css';
+import { getProductDetail } from '../products/productsApi';
+import type { BBox, ProductHazardDetail } from '../products/productsTypes';
 
 const DEFAULT_CAMERA = {
   longitude: 116.391,
@@ -79,6 +86,132 @@ const LAYER_GLOBAL_SHELL_HEIGHT_METERS_BY_LAYER_TYPE: Record<LayerType, number> 
   precipitation: 3000,
   wind: 8000,
 };
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object';
+}
+
+type LonLat = { lon: number; lat: number };
+type PolygonLonLat = { outer: LonLat[]; holes: LonLat[][] };
+
+function parseGeoJsonPosition(value: unknown): LonLat | null {
+  if (!Array.isArray(value) || value.length < 2) return null;
+  const lon = value[0];
+  const lat = value[1];
+  if (typeof lon !== 'number' || !Number.isFinite(lon)) return null;
+  if (typeof lat !== 'number' || !Number.isFinite(lat)) return null;
+  return { lon, lat };
+}
+
+function parseGeoJsonRing(value: unknown): LonLat[] | null {
+  if (!Array.isArray(value)) return null;
+  const positions: LonLat[] = [];
+  for (const entry of value) {
+    const parsed = parseGeoJsonPosition(entry);
+    if (!parsed) continue;
+    positions.push(parsed);
+  }
+  return positions.length >= 3 ? positions : null;
+}
+
+function parseGeoJsonPolygon(value: unknown): PolygonLonLat | null {
+  if (!Array.isArray(value) || value.length === 0) return null;
+  const rings = value
+    .map(parseGeoJsonRing)
+    .filter((ring): ring is LonLat[] => ring != null);
+  if (rings.length === 0) return null;
+  return { outer: rings[0]!, holes: rings.slice(1) };
+}
+
+function extractGeoJsonPolygons(value: unknown): PolygonLonLat[] {
+  if (!isRecord(value)) return [];
+  const type = value.type;
+  if (typeof type !== 'string') return [];
+
+  if (type === 'Feature') {
+    return extractGeoJsonPolygons(value.geometry);
+  }
+
+  if (type === 'FeatureCollection') {
+    const features = value.features;
+    if (!Array.isArray(features)) return [];
+    return features.flatMap((feature) => extractGeoJsonPolygons(feature));
+  }
+
+  if (type === 'GeometryCollection') {
+    const geoms = value.geometries;
+    if (!Array.isArray(geoms)) return [];
+    return geoms.flatMap((geom) => extractGeoJsonPolygons(geom));
+  }
+
+  if (type === 'Polygon') {
+    const parsed = parseGeoJsonPolygon(value.coordinates);
+    return parsed ? [parsed] : [];
+  }
+
+  if (type === 'MultiPolygon') {
+    const raw = value.coordinates;
+    if (!Array.isArray(raw)) return [];
+    return raw
+      .map(parseGeoJsonPolygon)
+      .filter((polygon): polygon is PolygonLonLat => polygon != null);
+  }
+
+  return [];
+}
+
+function bboxUnion(bboxes: BBox[]): BBox | null {
+  if (bboxes.length === 0) return null;
+  let min_x = bboxes[0]!.min_x;
+  let min_y = bboxes[0]!.min_y;
+  let max_x = bboxes[0]!.max_x;
+  let max_y = bboxes[0]!.max_y;
+
+  for (const bbox of bboxes.slice(1)) {
+    min_x = Math.min(min_x, bbox.min_x);
+    min_y = Math.min(min_y, bbox.min_y);
+    max_x = Math.max(max_x, bbox.max_x);
+    max_y = Math.max(max_y, bbox.max_y);
+  }
+
+  return { min_x, min_y, max_x, max_y };
+}
+
+function materialForSeverity(severity: string): { fill: Color; outline: Color } {
+  const normalized = severity.trim().toLowerCase();
+  if (normalized === 'high') return { fill: Color.RED.withAlpha(0.35), outline: Color.RED };
+  if (normalized === 'medium') return { fill: Color.ORANGE.withAlpha(0.35), outline: Color.ORANGE };
+  if (normalized === 'low') return { fill: Color.YELLOW.withAlpha(0.35), outline: Color.YELLOW };
+  return { fill: Color.CYAN.withAlpha(0.35), outline: Color.CYAN };
+}
+
+function ringToCartesian(positions: LonLat[]): Cartesian3[] {
+  return positions.map((pos) => Cartesian3.fromDegrees(pos.lon, pos.lat));
+}
+
+function bboxToPolygonHierarchy(bbox: BBox): PolygonHierarchy {
+  const positions = [
+    Cartesian3.fromDegrees(bbox.min_x, bbox.min_y),
+    Cartesian3.fromDegrees(bbox.max_x, bbox.min_y),
+    Cartesian3.fromDegrees(bbox.max_x, bbox.max_y),
+    Cartesian3.fromDegrees(bbox.min_x, bbox.max_y),
+  ];
+  return new PolygonHierarchy(positions);
+}
+
+function polygonHierarchiesForHazard(hazard: ProductHazardDetail): PolygonHierarchy[] {
+  const polygons = extractGeoJsonPolygons(hazard.geometry);
+  if (polygons.length === 0) {
+    return [bboxToPolygonHierarchy(hazard.bbox)];
+  }
+
+  return polygons.map((poly) => {
+    const holes = poly.holes
+      .map((hole) => new PolygonHierarchy(ringToCartesian(hole)))
+      .filter((hierarchy) => hierarchy.positions.length > 2);
+    return new PolygonHierarchy(ringToCartesian(poly.outer), holes);
+  });
+}
 
 function clampNumber(value: number, min: number, max: number): number {
   if (!Number.isFinite(value)) return min;
@@ -273,7 +406,10 @@ export function CesiumViewer() {
   const didApplySceneModeRef = useRef(false);
   const localEntryKeyRef = useRef<string | null>(null);
   const layerGlobalEntryKeyRef = useRef<string | null>(null);
+  const eventEntryKeyRef = useRef<string | null>(null);
   const appliedCameraPerspectiveRef = useRef<CameraPerspectiveId | null>(null);
+  const eventAbortRef = useRef<AbortController | null>(null);
+  const eventEntitiesRef = useRef<Entity[]>([]);
   const baseCameraControllerRef = useRef<{ enableTilt?: boolean; enableLook?: boolean } | null>(
     null,
   );
@@ -971,6 +1107,100 @@ export function CesiumViewer() {
     });
     appliedCameraPerspectiveRef.current = cameraPerspectiveId;
   }, [cameraPerspectiveId, sceneModeId, viewModeRoute, viewer]);
+
+  useEffect(() => {
+    if (!viewer) return;
+
+    if (viewModeRoute.viewModeId !== 'event') {
+      eventEntryKeyRef.current = null;
+      eventAbortRef.current?.abort();
+      eventAbortRef.current = null;
+
+      if (eventEntitiesRef.current.length > 0) {
+        for (const entity of eventEntitiesRef.current) {
+          viewer.entities.remove(entity);
+        }
+        eventEntitiesRef.current = [];
+        viewer.scene.requestRender();
+      }
+      return;
+    }
+
+    if (!apiBaseUrl) return;
+
+    const productId = viewModeRoute.productId.trim();
+    if (!productId) return;
+
+    const key = `${sceneModeId}:${apiBaseUrl}:${productId}`;
+    if (eventEntryKeyRef.current === key) return;
+    eventEntryKeyRef.current = key;
+
+    eventAbortRef.current?.abort();
+    const controller = new AbortController();
+    eventAbortRef.current = controller;
+
+    if (eventEntitiesRef.current.length > 0) {
+      for (const entity of eventEntitiesRef.current) {
+        viewer.entities.remove(entity);
+      }
+      eventEntitiesRef.current = [];
+    }
+
+    void (async () => {
+      try {
+        const product = await getProductDetail({
+          apiBaseUrl,
+          productId,
+          signal: controller.signal,
+        });
+        if (controller.signal.aborted) return;
+
+        const hazards = product.hazards;
+        const destinationBBox = bboxUnion(hazards.map((hazard) => hazard.bbox));
+
+        const nextEntities: Entity[] = [];
+
+        for (const hazard of hazards) {
+          const { fill, outline } = materialForSeverity(hazard.severity);
+          const hierarchies = polygonHierarchiesForHazard(hazard);
+          for (const [index, hierarchy] of hierarchies.entries()) {
+            const polygon = new PolygonGraphics({
+              hierarchy,
+              material: fill,
+              outline: true,
+              outlineColor: outline,
+              outlineWidth: 2,
+            });
+            const entity = new Entity({
+              id: `event:${productId}:${hazard.id}:${index}`,
+              polygon,
+            });
+            viewer.entities.add(entity);
+            nextEntities.push(entity);
+          }
+        }
+
+        eventEntitiesRef.current = nextEntities;
+
+        if (destinationBBox) {
+          const rectangle = Rectangle.fromDegrees(
+            destinationBBox.min_x,
+            destinationBBox.min_y,
+            destinationBBox.max_x,
+            destinationBBox.max_y,
+          );
+          viewer.camera.flyTo({ destination: rectangle, duration: 1.8 });
+        }
+
+        viewer.scene.requestRender();
+      } catch (error) {
+        if (controller.signal.aborted) return;
+        console.warn('[Digital Earth] failed to plot event polygon', error);
+      }
+    })();
+
+    return () => controller.abort();
+  }, [apiBaseUrl, sceneModeId, viewModeRoute, viewer]);
 
   useEffect(() => {
     if (!viewer) return;
