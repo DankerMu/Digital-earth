@@ -1397,4 +1397,197 @@ describe('CesiumViewer', () => {
     });
     expect(vi.mocked(Cartesian3.fromDegrees)).toHaveBeenCalledWith(0, 0, 7500);
   });
+
+  it('restores local layer/time state when returning from layerGlobal mode', async () => {
+    let cloudTick: (() => void) | null = null;
+    const setIntervalSpy = vi
+      .spyOn(window, 'setInterval')
+      .mockImplementation(((handler: TimerHandler) => {
+        cloudTick = typeof handler === 'function' ? (handler as () => void) : null;
+        return 1 as unknown as number;
+      }) as typeof window.setInterval);
+
+    const clearIntervalSpy = vi
+      .spyOn(window, 'clearInterval')
+      .mockImplementation(() => {});
+
+    try {
+      useLayerManagerStore.setState({
+        layers: [
+          {
+            id: 'temperature',
+            type: 'temperature',
+            variable: 'TMP',
+            opacity: 1,
+            visible: true,
+            zIndex: 10,
+          },
+          {
+            id: 'cloud',
+            type: 'cloud',
+            variable: 'tcc',
+            opacity: 0.65,
+            visible: false,
+            zIndex: 20,
+          },
+        ],
+      });
+
+      useViewModeStore.setState({
+        route: { viewModeId: 'local', lat: 30, lon: 120, heightMeters: 0 },
+        history: [],
+        saved: {},
+      });
+
+      render(<CesiumViewer />);
+
+      await waitFor(() => expect(vi.mocked(Viewer)).toHaveBeenCalledTimes(1));
+      const viewer = vi.mocked(Viewer).mock.results[0].value;
+
+      const panelBefore = await screen.findByLabelText('Local info');
+      expect(panelBefore).toHaveTextContent('temperature:TMP');
+      expect(panelBefore).toHaveTextContent('2024-01-15T00:00:00Z');
+
+      await waitFor(() => expect(setIntervalSpy).toHaveBeenCalled());
+      act(() => {
+        cloudTick?.();
+      });
+
+      act(() => {
+        useViewModeStore.getState().enterLayerGlobal({ layerId: 'cloud' });
+      });
+
+      await waitFor(() => expect(useViewModeStore.getState().route.viewModeId).toBe('layerGlobal'));
+      await waitFor(() => {
+        expect(useLayerManagerStore.getState().layers.find((layer) => layer.id === 'cloud')?.visible).toBe(true);
+      });
+
+      const callsBeforeBack = viewer.camera.flyTo.mock.calls.length;
+
+      act(() => {
+        useViewModeStore.getState().goBack();
+      });
+
+      await waitFor(() => expect(useViewModeStore.getState().route.viewModeId).toBe('local'));
+      await waitFor(() => {
+        expect(useLayerManagerStore.getState().layers.find((layer) => layer.id === 'cloud')?.visible).toBe(false);
+      });
+
+      await waitFor(() => expect(viewer.camera.flyTo).toHaveBeenCalledTimes(callsBeforeBack + 1));
+      expect(viewer.camera.flyTo).toHaveBeenLastCalledWith(
+        expect.objectContaining({ duration: 1.2 }),
+      );
+
+      const panelAfter = await screen.findByLabelText('Local info');
+      expect(panelAfter).toHaveTextContent('temperature:TMP');
+      expect(panelAfter).toHaveTextContent('2024-01-15T00:00:00Z');
+      expect(panelAfter).not.toHaveTextContent('2024-01-15T01:00:00Z');
+    } finally {
+      setIntervalSpy.mockRestore();
+      clearIntervalSpy.mockRestore();
+    }
+  });
+
+  it('caches wind vector requests for repeated view keys', async () => {
+    const nowSpy = vi.spyOn(Date, 'now');
+    let now = 0;
+    nowSpy.mockImplementation(() => (now += 1000));
+
+    try {
+      useLayerManagerStore.setState({
+        layers: [
+          {
+            id: 'wind',
+            type: 'wind',
+            variable: 'wind',
+            opacity: 0.7,
+            visible: true,
+            zIndex: 10,
+          },
+        ],
+      });
+
+      const cesium = await import('cesium');
+      (
+        cesium as unknown as {
+          __mocks: { getCamera: () => { computeViewRectangle: ReturnType<typeof vi.fn> } };
+        }
+      ).__mocks.getCamera().computeViewRectangle.mockReturnValue({
+        west: 10,
+        south: 20,
+        east: 30,
+        north: 40,
+      });
+
+      render(<CesiumViewer />);
+
+      await waitFor(() => expect(vi.mocked(Viewer)).toHaveBeenCalledTimes(1));
+      const viewer = vi.mocked(Viewer).mock.results[0].value;
+
+      await waitFor(() => expect(windArrowsMocks.update).toHaveBeenCalled());
+
+      const fetchMock = vi.mocked(globalThis.fetch);
+      const windCallsAfterFirst = fetchMock.mock.calls.filter(
+        ([url]) => typeof url === 'string' && url.includes('/api/v1/vectors/cldas/'),
+      ).length;
+      expect(windCallsAfterFirst).toBe(1);
+
+      (
+        cesium as unknown as {
+          __mocks: { getCamera: () => { computeViewRectangle: ReturnType<typeof vi.fn> } };
+        }
+      ).__mocks.getCamera().computeViewRectangle.mockReturnValue({
+        west: 1,
+        south: 2,
+        east: 3,
+        north: 4,
+      });
+
+      act(() => {
+        (
+          viewer.camera.changed as unknown as { __mocks?: { trigger: () => void } }
+        ).__mocks?.trigger();
+      });
+
+      await waitFor(() => {
+        const calls = fetchMock.mock.calls.filter(
+          ([url]) => typeof url === 'string' && url.includes('/api/v1/vectors/cldas/'),
+        ).length;
+        expect(calls).toBe(2);
+      });
+
+      (
+        cesium as unknown as {
+          __mocks: { getCamera: () => { computeViewRectangle: ReturnType<typeof vi.fn> } };
+        }
+      ).__mocks.getCamera().computeViewRectangle.mockReturnValue({
+        west: 10,
+        south: 20,
+        east: 30,
+        north: 40,
+      });
+
+      const callsBeforeCacheHit = fetchMock.mock.calls.filter(
+        ([url]) => typeof url === 'string' && url.includes('/api/v1/vectors/cldas/'),
+      ).length;
+      const updateCallsBeforeCacheHit = windArrowsMocks.update.mock.calls.length;
+
+      act(() => {
+        (
+          viewer.camera.changed as unknown as { __mocks?: { trigger: () => void } }
+        ).__mocks?.trigger();
+      });
+
+      await waitFor(() =>
+        expect(windArrowsMocks.update).toHaveBeenCalledTimes(updateCallsBeforeCacheHit + 1),
+      );
+
+      const callsAfterCacheHit = fetchMock.mock.calls.filter(
+        ([url]) => typeof url === 'string' && url.includes('/api/v1/vectors/cldas/'),
+      ).length;
+      expect(callsAfterCacheHit).toBe(callsBeforeCacheHit);
+    } finally {
+      nowSpy.mockRestore();
+    }
+  });
 });
