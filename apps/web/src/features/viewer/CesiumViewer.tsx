@@ -56,6 +56,7 @@ import { switchViewerSceneMode } from './cesiumSceneMode';
 import 'cesium/Build/Cesium/Widgets/widgets.css';
 import { getProductDetail } from '../products/productsApi';
 import type { BBox, ProductHazardDetail } from '../products/productsTypes';
+import { extractGeoJsonPolygons, type LonLat } from './geoJsonPolygons';
 
 const DEFAULT_CAMERA = {
   longitude: 116.391,
@@ -87,94 +88,91 @@ const LAYER_GLOBAL_SHELL_HEIGHT_METERS_BY_LAYER_TYPE: Record<LayerType, number> 
   wind: 8000,
 };
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === 'object';
+type LongitudeInterval = { start: number; end: number };
+
+function normalizeLongitude360(value: number): number {
+  const normalized = ((value % 360) + 360) % 360;
+  return normalized === 360 ? 0 : normalized;
 }
 
-type LonLat = { lon: number; lat: number };
-type PolygonLonLat = { outer: LonLat[]; holes: LonLat[][] };
-
-function parseGeoJsonPosition(value: unknown): LonLat | null {
-  if (!Array.isArray(value) || value.length < 2) return null;
-  const lon = value[0];
-  const lat = value[1];
-  if (typeof lon !== 'number' || !Number.isFinite(lon)) return null;
-  if (typeof lat !== 'number' || !Number.isFinite(lat)) return null;
-  return { lon, lat };
+function normalizeLongitude180(value: number): number {
+  const normalized = normalizeLongitude360(value);
+  if (normalized > 180) return normalized - 360;
+  return normalized;
 }
 
-function parseGeoJsonRing(value: unknown): LonLat[] | null {
-  if (!Array.isArray(value)) return null;
-  const positions: LonLat[] = [];
-  for (const entry of value) {
-    const parsed = parseGeoJsonPosition(entry);
-    if (!parsed) continue;
-    positions.push(parsed);
+function mergeLongitudeIntervals(intervals: LongitudeInterval[]): LongitudeInterval[] {
+  if (intervals.length === 0) return [];
+  const sorted = [...intervals].sort((a, b) => a.start - b.start);
+  const merged: LongitudeInterval[] = [];
+
+  for (const interval of sorted) {
+    const last = merged[merged.length - 1];
+    if (!last || interval.start > last.end) {
+      merged.push({ start: interval.start, end: interval.end });
+      continue;
+    }
+    last.end = Math.max(last.end, interval.end);
   }
-  return positions.length >= 3 ? positions : null;
+
+  return merged;
 }
 
-function parseGeoJsonPolygon(value: unknown): PolygonLonLat | null {
-  if (!Array.isArray(value) || value.length === 0) return null;
-  const rings = value
-    .map(parseGeoJsonRing)
-    .filter((ring): ring is LonLat[] => ring != null);
-  if (rings.length === 0) return null;
-  return { outer: rings[0]!, holes: rings.slice(1) };
-}
+function longitudeRangeUnion(bboxes: BBox[]): { west: number; east: number } {
+  const intervals: LongitudeInterval[] = [];
 
-function extractGeoJsonPolygons(value: unknown): PolygonLonLat[] {
-  if (!isRecord(value)) return [];
-  const type = value.type;
-  if (typeof type !== 'string') return [];
-
-  if (type === 'Feature') {
-    return extractGeoJsonPolygons(value.geometry);
+  for (const bbox of bboxes) {
+    const start = normalizeLongitude360(bbox.min_x);
+    const end = normalizeLongitude360(bbox.max_x);
+    if (start <= end) {
+      intervals.push({ start, end });
+      continue;
+    }
+    intervals.push({ start, end: 360 });
+    intervals.push({ start: 0, end });
   }
 
-  if (type === 'FeatureCollection') {
-    const features = value.features;
-    if (!Array.isArray(features)) return [];
-    return features.flatMap((feature) => extractGeoJsonPolygons(feature));
+  const merged = mergeLongitudeIntervals(intervals);
+  if (merged.length === 0) {
+    return { west: bboxes[0]?.min_x ?? 0, east: bboxes[0]?.max_x ?? 0 };
   }
 
-  if (type === 'GeometryCollection') {
-    const geoms = value.geometries;
-    if (!Array.isArray(geoms)) return [];
-    return geoms.flatMap((geom) => extractGeoJsonPolygons(geom));
+  const covered = merged.reduce((sum, interval) => sum + (interval.end - interval.start), 0);
+  if (covered >= 360) {
+    return { west: -180, east: 180 };
   }
 
-  if (type === 'Polygon') {
-    const parsed = parseGeoJsonPolygon(value.coordinates);
-    return parsed ? [parsed] : [];
+  let maxGap = -1;
+  let maxGapIndex = 0;
+  for (let index = 0; index < merged.length; index += 1) {
+    const current = merged[index]!;
+    const next = merged[(index + 1) % merged.length]!;
+    const gap = index === merged.length - 1 ? next.start + 360 - current.end : next.start - current.end;
+    if (gap > maxGap) {
+      maxGap = gap;
+      maxGapIndex = index;
+    }
   }
 
-  if (type === 'MultiPolygon') {
-    const raw = value.coordinates;
-    if (!Array.isArray(raw)) return [];
-    return raw
-      .map(parseGeoJsonPolygon)
-      .filter((polygon): polygon is PolygonLonLat => polygon != null);
-  }
-
-  return [];
+  const start = merged[(maxGapIndex + 1) % merged.length]!.start;
+  const end = merged[maxGapIndex]!.end;
+  const west = normalizeLongitude180(start);
+  const east = normalizeLongitude180(end === 360 ? 0 : end);
+  return { west, east };
 }
 
 function bboxUnion(bboxes: BBox[]): BBox | null {
   if (bboxes.length === 0) return null;
-  let min_x = bboxes[0]!.min_x;
   let min_y = bboxes[0]!.min_y;
-  let max_x = bboxes[0]!.max_x;
   let max_y = bboxes[0]!.max_y;
 
   for (const bbox of bboxes.slice(1)) {
-    min_x = Math.min(min_x, bbox.min_x);
     min_y = Math.min(min_y, bbox.min_y);
-    max_x = Math.max(max_x, bbox.max_x);
     max_y = Math.max(max_y, bbox.max_y);
   }
 
-  return { min_x, min_y, max_x, max_y };
+  const { west, east } = longitudeRangeUnion(bboxes);
+  return { min_x: west, min_y, max_x: east, max_y };
 }
 
 function materialForSeverity(severity: string): { fill: Color; outline: Color } {
@@ -1144,6 +1142,7 @@ export function CesiumViewer() {
         viewer.entities.remove(entity);
       }
       eventEntitiesRef.current = [];
+      viewer.scene.requestRender();
     }
 
     void (async () => {
@@ -1154,6 +1153,7 @@ export function CesiumViewer() {
           signal: controller.signal,
         });
         if (controller.signal.aborted) return;
+        if (eventEntryKeyRef.current !== key) return;
 
         const hazards = product.hazards;
         const destinationBBox = bboxUnion(hazards.map((hazard) => hazard.bbox));
@@ -1195,7 +1195,11 @@ export function CesiumViewer() {
         viewer.scene.requestRender();
       } catch (error) {
         if (controller.signal.aborted) return;
+        if (eventEntryKeyRef.current !== key) return;
         console.warn('[Digital Earth] failed to plot event polygon', error);
+        viewer.scene.requestRender();
+      } finally {
+        if (eventAbortRef.current === controller) eventAbortRef.current = null;
       }
     })();
 

@@ -1,13 +1,15 @@
 import { useCallback, useEffect, useState } from 'react';
 
 import { loadConfig } from '../../config';
-import { getProductDetail, getProductsQuery } from './productsApi';
+import { clearProductsCache, getProductDetail, getProductsQuery } from './productsApi';
 import type { ProductDetail, ProductSummary } from './productsTypes';
 
 type LoadState =
   | { status: 'loading' }
   | { status: 'loaded' }
   | { status: 'error'; message: string };
+
+const PRODUCT_DETAIL_FETCH_CONCURRENCY = 4;
 
 export type ProductsPanelState = {
   list: LoadState;
@@ -30,6 +32,7 @@ export function useProductsPanel(): ProductsPanelState {
   const [detailsById, setDetailsById] = useState<Record<string, ProductDetail>>({});
 
   const reload = useCallback(() => {
+    clearProductsCache();
     setLoadToken((token) => token + 1);
   }, []);
 
@@ -60,26 +63,50 @@ export function useProductsPanel(): ProductsPanelState {
         }
 
         setDetailsStatus('loading');
+        const nextDetails: Record<string, ProductDetail> = {};
+        let flushScheduled = false;
 
-        const results = await Promise.allSettled(
-          products.items.map((product) =>
-            getProductDetail({
-              apiBaseUrl,
-              productId: String(product.id),
-              signal: controller.signal,
-            }),
-          ),
-        );
+        const scheduleFlush = () => {
+          if (flushScheduled) return;
+          flushScheduled = true;
+          queueMicrotask(() => {
+            flushScheduled = false;
+            if (controller.signal.aborted) return;
+            setDetailsById({ ...nextDetails });
+          });
+        };
+
+        let index = 0;
+        const worker = async () => {
+          while (true) {
+            if (controller.signal.aborted) return;
+            const current = index;
+            index += 1;
+            if (current >= products.items.length) return;
+
+            const product = products.items[current]!;
+            try {
+              const detail = await getProductDetail({
+                apiBaseUrl,
+                productId: String(product.id),
+                signal: controller.signal,
+              });
+              if (controller.signal.aborted) return;
+              nextDetails[String(detail.id)] = detail;
+              scheduleFlush();
+            } catch {
+              if (controller.signal.aborted) return;
+            }
+          }
+        };
+
+        const workerCount = Math.min(PRODUCT_DETAIL_FETCH_CONCURRENCY, products.items.length);
+        const workers = Array.from({ length: workerCount }, () => worker());
+        await Promise.all(workers);
 
         if (controller.signal.aborted) return;
 
-        const nextDetails: Record<string, ProductDetail> = {};
-        for (const result of results) {
-          if (result.status !== 'fulfilled') continue;
-          nextDetails[String(result.value.id)] = result.value;
-        }
-
-        setDetailsById(nextDetails);
+        setDetailsById({ ...nextDetails });
         setDetailsStatus('loaded');
       } catch (error) {
         if (controller.signal.aborted) return;
@@ -92,4 +119,3 @@ export function useProductsPanel(): ProductsPanelState {
 
   return { list, detailsStatus, items, detailsById, reload };
 }
-

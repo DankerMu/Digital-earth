@@ -57,6 +57,12 @@ function isNonEmptyString(value: unknown): value is string {
   return typeof value === 'string' && value.trim().length > 0;
 }
 
+function normalizeLongitudeDegrees(value: number): number {
+  const normalized = ((value + 180) % 360 + 360) % 360 - 180;
+  if (normalized === -180 && value > 0) return 180;
+  return normalized;
+}
+
 function parseBBox(value: unknown): BBox {
   if (!isRecord(value)) {
     throw new Error('Invalid bbox');
@@ -76,7 +82,12 @@ function parseBBox(value: unknown): BBox {
     throw new Error('Invalid bbox');
   }
 
-  return { min_x, min_y, max_x, max_y };
+  const normalizedMinX = normalizeLongitudeDegrees(min_x);
+  const normalizedMaxX = normalizeLongitudeDegrees(max_x);
+  const minY = Math.min(min_y, max_y);
+  const maxY = Math.max(min_y, max_y);
+
+  return { min_x: normalizedMinX, min_y: minY, max_x: normalizedMaxX, max_y: maxY };
 }
 
 function parseProductHazardSummary(value: unknown): ProductHazardSummary | null {

@@ -1898,4 +1898,97 @@ describe('CesiumViewer', () => {
       }),
     });
   });
+
+  it('handles dateline-crossing bboxes when flying camera for events', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url =
+          typeof input === 'string'
+            ? input
+            : input instanceof URL
+              ? input.toString()
+              : input.url;
+        if (url.endsWith('/config.json')) {
+          return jsonResponse({ apiBaseUrl: 'http://api.test' });
+        }
+        if (url === 'http://api.test/api/v1/products/99') {
+          return jsonResponse({
+            id: 99,
+            title: 'dateline',
+            text: null,
+            issued_at: '2026-01-01T00:00:00Z',
+            valid_from: '2026-01-01T00:00:00Z',
+            valid_to: '2026-01-02T00:00:00Z',
+            version: 1,
+            status: 'published',
+            hazards: [
+              {
+                id: 1,
+                severity: 'low',
+                geometry: null,
+                bbox: { min_x: 170, min_y: 10, max_x: 179, max_y: 20 },
+                valid_from: '2026-01-01T00:00:00Z',
+                valid_to: '2026-01-02T00:00:00Z',
+              },
+              {
+                id: 2,
+                severity: 'high',
+                geometry: null,
+                bbox: { min_x: -179, min_y: 20, max_x: 190, max_y: 10 },
+                valid_from: '2026-01-01T00:00:00Z',
+                valid_to: '2026-01-02T00:00:00Z',
+              },
+            ],
+          });
+        }
+        return jsonResponse({});
+      }),
+    );
+
+    render(<CesiumViewer />);
+    await waitFor(() => expect(vi.mocked(Viewer)).toHaveBeenCalledTimes(1));
+
+    const viewer = vi.mocked(Viewer).mock.results[0].value;
+    vi.mocked(viewer.camera.flyTo).mockClear();
+    vi.mocked(Rectangle.fromDegrees).mockClear();
+
+    act(() => {
+      useViewModeStore.getState().enterEvent({ productId: '99' });
+    });
+
+    await waitFor(() => expect(Rectangle.fromDegrees).toHaveBeenCalled());
+
+    expect(Rectangle.fromDegrees).toHaveBeenCalledWith(170, 10, -170, 20);
+    expect(viewer.camera.flyTo).toHaveBeenCalledWith(
+      expect.objectContaining({ duration: 1.8 }),
+    );
+  });
+
+  it('requests render after clearing event entities even when the next request fails', async () => {
+    render(<CesiumViewer />);
+    await waitFor(() => expect(vi.mocked(Viewer)).toHaveBeenCalledTimes(1));
+
+    const viewer = vi.mocked(Viewer).mock.results[0].value;
+    vi.mocked(viewer.scene.requestRender).mockClear();
+    vi.mocked(viewer.entities.add).mockClear();
+
+    act(() => {
+      useViewModeStore.getState().enterEvent({ productId: '1' });
+    });
+
+    await waitFor(() => expect(viewer.entities.add).toHaveBeenCalled());
+
+    vi.mocked(viewer.entities.remove).mockClear();
+    vi.mocked(viewer.scene.requestRender).mockClear();
+
+    act(() => {
+      useViewModeStore.getState().enterEvent({ productId: '2' });
+    });
+
+    await waitFor(() => expect(viewer.entities.remove).toHaveBeenCalled());
+    expect(viewer.scene.requestRender).toHaveBeenCalled();
+
+    expect(viewer.entities.add).toHaveBeenCalledTimes(1);
+  });
 });

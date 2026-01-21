@@ -85,5 +85,65 @@ describe('productsApi', () => {
 
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
-});
 
+  it('bypasses cached results when cache is set to no-cache', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input.toString();
+
+      if (url === 'http://api.test/api/v1/products') {
+        return jsonResponse({ page: 1, page_size: 50, total: 0, items: [] });
+      }
+
+      if (url === 'http://api.test/api/v1/products/1') {
+        return jsonResponse({
+          id: 1,
+          title: '降雪',
+          text: '降雪预警',
+          issued_at: '2026-01-01T00:00:00Z',
+          valid_from: '2026-01-01T00:00:00Z',
+          valid_to: '2026-01-02T00:00:00Z',
+          version: 1,
+          status: 'published',
+          hazards: [],
+        });
+      }
+
+      return new Response('Not Found', { status: 404 });
+    });
+
+    vi.stubGlobal('fetch', fetchMock);
+
+    const apiBaseUrl = 'http://api.test/';
+
+    await getProductsQuery({ apiBaseUrl });
+    await getProductsQuery({ apiBaseUrl });
+    await getProductsQuery({ apiBaseUrl, cache: 'no-cache' });
+
+    await getProductDetail({ apiBaseUrl, productId: '1' });
+    await getProductDetail({ apiBaseUrl, productId: '1' });
+    await getProductDetail({ apiBaseUrl, productId: '1', cache: 'no-cache' });
+
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+  });
+
+  it('evicts older cache entries when exceeding the max size', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      if (url.endsWith('/api/v1/products')) {
+        return jsonResponse({ page: 1, page_size: 50, total: 0, items: [] });
+      }
+      return new Response('Not Found', { status: 404 });
+    });
+
+    vi.stubGlobal('fetch', fetchMock);
+
+    const baseUrls = Array.from({ length: 11 }, (_, index) => `http://api-${index}.test/`);
+    for (const apiBaseUrl of baseUrls) {
+      await getProductsQuery({ apiBaseUrl });
+    }
+
+    await getProductsQuery({ apiBaseUrl: baseUrls[0]! });
+
+    expect(fetchMock).toHaveBeenCalledTimes(12);
+  });
+});
