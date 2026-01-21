@@ -6,6 +6,7 @@ import {
   EllipsoidTerrainProvider,
   ImageryLayer,
   Ion,
+  Math as CesiumMath,
   UrlTemplateImageryProvider,
   Viewer,
   WebMercatorTilingScheme,
@@ -16,10 +17,14 @@ import { loadConfig, type MapConfig } from '../../config';
 import { getBasemapById, type BasemapId } from '../../config/basemaps';
 import { useBasemapStore } from '../../state/basemap';
 import { useLayerManagerStore } from '../../state/layerManager';
+import { usePerformanceModeStore } from '../../state/performanceMode';
 import { useSceneModeStore } from '../../state/sceneMode';
+import { PrecipitationParticles } from '../effects/PrecipitationParticles';
+import { createWeatherSampler } from '../effects/weatherSampler';
 import { CloudLayer } from '../layers/CloudLayer';
 import { PrecipitationLayer } from '../layers/PrecipitationLayer';
 import { TemperatureLayer } from '../layers/TemperatureLayer';
+import { buildCldasTileUrlTemplate, buildPrecipitationTileUrlTemplate } from '../layers/layersApi';
 import { BasemapSelector } from './BasemapSelector';
 import { CompassControl } from './CompassControl';
 import { EventLayersToggle } from './EventLayersToggle';
@@ -41,6 +46,8 @@ const DEFAULT_LAYER_TIME_KEY = '2024-01-15T00:00:00Z';
 const CLOUD_LAYER_REFRESH_INTERVAL_MS = 5 * 60 * 1000;
 const CLOUD_LAYER_FRAME_COUNT = 24;
 const CLOUD_LAYER_FRAME_STEP_MS = 60 * 60 * 1000;
+const WEATHER_SAMPLE_THROTTLE_MS = 750;
+const WEATHER_SAMPLE_ZOOM = 8;
 
 function toUtcIsoNoMillis(date: Date): string {
   return date.toISOString().replace(/\.\d{3}Z$/, 'Z');
@@ -78,11 +85,15 @@ export function CesiumViewer() {
   const basemapId = useBasemapStore((state) => state.basemapId);
   const sceneModeId = useSceneModeStore((state) => state.sceneModeId);
   const layers = useLayerManagerStore((state) => state.layers);
+  const performanceModeEnabled = usePerformanceModeStore((state) => state.enabled);
   const appliedBasemapIdRef = useRef<BasemapId | null>(null);
   const didApplySceneModeRef = useRef(false);
   const temperatureLayersRef = useRef<Map<string, TemperatureLayer>>(new Map());
   const cloudLayersRef = useRef<Map<string, CloudLayer>>(new Map());
   const precipitationLayersRef = useRef<Map<string, PrecipitationLayer>>(new Map());
+  const precipitationParticlesRef = useRef<PrecipitationParticles | null>(null);
+  const weatherSamplerRef = useRef<ReturnType<typeof createWeatherSampler> | null>(null);
+  const weatherAbortRef = useRef<AbortController | null>(null);
   const [cloudFrameIndex, setCloudFrameIndex] = useState(0);
   const cloudTimeKey = useMemo(
     () => makeHourlyUtcIso(DEFAULT_LAYER_TIME_KEY, cloudFrameIndex),
@@ -311,6 +322,163 @@ export function CesiumViewer() {
       existing.clear();
     };
   }, [viewer]);
+
+  useEffect(() => {
+    if (!viewer) return;
+
+    const particles = new PrecipitationParticles(viewer);
+    precipitationParticlesRef.current = particles;
+
+    return () => {
+      particles.destroy();
+      precipitationParticlesRef.current = null;
+    };
+  }, [viewer]);
+
+  const precipitationLayerConfig = useMemo(() => {
+    const visible = layers.find((layer) => layer.type === 'precipitation' && layer.visible);
+    return visible ?? layers.find((layer) => layer.type === 'precipitation') ?? null;
+  }, [layers]);
+
+  const temperatureLayerConfig = useMemo(() => {
+    const visible = layers.find((layer) => layer.type === 'temperature' && layer.visible);
+    return visible ?? layers.find((layer) => layer.type === 'temperature') ?? null;
+  }, [layers]);
+
+  useEffect(() => {
+    if (!apiBaseUrl) return;
+    if (!precipitationLayerConfig) {
+      weatherSamplerRef.current = null;
+      return;
+    }
+
+    const precipitationTemplate = buildPrecipitationTileUrlTemplate({
+      apiBaseUrl,
+      timeKey: DEFAULT_LAYER_TIME_KEY,
+      threshold: precipitationLayerConfig.threshold,
+    });
+
+    const temperatureVariable = (temperatureLayerConfig?.variable || 'TMP').trim() || 'TMP';
+    const temperatureTemplate = buildCldasTileUrlTemplate({
+      apiBaseUrl,
+      timeKey: DEFAULT_LAYER_TIME_KEY,
+      variable: temperatureVariable.toUpperCase(),
+    });
+
+    weatherSamplerRef.current = createWeatherSampler({
+      zoom: WEATHER_SAMPLE_ZOOM,
+      precipitation: { urlTemplate: precipitationTemplate },
+      temperature: { urlTemplate: temperatureTemplate },
+    });
+  }, [apiBaseUrl, precipitationLayerConfig, temperatureLayerConfig]);
+
+  useEffect(() => {
+    if (!viewer) return;
+
+    const particles = precipitationParticlesRef.current;
+    if (!particles) return;
+
+    let timeoutId: number | null = null;
+    let lastSampleAt = 0;
+    let pending = false;
+
+    const clearTimer = () => {
+      if (timeoutId == null) return;
+      window.clearTimeout(timeoutId);
+      timeoutId = null;
+    };
+
+    const cancelInFlight = () => {
+      weatherAbortRef.current?.abort();
+      weatherAbortRef.current = null;
+    };
+
+    const disableParticles = () => {
+      cancelInFlight();
+      particles.update({
+        enabled: false,
+        intensity: 0,
+        kind: 'none',
+        performanceModeEnabled,
+      });
+    };
+
+    const runSample = async () => {
+      clearTimer();
+
+      const precipitationVisible = precipitationLayerConfig?.visible === true;
+      const sampler = weatherSamplerRef.current;
+      if (!precipitationVisible || performanceModeEnabled || !sampler) {
+        disableParticles();
+        return;
+      }
+
+      const cartographic = viewer.camera.positionCartographic;
+      if (!cartographic) {
+        disableParticles();
+        return;
+      }
+
+      const lon = CesiumMath.toDegrees(cartographic.longitude);
+      const lat = CesiumMath.toDegrees(cartographic.latitude);
+
+      cancelInFlight();
+      const controller = new AbortController();
+      weatherAbortRef.current = controller;
+
+      try {
+        const sample = await sampler.sample({ lon, lat, signal: controller.signal });
+        if (controller.signal.aborted) return;
+
+        particles.update({
+          enabled: true,
+          intensity: sample.precipitationIntensity,
+          kind: sample.precipitationKind,
+          performanceModeEnabled,
+        });
+      } catch {
+        if (controller.signal.aborted) return;
+        disableParticles();
+      }
+    };
+
+    const scheduleSample = () => {
+      const now = Date.now();
+      const elapsed = now - lastSampleAt;
+
+      if (elapsed >= WEATHER_SAMPLE_THROTTLE_MS && timeoutId == null) {
+        lastSampleAt = now;
+        void runSample();
+        return;
+      }
+
+      pending = true;
+      if (timeoutId != null) return;
+      timeoutId = window.setTimeout(() => {
+        timeoutId = null;
+        if (!pending) return;
+        pending = false;
+        lastSampleAt = Date.now();
+        void runSample();
+      }, Math.max(0, WEATHER_SAMPLE_THROTTLE_MS - elapsed));
+    };
+
+    const camera = viewer.camera as unknown as {
+      changed?: { addEventListener?: (handler: () => void) => void; removeEventListener?: (handler: () => void) => void };
+      moveEnd?: { addEventListener?: (handler: () => void) => void; removeEventListener?: (handler: () => void) => void };
+    };
+
+    camera.changed?.addEventListener?.(scheduleSample);
+    camera.moveEnd?.addEventListener?.(scheduleSample);
+    scheduleSample();
+
+    return () => {
+      camera.changed?.removeEventListener?.(scheduleSample);
+      camera.moveEnd?.removeEventListener?.(scheduleSample);
+      clearTimer();
+      cancelInFlight();
+    };
+  }, [apiBaseUrl, performanceModeEnabled, precipitationLayerConfig, temperatureLayerConfig, viewer]);
 
   useEffect(() => {
     if (!viewer) return;
