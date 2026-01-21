@@ -15,7 +15,9 @@ import { useEffect, useRef, useState } from 'react';
 import { loadConfig, type MapConfig } from '../../config';
 import { getBasemapById, type BasemapId } from '../../config/basemaps';
 import { useBasemapStore } from '../../state/basemap';
+import { useLayerManagerStore } from '../../state/layerManager';
 import { useSceneModeStore } from '../../state/sceneMode';
+import { TemperatureLayer } from '../layers/TemperatureLayer';
 import { BasemapSelector } from './BasemapSelector';
 import { CompassControl } from './CompassControl';
 import { EventLayersToggle } from './EventLayersToggle';
@@ -33,6 +35,8 @@ const DEFAULT_CAMERA = {
 const MIN_ZOOM_DISTANCE_METERS = 100;
 const MAX_ZOOM_DISTANCE_METERS = 40_000_000;
 
+const DEFAULT_LAYER_TIME_KEY = '2024-01-15T00:00:00Z';
+
 function normalizeSelfHostedBasemapTemplate(
   urlTemplate: string,
   scheme: 'xyz' | 'tms',
@@ -46,11 +50,14 @@ export function CesiumViewer() {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [viewer, setViewer] = useState<CesiumViewerInstance | null>(null);
   const [mapConfig, setMapConfig] = useState<MapConfig | undefined>(undefined);
+  const [apiBaseUrl, setApiBaseUrl] = useState<string | null>(null);
   const [terrainNotice, setTerrainNotice] = useState<string | null>(null);
   const basemapId = useBasemapStore((state) => state.basemapId);
   const sceneModeId = useSceneModeStore((state) => state.sceneModeId);
+  const layers = useLayerManagerStore((state) => state.layers);
   const appliedBasemapIdRef = useRef<BasemapId | null>(null);
   const didApplySceneModeRef = useRef(false);
+  const temperatureLayersRef = useRef<Map<string, TemperatureLayer>>(new Map());
 
   const basemapProvider = mapConfig?.basemapProvider ?? 'open';
 
@@ -60,10 +67,12 @@ export function CesiumViewer() {
       .then((config) => {
         if (cancelled) return;
         setMapConfig(config.map);
+        setApiBaseUrl(config.apiBaseUrl);
       })
       .catch(() => {
         if (cancelled) return;
         setMapConfig(undefined);
+        setApiBaseUrl(null);
       });
     return () => {
       cancelled = true;
@@ -236,6 +245,63 @@ export function CesiumViewer() {
 
     return switchViewerSceneMode(viewer, sceneModeId, { duration });
   }, [sceneModeId, viewer]);
+
+  useEffect(() => {
+    if (!viewer) return;
+
+    return () => {
+      const existing = temperatureLayersRef.current;
+      for (const layer of existing.values()) {
+        layer.destroy();
+      }
+      existing.clear();
+    };
+  }, [viewer]);
+
+  useEffect(() => {
+    if (!viewer) return;
+    if (!apiBaseUrl) return;
+
+    const existing = temperatureLayersRef.current;
+    const nextIds = new Set<string>();
+    const nextConfigs = layers.filter((layer) => layer.type === 'temperature');
+
+    for (const config of nextConfigs) {
+      nextIds.add(config.id);
+
+      const params = {
+        id: config.id,
+        apiBaseUrl,
+        timeKey: DEFAULT_LAYER_TIME_KEY,
+        variable: config.variable,
+        opacity: config.opacity,
+        visible: config.visible,
+        zIndex: config.zIndex,
+      };
+
+      const current = existing.get(config.id);
+      if (current) {
+        current.update(params);
+      } else {
+        existing.set(config.id, new TemperatureLayer(viewer, params));
+      }
+    }
+
+    for (const [id, layer] of existing.entries()) {
+      if (nextIds.has(id)) continue;
+      layer.destroy();
+      existing.delete(id);
+    }
+
+    const sorted = [...nextConfigs].sort(
+      (a, b) => a.zIndex - b.zIndex || a.id.localeCompare(b.id),
+    );
+    for (const config of sorted) {
+      const layer = existing.get(config.id)?.layer;
+      if (!layer) continue;
+      viewer.imageryLayers.raiseToTop(layer);
+    }
+  }, [apiBaseUrl, layers, viewer]);
 
   return (
     <div className="viewerRoot">
