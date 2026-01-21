@@ -3,6 +3,7 @@ import { useSyncExternalStore } from 'react';
 export type ViewModeId = 'global' | 'local' | 'event' | 'layerGlobal';
 
 export const DEFAULT_VIEW_MODE_ID: ViewModeId = 'global';
+const DEFAULT_ROUTE: ViewModeRoute = { viewModeId: 'global' };
 
 export function isViewModeId(value: unknown): value is ViewModeId {
   return (
@@ -102,11 +103,20 @@ function isViewModeRoute(value: unknown): value is ViewModeRoute {
 }
 
 function routesEqual(a: ViewModeRoute, b: ViewModeRoute): boolean {
-  if (a.viewModeId !== b.viewModeId) return false;
-  if (a.viewModeId === 'global') return true;
-  if (a.viewModeId === 'local') return Object.is(a.lat, b.lat) && Object.is(a.lon, b.lon);
-  if (a.viewModeId === 'event') return a.productId === b.productId;
-  return a.layerId === b.layerId;
+  switch (a.viewModeId) {
+    case 'global':
+      return b.viewModeId === 'global';
+    case 'local':
+      return (
+        b.viewModeId === 'local' &&
+        Object.is(a.lat, b.lat) &&
+        Object.is(a.lon, b.lon)
+      );
+    case 'event':
+      return b.viewModeId === 'event' && a.productId === b.productId;
+    case 'layerGlobal':
+      return b.viewModeId === 'layerGlobal' && a.layerId === b.layerId;
+  }
 }
 
 type PersistedViewModeState = {
@@ -120,7 +130,7 @@ function safeReadPersistedState(): PersistedViewModeState {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) {
       return {
-        route: { viewModeId: DEFAULT_VIEW_MODE_ID },
+        route: DEFAULT_ROUTE,
         history: [],
         saved: {},
       };
@@ -129,7 +139,7 @@ function safeReadPersistedState(): PersistedViewModeState {
     const parsed = JSON.parse(raw) as unknown;
     if (!isRecord(parsed)) {
       return {
-        route: { viewModeId: DEFAULT_VIEW_MODE_ID },
+        route: DEFAULT_ROUTE,
         history: [],
         saved: {},
       };
@@ -137,7 +147,7 @@ function safeReadPersistedState(): PersistedViewModeState {
 
     const route = isViewModeRoute(parsed.route)
       ? parsed.route
-      : { viewModeId: DEFAULT_VIEW_MODE_ID };
+      : DEFAULT_ROUTE;
 
     const history = Array.isArray(parsed.history)
       ? parsed.history.filter(isViewModeRoute).slice(-MAX_HISTORY)
@@ -164,7 +174,7 @@ function safeReadPersistedState(): PersistedViewModeState {
     return { route, history, saved };
   } catch {
     return {
-      route: { viewModeId: DEFAULT_VIEW_MODE_ID },
+      route: DEFAULT_ROUTE,
       history: [],
       saved: {},
     };
