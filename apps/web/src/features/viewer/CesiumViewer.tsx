@@ -11,12 +11,13 @@ import {
   WebMercatorTilingScheme,
   type Viewer as CesiumViewerInstance
 } from 'cesium';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { loadConfig, type MapConfig } from '../../config';
 import { getBasemapById, type BasemapId } from '../../config/basemaps';
 import { useBasemapStore } from '../../state/basemap';
 import { useLayerManagerStore } from '../../state/layerManager';
 import { useSceneModeStore } from '../../state/sceneMode';
+import { CloudLayer } from '../layers/CloudLayer';
 import { TemperatureLayer } from '../layers/TemperatureLayer';
 import { BasemapSelector } from './BasemapSelector';
 import { CompassControl } from './CompassControl';
@@ -36,6 +37,27 @@ const MIN_ZOOM_DISTANCE_METERS = 100;
 const MAX_ZOOM_DISTANCE_METERS = 40_000_000;
 
 const DEFAULT_LAYER_TIME_KEY = '2024-01-15T00:00:00Z';
+const CLOUD_LAYER_REFRESH_INTERVAL_MS = 5 * 60 * 1000;
+const CLOUD_LAYER_FRAME_COUNT = 24;
+const CLOUD_LAYER_FRAME_STEP_MS = 60 * 60 * 1000;
+
+function toUtcIsoNoMillis(date: Date): string {
+  return date.toISOString().replace(/\.\d{3}Z$/, 'Z');
+}
+
+function makeHourlyUtcIso(baseUtcIso: string, frameIndex: number): string {
+  const base = new Date(baseUtcIso);
+  if (Number.isNaN(base.getTime())) return baseUtcIso;
+
+  const normalized =
+    ((frameIndex % CLOUD_LAYER_FRAME_COUNT) + CLOUD_LAYER_FRAME_COUNT) %
+    CLOUD_LAYER_FRAME_COUNT;
+  return toUtcIsoNoMillis(new Date(base.getTime() + normalized * CLOUD_LAYER_FRAME_STEP_MS));
+}
+
+function sortByZIndex(a: { zIndex: number; id: string }, b: { zIndex: number; id: string }): number {
+  return a.zIndex - b.zIndex || a.id.localeCompare(b.id);
+}
 
 function normalizeSelfHostedBasemapTemplate(
   urlTemplate: string,
@@ -58,6 +80,12 @@ export function CesiumViewer() {
   const appliedBasemapIdRef = useRef<BasemapId | null>(null);
   const didApplySceneModeRef = useRef(false);
   const temperatureLayersRef = useRef<Map<string, TemperatureLayer>>(new Map());
+  const cloudLayersRef = useRef<Map<string, CloudLayer>>(new Map());
+  const [cloudFrameIndex, setCloudFrameIndex] = useState(0);
+  const cloudTimeKey = useMemo(
+    () => makeHourlyUtcIso(DEFAULT_LAYER_TIME_KEY, cloudFrameIndex),
+    [cloudFrameIndex],
+  );
 
   const basemapProvider = mapConfig?.basemapProvider ?? 'open';
 
@@ -249,14 +277,41 @@ export function CesiumViewer() {
   useEffect(() => {
     if (!viewer) return;
 
+    const existing = temperatureLayersRef.current;
     return () => {
-      const existing = temperatureLayersRef.current;
       for (const layer of existing.values()) {
         layer.destroy();
       }
       existing.clear();
     };
   }, [viewer]);
+
+  useEffect(() => {
+    if (!viewer) return;
+
+    const existing = cloudLayersRef.current;
+    return () => {
+      for (const layer of existing.values()) {
+        layer.destroy();
+      }
+      existing.clear();
+    };
+  }, [viewer]);
+
+  useEffect(() => {
+    if (!viewer) return;
+    if (!apiBaseUrl) return;
+    const hasCloudLayer = layers.some((layer) => layer.type === 'cloud');
+    if (!hasCloudLayer) return;
+
+    const intervalId = window.setInterval(() => {
+      setCloudFrameIndex((index) => (index + 1) % CLOUD_LAYER_FRAME_COUNT);
+    }, CLOUD_LAYER_REFRESH_INTERVAL_MS);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [apiBaseUrl, layers, viewer]);
 
   useEffect(() => {
     if (!viewer) return;
@@ -292,16 +347,56 @@ export function CesiumViewer() {
       layer.destroy();
       existing.delete(id);
     }
+  }, [apiBaseUrl, layers, viewer]);
 
-    const sorted = [...nextConfigs].sort(
-      (a, b) => a.zIndex - b.zIndex || a.id.localeCompare(b.id),
-    );
+  useEffect(() => {
+    if (!viewer) return;
+    if (!apiBaseUrl) return;
+
+    const existing = cloudLayersRef.current;
+    const nextIds = new Set<string>();
+    const nextConfigs = layers.filter((layer) => layer.type === 'cloud');
+
+    for (const config of nextConfigs) {
+      nextIds.add(config.id);
+
+      const params = {
+        id: config.id,
+        apiBaseUrl,
+        timeKey: cloudTimeKey,
+        variable: config.variable,
+        opacity: config.opacity,
+        visible: config.visible,
+        zIndex: config.zIndex,
+      };
+
+      const current = existing.get(config.id);
+      if (current) {
+        current.update(params);
+      } else {
+        existing.set(config.id, new CloudLayer(viewer, params));
+      }
+    }
+
+    for (const [id, layer] of existing.entries()) {
+      if (nextIds.has(id)) continue;
+      layer.destroy();
+      existing.delete(id);
+    }
+  }, [apiBaseUrl, cloudTimeKey, layers, viewer]);
+
+  useEffect(() => {
+    if (!viewer) return;
+
+    const sorted = [...layers].sort(sortByZIndex);
     for (const config of sorted) {
-      const layer = existing.get(config.id)?.layer;
+      const layer =
+        temperatureLayersRef.current.get(config.id)?.layer ??
+        cloudLayersRef.current.get(config.id)?.layer;
       if (!layer) continue;
       viewer.imageryLayers.raiseToTop(layer);
     }
-  }, [apiBaseUrl, layers, viewer]);
+  }, [apiBaseUrl, cloudTimeKey, layers, viewer]);
 
   return (
     <div className="viewerRoot">

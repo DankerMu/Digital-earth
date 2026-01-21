@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { buildCldasTileUrlTemplate } from './layersApi';
+import { buildCldasTileUrlTemplate, buildCloudTileUrlTemplate } from './layersApi';
 
 describe('layersApi', () => {
   it('builds a Cesium url template without encoding placeholders', () => {
@@ -50,5 +50,29 @@ describe('layersApi', () => {
     expect(url).toBe(
       'http://api.test:bad/api/v1/tiles/cldas/2024011500/TMP/{z}/{x}/{y}.png',
     );
+  });
+
+  it('builds cloud tile templates using the TCC variable', () => {
+    const url = buildCloudTileUrlTemplate({
+      apiBaseUrl: 'http://api.test/',
+      timeKey: '2024-01-15T00:00:00Z',
+      variable: 'tcc',
+    });
+
+    expect(url).toBe(
+      'http://api.test/api/v1/tiles/cldas/2024-01-15T00%3A00%3A00Z/TCC/{z}/{x}/{y}.png',
+    );
+    expect(url).toContain('{z}');
+    expect(url).toContain('{x}');
+    expect(url).toContain('{y}');
+  });
+
+  it('defaults cloud tiles to the TCC variable when omitted', () => {
+    const url = buildCloudTileUrlTemplate({
+      apiBaseUrl: 'http://api.test',
+      timeKey: '2024011500',
+    });
+
+    expect(url).toBe('http://api.test/api/v1/tiles/cldas/2024011500/TCC/{z}/{x}/{y}.png');
   });
 });

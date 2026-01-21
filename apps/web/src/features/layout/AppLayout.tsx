@@ -21,8 +21,8 @@ const DEFAULT_LAYERS: LayerConfig[] = [
   {
     id: 'cloud',
     type: 'cloud',
-    variable: 'cloud',
-    opacity: 0.85,
+    variable: 'tcc',
+    opacity: 0.65,
     visible: false,
     zIndex: 20,
   },

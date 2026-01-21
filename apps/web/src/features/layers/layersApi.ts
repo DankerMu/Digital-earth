@@ -19,3 +19,34 @@ export function buildCldasTileUrlTemplate(options: CldasTileUrlTemplateOptions):
   return `${origin}/api/v1/tiles/cldas/${timeKey}/${variable}/{z}/{x}/{y}.png`;
 }
 
+function normalizeCloudVariable(variable: string | undefined): string {
+  const trimmed = variable?.trim() ?? '';
+  if (!trimmed) return 'TCC';
+
+  const normalized = trimmed.toLowerCase();
+  if (
+    normalized === 'tcc' ||
+    normalized === 'cloud' ||
+    normalized === 'total_cloud_cover' ||
+    normalized === 'total-cloud-cover' ||
+    normalized === 'total cloud cover' ||
+    normalized === 'total_cloud' ||
+    normalized === 'total-cloud'
+  ) {
+    return 'TCC';
+  }
+
+  return trimmed.toUpperCase();
+}
+
+export type CloudTileUrlTemplateOptions = Omit<CldasTileUrlTemplateOptions, 'variable'> & {
+  variable?: string;
+};
+
+export function buildCloudTileUrlTemplate(options: CloudTileUrlTemplateOptions): string {
+  return buildCldasTileUrlTemplate({
+    apiBaseUrl: options.apiBaseUrl,
+    timeKey: options.timeKey,
+    variable: normalizeCloudVariable(options.variable),
+  });
+}

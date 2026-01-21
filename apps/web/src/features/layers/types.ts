@@ -11,3 +11,9 @@ export type TemperatureLayerParams = CldasTileUrlTemplateOptions & {
   zIndex: number;
 };
 
+export type CloudLayerParams = CldasTileUrlTemplateOptions & {
+  id: string;
+  opacity: number;
+  visible: boolean;
+  zIndex: number;
+};
