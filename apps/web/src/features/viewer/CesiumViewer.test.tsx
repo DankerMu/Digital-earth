@@ -15,6 +15,7 @@ vi.mock('cesium', () => {
     return { ellipsoidTerrain: true };
   });
   const Ion = { defaultAccessToken: '' };
+  const GeographicTilingScheme = vi.fn(() => ({ kind: 'geographic' }));
 
   let morphCompleteHandler: (() => void) | null = null;
 
@@ -55,7 +56,9 @@ vi.mock('cesium', () => {
     imageryLayers: {
       get: vi.fn(() => baseLayer),
       remove: vi.fn(),
-      addImageryProvider: vi.fn(() => baseLayer)
+      addImageryProvider: vi.fn(() => baseLayer),
+      add: vi.fn((layer: unknown) => layer),
+      raiseToTop: vi.fn(),
     },
     scene: {
       requestRenderMode: false,
@@ -89,8 +92,12 @@ vi.mock('cesium', () => {
     Viewer: vi.fn(function () {
       return viewer;
     }),
-    ImageryLayer: vi.fn(function () {
-      return { baseLayer: true };
+    ImageryLayer: vi.fn(function (provider: unknown, options?: unknown) {
+      return {
+        baseLayer: true,
+        provider,
+        ...(options && typeof options === 'object' ? (options as Record<string, unknown>) : {}),
+      };
     }),
     Cartesian3: {
       fromDegrees: vi.fn(() => ({ destination: true })),
@@ -98,8 +105,11 @@ vi.mock('cesium', () => {
       clone: vi.fn((value: unknown) => ({ ...(value as Record<string, unknown>), cloned: true }))
     },
     WebMapTileServiceImageryProvider: vi.fn(),
-    UrlTemplateImageryProvider: vi.fn(),
+    UrlTemplateImageryProvider: vi.fn(function (options: unknown) {
+      return { kind: 'url-template', options };
+    }),
     WebMercatorTilingScheme: vi.fn(),
+    GeographicTilingScheme,
     Math: {
       toDegrees: vi.fn((radians: number) => radians),
       PI_OVER_TWO: Math.PI / 2
@@ -118,6 +128,7 @@ import { clearConfigCache } from '../../config';
 import { DEFAULT_BASEMAP_ID } from '../../config/basemaps';
 import { useBasemapStore } from '../../state/basemap';
 import { DEFAULT_EVENT_LAYER_MODE, useEventLayersStore } from '../../state/eventLayers';
+import { useLayerManagerStore } from '../../state/layerManager';
 import { DEFAULT_SCENE_MODE_ID, useSceneModeStore } from '../../state/sceneMode';
 import { CesiumViewer } from './CesiumViewer';
 
@@ -136,9 +147,11 @@ describe('CesiumViewer', () => {
     localStorage.removeItem('digital-earth.basemap');
     localStorage.removeItem('digital-earth.eventLayers');
     localStorage.removeItem('digital-earth.sceneMode');
+    localStorage.removeItem('digital-earth.layers');
     useBasemapStore.setState({ basemapId: DEFAULT_BASEMAP_ID });
     useEventLayersStore.setState({ enabled: false, mode: DEFAULT_EVENT_LAYER_MODE });
     useSceneModeStore.setState({ sceneModeId: DEFAULT_SCENE_MODE_ID });
+    useLayerManagerStore.setState({ layers: [] });
     vi.stubGlobal('fetch', vi.fn(async () => jsonResponse({ apiBaseUrl: 'http://api.test' })));
   });
 
@@ -346,5 +359,82 @@ describe('CesiumViewer', () => {
       }
     });
     expect(viewer.scene.requestRender).toHaveBeenCalled();
+  });
+
+  it('syncs temperature imagery layers from layerManager and applies opacity/visibility', async () => {
+    useLayerManagerStore.setState({
+      layers: [
+        {
+          id: 'temperature',
+          type: 'temperature',
+          variable: 'TMP',
+          opacity: 0.6,
+          visible: true,
+          zIndex: 10,
+        },
+      ],
+    });
+
+    render(<CesiumViewer />);
+
+    await waitFor(() => expect(vi.mocked(Viewer)).toHaveBeenCalledTimes(1));
+
+    const viewer = vi.mocked(Viewer).mock.results[0].value;
+
+    await waitFor(() => expect(viewer.imageryLayers.add).toHaveBeenCalledTimes(1));
+
+    const imageryLayer = viewer.imageryLayers.add.mock.calls[0]?.[0] as {
+      alpha?: number;
+      show?: boolean;
+    };
+
+    expect(imageryLayer.alpha).toBe(0.6);
+    expect(imageryLayer.show).toBe(true);
+    expect(viewer.imageryLayers.raiseToTop).toHaveBeenCalledWith(imageryLayer);
+
+    useLayerManagerStore.getState().setLayerOpacity('temperature', 0.3);
+    await waitFor(() => expect(imageryLayer.alpha).toBe(0.3));
+
+    useLayerManagerStore.getState().setLayerVisible('temperature', false);
+    await waitFor(() => expect(imageryLayer.show).toBe(false));
+  });
+
+  it('orders temperature imagery layers by zIndex', async () => {
+    useLayerManagerStore.setState({
+      layers: [
+        {
+          id: 'temperature-low',
+          type: 'temperature',
+          variable: 'LOW',
+          opacity: 1,
+          visible: false,
+          zIndex: 10,
+        },
+        {
+          id: 'temperature-high',
+          type: 'temperature',
+          variable: 'HIGH',
+          opacity: 1,
+          visible: false,
+          zIndex: 20,
+        },
+      ],
+    });
+
+    render(<CesiumViewer />);
+
+    await waitFor(() => expect(vi.mocked(Viewer)).toHaveBeenCalledTimes(1));
+
+    const viewer = vi.mocked(Viewer).mock.results[0].value;
+
+    await waitFor(() => expect(viewer.imageryLayers.raiseToTop).toHaveBeenCalledTimes(2));
+
+    const raisedUrls = viewer.imageryLayers.raiseToTop.mock.calls.map(
+      ([layer]: [unknown]) =>
+        (layer as { provider?: { options?: { url?: string } } })?.provider?.options?.url ?? '',
+    );
+
+    expect(raisedUrls[0]).toContain('/LOW/');
+    expect(raisedUrls[1]).toContain('/HIGH/');
   });
 });

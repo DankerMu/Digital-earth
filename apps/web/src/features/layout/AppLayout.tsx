@@ -13,7 +13,7 @@ const DEFAULT_LAYERS: LayerConfig[] = [
   {
     id: 'temperature',
     type: 'temperature',
-    variable: 'temperature',
+    variable: 'TMP',
     opacity: 1,
     visible: true,
     zIndex: 10,
