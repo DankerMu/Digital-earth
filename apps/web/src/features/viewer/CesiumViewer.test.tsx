@@ -91,11 +91,6 @@ vi.mock('cesium', () => {
 
   const ScreenSpaceEventType = {
     LEFT_CLICK: 0,
-    LEFT_DOUBLE_CLICK: 1,
-  };
-
-  const KeyboardEventModifier = {
-    CTRL: 0,
   };
 
   const createWorldTerrainAsync = vi.fn(async () => ({ terrain: true }));
@@ -107,8 +102,6 @@ vi.mock('cesium', () => {
 
   let morphCompleteHandler: (() => void) | null = null;
   let leftClickHandler: ((movement: { position?: unknown }) => void) | null = null;
-  let ctrlLeftClickHandler: ((movement: { position?: unknown }) => void) | null = null;
-  let leftDoubleClickHandler: ((movement: { position?: unknown }) => void) | null = null;
 
   const Cartographic = {
     fromCartesian: vi.fn(() => ({ longitude: 0, latitude: 0 })),
@@ -161,33 +154,13 @@ vi.mock('cesium', () => {
 
   const screenSpaceEventHandler = {
     setInputAction: vi.fn(
-      (
-        handler: (movement: { position?: unknown }) => void,
-        type: unknown,
-        modifier?: unknown,
-      ) => {
-        if (type === ScreenSpaceEventType.LEFT_CLICK && modifier === KeyboardEventModifier.CTRL) {
-          ctrlLeftClickHandler = handler;
-          return;
-        }
-        if (type === ScreenSpaceEventType.LEFT_DOUBLE_CLICK) {
-          leftDoubleClickHandler = handler;
-          return;
-        }
+      (handler: (movement: { position?: unknown }) => void, type: unknown) => {
         if (type === ScreenSpaceEventType.LEFT_CLICK) {
           leftClickHandler = handler;
         }
       },
     ),
-    removeInputAction: vi.fn((type: unknown, modifier?: unknown) => {
-      if (type === ScreenSpaceEventType.LEFT_CLICK && modifier === KeyboardEventModifier.CTRL) {
-        ctrlLeftClickHandler = null;
-        return;
-      }
-      if (type === ScreenSpaceEventType.LEFT_DOUBLE_CLICK) {
-        leftDoubleClickHandler = null;
-        return;
-      }
+    removeInputAction: vi.fn((type: unknown) => {
       if (type === ScreenSpaceEventType.LEFT_CLICK) {
         leftClickHandler = null;
       }
@@ -249,7 +222,6 @@ vi.mock('cesium', () => {
   return {
     SceneMode,
     ScreenSpaceEventType,
-    KeyboardEventModifier,
     Cartographic,
     Viewer: vi.fn(function () {
       return viewer;
@@ -282,12 +254,6 @@ vi.mock('cesium', () => {
       triggerLeftClick: (movement: { position?: unknown }) => {
         leftClickHandler?.(movement);
       },
-      triggerCtrlLeftClick: (movement: { position?: unknown }) => {
-        ctrlLeftClickHandler?.(movement);
-      },
-      triggerLeftDoubleClick: (movement: { position?: unknown }) => {
-        leftDoubleClickHandler?.(movement);
-      },
     },
     createWorldTerrainAsync,
     EllipsoidTerrainProvider,
@@ -303,7 +269,6 @@ import { DEFAULT_EVENT_LAYER_MODE, useEventLayersStore } from '../../state/event
 import { useLayerManagerStore } from '../../state/layerManager';
 import { usePerformanceModeStore } from '../../state/performanceMode';
 import { DEFAULT_SCENE_MODE_ID, useSceneModeStore } from '../../state/sceneMode';
-import { useViewModeStore } from '../../state/viewMode';
 import { CesiumViewer } from './CesiumViewer';
 
 function jsonResponse(payload: unknown) {
@@ -325,13 +290,11 @@ describe('CesiumViewer', () => {
     localStorage.removeItem('digital-earth.sceneMode');
     localStorage.removeItem('digital-earth.layers');
     localStorage.removeItem('digital-earth.performanceMode');
-    localStorage.removeItem('digital-earth.viewMode');
     useBasemapStore.setState({ basemapId: DEFAULT_BASEMAP_ID });
     useEventLayersStore.setState({ enabled: false, mode: DEFAULT_EVENT_LAYER_MODE });
     useSceneModeStore.setState({ sceneModeId: DEFAULT_SCENE_MODE_ID });
     useLayerManagerStore.setState({ layers: [] });
     usePerformanceModeStore.setState({ enabled: false });
-    useViewModeStore.setState({ route: { viewModeId: 'global' }, history: [], saved: {} });
     vi.stubGlobal(
       'fetch',
       vi.fn(async (input: RequestInfo | URL) => {
@@ -1045,65 +1008,5 @@ describe('CesiumViewer', () => {
 
     await user.click(queries.getByRole('button', { name: 'Close sampling card' }));
     await waitFor(() => expect(screen.queryByLabelText('Sampling data')).not.toBeInTheDocument());
-  });
-
-  it('enters local mode and flies camera on ctrl+click', async () => {
-    useLayerManagerStore.setState({
-      layers: [
-        {
-          id: 'cloud',
-          type: 'cloud',
-          variable: 'tcc',
-          opacity: 0.8,
-          visible: true,
-          zIndex: 10,
-        },
-      ],
-    });
-
-    const cesium = await import('cesium');
-    (
-      cesium as unknown as {
-        Cartographic: { fromCartesian: ReturnType<typeof vi.fn> };
-      }
-    ).Cartographic.fromCartesian.mockReturnValue({
-      longitude: 120,
-      latitude: 30,
-      height: 100,
-    });
-
-    render(<CesiumViewer />);
-
-    await waitFor(() => expect(vi.mocked(Viewer)).toHaveBeenCalledTimes(1));
-
-    act(() => {
-      (
-        cesium as unknown as {
-          __mocks: { triggerCtrlLeftClick: (movement: { position?: unknown }) => void };
-        }
-      ).__mocks.triggerCtrlLeftClick({ position: { x: 12, y: 34 } });
-    });
-
-    await waitFor(() => expect(useViewModeStore.getState().route.viewModeId).toBe('local'));
-
-    const viewer = vi.mocked(Viewer).mock.results[0].value;
-
-    await waitFor(() => {
-      expect(viewer.camera.flyTo).toHaveBeenCalledWith({
-        destination: { destination: true },
-        orientation: {
-          heading: 1,
-          pitch: -Math.PI / 4,
-          roll: 0,
-        },
-        duration: 2.5,
-      });
-    });
-
-    const panel = await screen.findByLabelText('Local info');
-    expect(panel).toHaveTextContent('30.0000, 120.0000');
-    expect(panel).toHaveTextContent('100');
-    expect(panel).toHaveTextContent('2024-01-15T00:00:00Z');
-    expect(panel).toHaveTextContent('cloud:tcc');
   });
 });

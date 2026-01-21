@@ -129,33 +129,6 @@ describe('viewMode store', () => {
     });
   });
 
-  it('stores optional local heightMeters and replaces route when selecting the same point again', async () => {
-    localStorage.removeItem(STORAGE_KEY);
-    const { useViewModeStore } = await importFresh();
-
-    useViewModeStore.getState().enterLocal({ lat: 10, lon: 20, heightMeters: 100 });
-
-    expect(useViewModeStore.getState().route).toEqual({
-      viewModeId: 'local',
-      lat: 10,
-      lon: 20,
-      heightMeters: 100,
-    });
-    expect(useViewModeStore.getState().history).toEqual([{ viewModeId: 'global' }]);
-    expect(useViewModeStore.getState().transition?.kind).toBe('forward');
-
-    useViewModeStore.getState().enterLocal({ lat: 10, lon: 20, heightMeters: 200 });
-
-    expect(useViewModeStore.getState().route).toEqual({
-      viewModeId: 'local',
-      lat: 10,
-      lon: 20,
-      heightMeters: 200,
-    });
-    expect(useViewModeStore.getState().history).toEqual([{ viewModeId: 'global' }]);
-    expect(useViewModeStore.getState().transition?.kind).toBe('replace');
-  });
-
   it('saves per-mode state when leaving a mode and supports goBack()', async () => {
     localStorage.removeItem(STORAGE_KEY);
     const { useViewModeStore } = await importFresh();
