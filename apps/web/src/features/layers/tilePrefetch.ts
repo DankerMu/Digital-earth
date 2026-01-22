@@ -109,8 +109,8 @@ function getLowBandwidthEffectiveType(connection: NetworkInformationLike | null)
 }
 
 function maybeClearCacheForPerformanceMode() {
-  const performanceModeEnabled = usePerformanceModeStore.getState().enabled;
-  if (!performanceModeEnabled) {
+  const lowModeEnabled = usePerformanceModeStore.getState().mode === 'low';
+  if (!lowModeEnabled) {
     performanceModeCacheCleared = false;
     return;
   }
@@ -121,7 +121,7 @@ function maybeClearCacheForPerformanceMode() {
 
 export function getTilePrefetchDisabledReason(): string | null {
   maybeClearCacheForPerformanceMode();
-  if (usePerformanceModeStore.getState().enabled) return 'performance-mode';
+  if (usePerformanceModeStore.getState().mode === 'low') return 'performance-mode';
   if (typeof navigator !== 'undefined' && navigator.onLine === false) return 'offline';
   if (Date.now() < prefetchCooldownUntil) return 'cooldown';
 
@@ -407,7 +407,7 @@ export function attachTileCacheToProvider<TRequest, TImage>(
   (provider as unknown as Record<PropertyKey, unknown>)[PROVIDER_PATCHED] = true;
 
   provider.requestImage = (x, y, level, request) => {
-    if (usePerformanceModeStore.getState().enabled) {
+    if (usePerformanceModeStore.getState().mode === 'low') {
       maybeClearCacheForPerformanceMode();
       return originalRequestImage(x, y, level, request);
     }
@@ -455,7 +455,7 @@ export function clearTilePrefetchCache() {
   queuedUrls.clear();
   consecutivePrefetchErrors = 0;
   prefetchCooldownUntil = 0;
-  performanceModeCacheCleared = usePerformanceModeStore.getState().enabled;
+  performanceModeCacheCleared = usePerformanceModeStore.getState().mode === 'low';
 }
 
 export function resetTilePrefetchStats() {

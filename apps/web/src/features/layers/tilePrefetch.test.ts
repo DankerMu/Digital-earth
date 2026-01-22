@@ -59,7 +59,7 @@ function makeRejectedRequestImage(error: Error) {
 describe('tilePrefetch', () => {
   beforeEach(() => {
     vi.stubGlobal('Image', ImageStub);
-    usePerformanceModeStore.setState({ enabled: false });
+    usePerformanceModeStore.setState({ mode: 'high' });
     Object.defineProperty(navigator, 'onLine', { configurable: true, value: true });
     setNavigatorConnection({ effectiveType: '4g', saveData: false });
     resetTilePrefetchConfig();
@@ -102,7 +102,7 @@ describe('tilePrefetch', () => {
     setNavigatorConnection({ effectiveType: '4g', saveData: true });
     expect(getTilePrefetchDisabledReason()).toBe('save-data');
 
-    usePerformanceModeStore.setState({ enabled: true });
+    usePerformanceModeStore.setState({ mode: 'low' });
     expect(getTilePrefetchDisabledReason()).toBe('performance-mode');
   });
 
@@ -197,7 +197,7 @@ describe('tilePrefetch', () => {
     await provider.requestImage(0, 0, 0);
     expect(getTilePrefetchStats()).toMatchObject({ urlsTracked: 1, framesTracked: 1 });
 
-    usePerformanceModeStore.setState({ enabled: true });
+    usePerformanceModeStore.setState({ mode: 'low' });
     expect(getTilePrefetchDisabledReason()).toBe('performance-mode');
     expect(getTilePrefetchStats()).toMatchObject({ urlsTracked: 0, framesTracked: 0 });
 

@@ -120,7 +120,7 @@ describe('WindArrows', () => {
       .toHaveLength(0);
   });
 
-  it('honors maxArrows and disables itself in performance mode (default)', () => {
+  it('honors maxArrows and reduces arrow count in performance mode (default)', () => {
     const viewer = makeViewer();
     const arrows = new WindArrows(viewer as never, { maxArrows: 2 });
 
@@ -142,11 +142,18 @@ describe('WindArrows', () => {
       enabled: true,
       opacity: 1,
       performanceModeEnabled: true,
-      vectors: [{ lon: 0, lat: 0, u: 1, v: 0 }],
+      vectors: [
+        { lon: 0, lat: 0, u: 1, v: 0 },
+        { lon: 1, lat: 1, u: 1, v: 0 },
+        { lon: 2, lat: 2, u: 1, v: 0 },
+        { lon: 3, lat: 3, u: 1, v: 0 },
+      ],
     });
 
     expect(viewer.entities.remove).toHaveBeenCalledTimes(2);
-    expect(viewer.entities.add).toHaveBeenCalledTimes(2);
+    expect(viewer.entities.add).toHaveBeenCalledTimes(3);
+    expect((viewer as unknown as { __mocks: { getEntities: () => unknown[] } }).__mocks.getEntities())
+      .toHaveLength(1);
   });
 });
 
@@ -190,4 +197,3 @@ describe('windArrowDensityForCameraHeight', () => {
     ).toBe(12);
   });
 });
-

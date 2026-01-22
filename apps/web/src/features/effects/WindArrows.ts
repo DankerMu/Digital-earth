@@ -24,7 +24,6 @@ export type WindArrowsUpdate = {
 };
 
 const DEFAULT_MAX_ARROWS = 600;
-const DEFAULT_MAX_ARROWS_PERFORMANCE = 0;
 const DEFAULT_METERS_PER_SECOND_TO_LENGTH = 2500;
 const DEFAULT_MIN_ARROW_LENGTH_METERS = 2000;
 const DEFAULT_MAX_ARROW_LENGTH_METERS = 80_000;
@@ -151,9 +150,10 @@ export class WindArrows {
 
   constructor(viewer: Viewer, options: WindArrowsOptions = {}) {
     this.viewer = viewer;
+    const maxArrows = options.maxArrows ?? DEFAULT_MAX_ARROWS;
     this.options = {
-      maxArrows: options.maxArrows ?? DEFAULT_MAX_ARROWS,
-      maxArrowsPerformance: options.maxArrowsPerformance ?? DEFAULT_MAX_ARROWS_PERFORMANCE,
+      maxArrows,
+      maxArrowsPerformance: options.maxArrowsPerformance ?? Math.floor(maxArrows * 0.5),
       metersPerSecondToLength:
         options.metersPerSecondToLength ?? DEFAULT_METERS_PER_SECOND_TO_LENGTH,
       minArrowLengthMeters: options.minArrowLengthMeters ?? DEFAULT_MIN_ARROW_LENGTH_METERS,
@@ -248,4 +248,3 @@ export class WindArrows {
     this.viewer.scene.requestRender();
   }
 }
-

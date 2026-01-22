@@ -439,7 +439,7 @@ describe('CesiumViewer', () => {
     useSceneModeStore.setState({ sceneModeId: DEFAULT_SCENE_MODE_ID });
     useTimeStore.setState({ timeKey: DEFAULT_TIME_KEY });
     useLayerManagerStore.setState({ layers: [] });
-    usePerformanceModeStore.setState({ enabled: false });
+    usePerformanceModeStore.setState({ mode: 'high' });
     useViewModeStore.setState({ route: { viewModeId: 'global' }, history: [], saved: {} });
     vi.stubGlobal(
       'fetch',
@@ -1086,8 +1086,15 @@ describe('CesiumViewer', () => {
     );
   });
 
-  it('skips sampling and disables precipitation particles in performance mode', async () => {
-    usePerformanceModeStore.setState({ enabled: true });
+  it('samples weather and updates precipitation particles in low performance mode', async () => {
+    weatherSamplerMocks.sample.mockResolvedValueOnce({
+      precipitationMm: 25,
+      precipitationIntensity: 0.8,
+      precipitationKind: 'rain',
+      temperatureC: 10,
+    });
+
+    usePerformanceModeStore.setState({ mode: 'low' });
 
     useLayerManagerStore.setState({
       layers: [
@@ -1114,17 +1121,17 @@ describe('CesiumViewer', () => {
 
     await waitFor(() => expect(vi.mocked(Viewer)).toHaveBeenCalledTimes(1));
 
-    await waitFor(() =>
-      expect(precipitationParticlesMocks.update).toHaveBeenCalledWith(
-        expect.objectContaining({
-          enabled: false,
-          kind: 'none',
-          performanceModeEnabled: true,
-        }),
-      ),
-    );
+    await waitFor(() => expect(weatherSamplerMocks.sample).toHaveBeenCalledTimes(1));
 
-    expect(weatherSamplerMocks.sample).not.toHaveBeenCalled();
+    await waitFor(() => expect(precipitationParticlesMocks.update).toHaveBeenCalled());
+    expect(precipitationParticlesMocks.update).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        enabled: true,
+        intensity: 0.8,
+        kind: 'rain',
+        performanceModeEnabled: true,
+      }),
+    );
   });
 
   it('fetches wind vectors and updates wind arrows when wind layer is visible', async () => {

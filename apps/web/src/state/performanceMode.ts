@@ -1,6 +1,15 @@
 import { useSyncExternalStore } from 'react';
 
+export type PerformanceMode = 'low' | 'high';
+
 type PerformanceModeState = {
+  mode: PerformanceMode;
+  setMode: (mode: PerformanceMode) => void;
+  toggleMode: () => void;
+  /**
+   * Backwards-compatible alias for code that treated performance mode as a boolean.
+   * `enabled=true` maps to `mode='low'`.
+   */
   enabled: boolean;
   setEnabled: (enabled: boolean) => void;
 };
@@ -15,46 +24,64 @@ function notify() {
   for (const listener of listeners) listener();
 }
 
-function safeReadEnabled(): boolean {
+function normalizePerformanceMode(value: unknown): PerformanceMode {
+  return value === 'low' ? 'low' : 'high';
+}
+
+function safeReadMode(): PerformanceMode {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return false;
+    if (!raw) return 'high';
     const parsed = JSON.parse(raw) as unknown;
-    if (!parsed || typeof parsed !== 'object') return false;
+    if (typeof parsed === 'string') return normalizePerformanceMode(parsed);
+    if (!parsed || typeof parsed !== 'object') return 'high';
     const record = parsed as Record<string, unknown>;
-    return record.enabled === true;
+    if (record.mode === 'low' || record.mode === 'high') return record.mode;
+    if (record.enabled === true) return 'low';
+    if (record.enabled === false) return 'high';
+    return 'high';
   } catch {
-    return false;
+    return 'high';
   }
 }
 
-function safeWriteEnabled(enabled: boolean) {
+function safeWriteMode(mode: PerformanceMode) {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({ enabled }));
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ mode }));
   } catch {
     // ignore write failures (e.g., disabled storage)
   }
 }
 
-let enabled = safeReadEnabled();
+let mode: PerformanceMode = safeReadMode();
 
-const setEnabled: PerformanceModeState['setEnabled'] = (next) => {
-  if (Object.is(enabled, next)) return;
-  enabled = next;
-  safeWriteEnabled(next);
+const setMode: PerformanceModeState['setMode'] = (next) => {
+  const normalized = normalizePerformanceMode(next);
+  if (Object.is(mode, normalized)) return;
+  mode = normalized;
+  safeWriteMode(mode);
   notify();
 };
 
+const setEnabled: PerformanceModeState['setEnabled'] = (enabled) => {
+  setMode(enabled ? 'low' : 'high');
+};
+
+const toggleMode: PerformanceModeState['toggleMode'] = () => {
+  setMode(mode === 'low' ? 'high' : 'low');
+};
+
 function getState(): PerformanceModeState {
-  return { enabled, setEnabled };
+  return { mode, setMode, toggleMode, enabled: mode === 'low', setEnabled };
 }
 
-function setState(partial: Partial<Pick<PerformanceModeState, 'enabled'>>) {
-  if (typeof partial.enabled === 'boolean') {
-    enabled = partial.enabled;
-    safeWriteEnabled(partial.enabled);
-    notify();
+function setState(partial: Partial<Pick<PerformanceModeState, 'mode' | 'enabled'>>) {
+  if (partial.mode === 'low' || partial.mode === 'high') {
+    setMode(partial.mode);
+    return;
   }
+
+  if (typeof partial.enabled === 'boolean') setEnabled(partial.enabled);
 }
 
 function subscribe(listener: Listener) {

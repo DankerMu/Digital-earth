@@ -30,7 +30,6 @@ export type PrecipitationParticlesUpdate = {
 };
 
 const DEFAULT_MAX_PARTICLES = 2500;
-const DEFAULT_MAX_PARTICLES_PERFORMANCE = 0;
 const DEFAULT_MAX_CAMERA_HEIGHT_METERS = 20_000;
 const DEFAULT_EMITTER_HEIGHT_METERS = 20;
 const DEFAULT_EMITTER_ANGLE_DEGREES = 25;
@@ -154,10 +153,11 @@ export class PrecipitationParticles {
   constructor(viewer: Viewer, options: PrecipitationParticlesOptions = {}) {
     this.viewer = viewer;
     this.baseRequestRenderMode = viewer.scene.requestRenderMode;
+    const maxParticles = options.maxParticles ?? DEFAULT_MAX_PARTICLES;
     this.options = {
-      maxParticles: options.maxParticles ?? DEFAULT_MAX_PARTICLES,
+      maxParticles,
       maxParticlesPerformance:
-        options.maxParticlesPerformance ?? DEFAULT_MAX_PARTICLES_PERFORMANCE,
+        options.maxParticlesPerformance ?? Math.floor(maxParticles * 0.5),
       maxCameraHeightMeters: options.maxCameraHeightMeters ?? DEFAULT_MAX_CAMERA_HEIGHT_METERS,
       emitterHeightMeters: options.emitterHeightMeters ?? DEFAULT_EMITTER_HEIGHT_METERS,
       emitterAngleDegrees: options.emitterAngleDegrees ?? DEFAULT_EMITTER_ANGLE_DEGREES,
@@ -311,4 +311,3 @@ export class PrecipitationParticles {
     particleSystem.maximumSpeed = speed.max;
   }
 }
-

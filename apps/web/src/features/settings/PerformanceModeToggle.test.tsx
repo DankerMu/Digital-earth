@@ -6,18 +6,20 @@ import { usePerformanceModeStore } from '../../state/performanceMode';
 
 beforeEach(() => {
   localStorage.removeItem('digital-earth.performanceMode');
-  usePerformanceModeStore.setState({ enabled: false });
+  usePerformanceModeStore.setState({ mode: 'high' });
 });
 
-test('toggles performance mode and persists', () => {
+test('switches performance mode and persists', () => {
   render(<PerformanceModeToggle />);
 
-  const checkbox = screen.getByRole('checkbox', { name: '性能模式' });
-  expect(checkbox).not.toBeChecked();
+  const highRadio = screen.getByRole('radio', { name: 'High' });
+  const lowRadio = screen.getByRole('radio', { name: 'Low' });
+  expect(highRadio).toBeChecked();
+  expect(lowRadio).not.toBeChecked();
 
-  fireEvent.click(checkbox);
-  expect(checkbox).toBeChecked();
+  fireEvent.click(lowRadio);
+  expect(lowRadio).toBeChecked();
 
   const stored = localStorage.getItem('digital-earth.performanceMode');
-  expect(stored).toMatch(/enabled":true/);
+  expect(stored).toMatch(/"mode":"low"/);
 });

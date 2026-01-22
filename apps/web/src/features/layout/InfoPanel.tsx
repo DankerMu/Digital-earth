@@ -1,8 +1,10 @@
 import { useMemo, useState } from 'react';
 
 import { useLayerManagerStore } from '../../state/layerManager';
+import { useViewerStatsStore } from '../../state/viewerStats';
 import { useViewModeStore } from '../../state/viewMode';
 import { EventListPanel } from '../products/EventListPanel';
+import PerformanceModeToggle from '../settings/PerformanceModeToggle';
 
 export type InfoPanelProps = {
   collapsed: boolean;
@@ -23,13 +25,14 @@ function routeSummary(route: ReturnType<typeof useViewModeStore.getState>['route
 }
 
 export function InfoPanel({ collapsed, onToggleCollapsed }: InfoPanelProps) {
-  const [tab, setTab] = useState<'current' | 'forecast' | 'history'>('current');
+  const [tab, setTab] = useState<'current' | 'forecast' | 'history' | 'settings'>('current');
 
   const route = useViewModeStore((state) => state.route);
   const canGoBack = useViewModeStore((state) => state.canGoBack);
   const goBack = useViewModeStore((state) => state.goBack);
 
   const layers = useLayerManagerStore((state) => state.layers);
+  const fps = useViewerStatsStore((state) => state.fps);
 
   const selectedLayer = useMemo(() => {
     if (route.viewModeId !== 'layerGlobal') return null;
@@ -110,6 +113,18 @@ export function InfoPanel({ collapsed, onToggleCollapsed }: InfoPanelProps) {
             >
               历史
             </button>
+            <button
+              type="button"
+              className={[
+                'flex-1 px-3 py-2 text-sm',
+                tab === 'settings'
+                  ? 'border-b-2 border-blue-500 text-blue-300'
+                  : 'text-slate-400 hover:text-slate-200',
+              ].join(' ')}
+              onClick={() => setTab('settings')}
+            >
+              设置
+            </button>
           </div>
 
           <div className="flex-1 overflow-auto p-3">
@@ -141,6 +156,23 @@ export function InfoPanel({ collapsed, onToggleCollapsed }: InfoPanelProps) {
               ) : (
                 <EventListPanel />
               )
+            ) : tab === 'settings' ? (
+              <div className="grid gap-3 text-sm text-slate-200">
+                <div className="text-xs uppercase tracking-wide text-slate-400">
+                  渲染设置
+                </div>
+                <div className="grid gap-2 rounded-lg border border-slate-400/10 bg-slate-900/20 px-3 py-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <PerformanceModeToggle />
+                    <div className="text-xs text-slate-400">
+                      FPS: {fps != null ? `${fps}` : 'N/A'}
+                    </div>
+                  </div>
+                  <div className="text-xs text-slate-400">
+                    Low 模式会减少粒子与风矢密度，并关闭体云/建筑（如有），以提升低性能设备体验。
+                  </div>
+                </div>
+              </div>
             ) : (
               <div className="text-sm text-slate-400">该视图尚未实现。</div>
             )}
