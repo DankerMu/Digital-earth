@@ -65,7 +65,9 @@ def _upsert_historical_statistics(
         .relative_to(statistics_root.resolve())
         .as_posix()
     )
-    metadata_rel = metadata_path.resolve().relative_to(statistics_root.resolve()).as_posix()
+    metadata_rel = (
+        metadata_path.resolve().relative_to(statistics_root.resolve()).as_posix()
+    )
 
     extra = dict(meta)
 
@@ -238,7 +240,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         else Path(args.statistics_root)
     ).resolve()
     tiles_root = (
-        (repo_root / "Data" / "tiles") if args.tiles_root is None else Path(args.tiles_root)
+        (repo_root / "Data" / "tiles")
+        if args.tiles_root is None
+        else Path(args.tiles_root)
     ).resolve()
 
     engine = create_engine(args.database_url) if args.database_url else db.get_engine()
@@ -255,7 +259,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                 )
 
             if args.only in {"all", "bias"}:
-                created_bias, updated_bias = index_bias_tiles(session, tiles_root=tiles_root)
+                created_bias, updated_bias = index_bias_tiles(
+                    session, tiles_root=tiles_root
+                )
 
             session.commit()
 
@@ -266,7 +272,10 @@ def main(argv: Sequence[str] | None = None) -> int:
                         "created": created_stats,
                         "updated": updated_stats,
                     },
-                    "bias_tile_sets": {"created": created_bias, "updated": updated_bias},
+                    "bias_tile_sets": {
+                        "created": created_bias,
+                        "updated": updated_bias,
+                    },
                 },
                 ensure_ascii=False,
             )

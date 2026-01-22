@@ -10,7 +10,9 @@ from sqlalchemy.orm import Session
 
 def _write_json(path: Path, data: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    path.write_text(
+        json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
 
 
 def test_indexer_upserts_historical_statistics(tmp_path: Path) -> None:
@@ -81,19 +83,14 @@ def test_indexer_upserts_bias_tiles(tmp_path: Path) -> None:
     tiles_root = tmp_path / "Data" / "tiles"
     (tiles_root / "bias").mkdir(parents=True, exist_ok=True)
     (tiles_root / "bias" / "README.txt").write_text("x", encoding="utf-8")
-    png = tiles_root / "bias" / "temp" / "20260101T000000Z" / "sfc" / "0" / "0" / "0.png"
+    png = (
+        tiles_root / "bias" / "temp" / "20260101T000000Z" / "sfc" / "0" / "0" / "0.png"
+    )
     png.parent.mkdir(parents=True, exist_ok=True)
     png.write_bytes(b"\x89PNG\r\n\x1a\n")
 
     webp = (
-        tiles_root
-        / "bias"
-        / "temp"
-        / "20260101T000000Z"
-        / "sfc"
-        / "1"
-        / "0"
-        / "0.webp"
+        tiles_root / "bias" / "temp" / "20260101T000000Z" / "sfc" / "1" / "0" / "0.webp"
     )
     webp.parent.mkdir(parents=True, exist_ok=True)
     webp.write_bytes(b"RIFF....WEBP")
@@ -139,7 +136,11 @@ def test_indexer_main_runs_with_database_url(tmp_path: Path) -> None:
 
 
 def test_indexer_helpers_cover_error_branches(tmp_path: Path) -> None:
-    from monitoring_analytics_index import _detect_zoom_range, _load_json, _parse_iso_datetime
+    from monitoring_analytics_index import (
+        _detect_zoom_range,
+        _load_json,
+        _parse_iso_datetime,
+    )
 
     with pytest.raises(ValueError, match="must not be empty"):
         _parse_iso_datetime("")

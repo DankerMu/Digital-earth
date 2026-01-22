@@ -117,7 +117,9 @@ def list_historical_statistics(
     if variable:
         stmt = stmt.where(HistoricalStatisticArtifact.variable == variable.strip())
     if window_kind:
-        stmt = stmt.where(HistoricalStatisticArtifact.window_kind == window_kind.strip())
+        stmt = stmt.where(
+            HistoricalStatisticArtifact.window_kind == window_kind.strip()
+        )
     if version:
         stmt = stmt.where(HistoricalStatisticArtifact.version == version.strip())
     stmt = stmt.limit(limit).offset(offset)
@@ -176,7 +178,9 @@ class BiasTileSetsResponse(BaseModel):
     items: list[BiasTileSetItem] = Field(default_factory=list)
 
 
-def _bias_tile_template(*, layer: str, time_key: str, level_key: str, fmt: str) -> TileTemplate:
+def _bias_tile_template(
+    *, layer: str, time_key: str, level_key: str, fmt: str
+) -> TileTemplate:
     fmt_norm = (fmt or "").strip().lower() or "png"
     if fmt_norm not in {"png", "webp"}:
         raise HTTPException(status_code=400, detail="Unsupported format")
@@ -243,7 +247,9 @@ def get_snow_statistics_definition() -> SnowStatisticsDefinitionResponse:
     try:
         data = yaml.safe_load(path.read_text(encoding="utf-8"))
     except Exception as exc:  # noqa: BLE001
-        raise HTTPException(status_code=500, detail="Failed to load snow statistics") from exc
+        raise HTTPException(
+            status_code=500, detail="Failed to load snow statistics"
+        ) from exc
     if data is None:
         data = {}
     if not isinstance(data, dict):

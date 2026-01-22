@@ -104,9 +104,7 @@ def test_analytics_snow_definition_endpoint(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     db_url = f"sqlite+pysqlite:///{tmp_path / 'analytics.db'}"
-    client, _redis = _make_client(
-        monkeypatch, tmp_path, db_url=db_url
-    )
+    client, _redis = _make_client(monkeypatch, tmp_path, db_url=db_url)
     resp = client.get("/api/v1/analytics/snow/definition")
     assert resp.status_code == 200
     payload = resp.json()
@@ -203,7 +201,9 @@ def test_tiles_can_serve_from_local_filesystem(
         tiles_dir=tiles_root,
     )
 
-    ok = client.get("/api/v1/tiles/layer/0/0/0.json", headers={"Accept-Encoding": "gzip"})
+    ok = client.get(
+        "/api/v1/tiles/layer/0/0/0.json", headers={"Accept-Encoding": "gzip"}
+    )
     assert ok.status_code == 200
     assert ok.headers["content-encoding"] == "gzip"
     assert ok.headers["vary"] == "Accept-Encoding"

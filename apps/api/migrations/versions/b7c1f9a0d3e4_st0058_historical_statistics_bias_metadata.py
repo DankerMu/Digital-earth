@@ -91,4 +91,3 @@ def downgrade() -> None:
         "ix_historical_statistics_window_end", table_name="historical_statistics"
     )
     op.drop_table("historical_statistics")
-

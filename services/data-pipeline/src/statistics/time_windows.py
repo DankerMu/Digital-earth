@@ -119,7 +119,9 @@ class TimeWindow:
             days_f = delta_s / 86400.0
             days = int(round(days_f))
             if days <= 0 or abs(days_f - float(days)) > 1e-6:
-                raise ValueError("rolling_days windows must span an integer number of days")
+                raise ValueError(
+                    "rolling_days windows must span an integer number of days"
+                )
             return f"{_time_key(self.end)}-P{days}D"
         raise ValueError(f"Unsupported window kind: {self.kind}")
 

@@ -521,7 +521,10 @@ def get_tile(
             else:
                 raise
 
-        headers: dict[str, str] = {"Cache-Control": _DEFAULT_CACHE_CONTROL, "ETag": etag}
+        headers: dict[str, str] = {
+            "Cache-Control": _DEFAULT_CACHE_CONTROL,
+            "ETag": etag,
+        }
 
         transformed = False
         if (

@@ -179,18 +179,24 @@ def main(argv: Sequence[str] | None = None) -> int:
             cldas_root = cfg.sources.cldas.root_dir
         else:
             cldas_root = get_local_data_paths().cldas_dir
-        source = CldasDirectorySource(cldas_root, engine=engine or cfg.sources.cldas.engine)
+        source = CldasDirectorySource(
+            cldas_root, engine=engine or cfg.sources.cldas.engine
+        )
         source_name = "cldas"
     else:
         dataset_path = args.archive_dataset or cfg.sources.archive.dataset_path
         if dataset_path is None:
             raise ValueError("--archive-dataset is required when --source=archive")
-        source = ArchiveDatasetSource(dataset_path, engine=engine or cfg.sources.archive.engine)
+        source = ArchiveDatasetSource(
+            dataset_path, engine=engine or cfg.sources.archive.engine
+        )
         source_name = "archive"
 
     version = str(args.version or cfg.output.version).strip() or "v1"
     output_dir = Path(args.output_dir) if args.output_dir else cfg.output.root_dir
-    tiles_dir = Path(args.tiles_output_dir) if args.tiles_output_dir else cfg.tiles.root_dir
+    tiles_dir = (
+        Path(args.tiles_output_dir) if args.tiles_output_dir else cfg.tiles.root_dir
+    )
 
     store = StatisticsStore(output_dir)
 
