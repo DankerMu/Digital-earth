@@ -133,4 +133,115 @@ describe('TimeController', () => {
 
     vi.useRealTimers();
   });
+
+  it('debounces refresh and loadFrame while dragging the timeline slider', async () => {
+    vi.useFakeTimers();
+
+    const onRefreshLayers = vi.fn();
+    const loadFrame = vi.fn(async () => undefined);
+
+    render(
+      <TimeController
+        frames={makeFrames()}
+        onRefreshLayers={onRefreshLayers}
+        loadFrame={loadFrame}
+        dragDebounceMs={400}
+      />,
+    );
+
+    const slider = screen.getByLabelText('时间轴');
+
+    fireEvent.change(slider, { target: { value: '1' } });
+    fireEvent.change(slider, { target: { value: '2' } });
+
+    await act(async () => {});
+    expect(screen.getByLabelText('加载中')).toBeInTheDocument();
+
+    expect(onRefreshLayers).not.toHaveBeenCalled();
+    expect(loadFrame).not.toHaveBeenCalled();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(399);
+    });
+
+    expect(onRefreshLayers).not.toHaveBeenCalled();
+    expect(loadFrame).not.toHaveBeenCalled();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1);
+    });
+
+    expect(onRefreshLayers).toHaveBeenCalledTimes(1);
+    expect(onRefreshLayers).toHaveBeenLastCalledWith(expect.any(Date), 2);
+    expect(loadFrame).toHaveBeenCalledTimes(1);
+    expect(loadFrame).toHaveBeenLastCalledWith(expect.any(Date), 2, expect.any(Object));
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(screen.queryByLabelText('加载中')).not.toBeInTheDocument();
+
+    vi.useRealTimers();
+  });
+
+  it('aborts the previous loadFrame request when a new drag is scheduled', async () => {
+    vi.useFakeTimers();
+
+    const deferred1 = createDeferred<void>();
+    const deferred2 = createDeferred<void>();
+    const signals: AbortSignal[] = [];
+
+    const loadFrame = vi
+      .fn()
+      .mockImplementationOnce((_: Date, __: number, options?: { signal?: AbortSignal }) => {
+        const signal = options?.signal;
+        if (signal) {
+          signals.push(signal);
+          signal.addEventListener('abort', () => {
+            deferred1.reject(new DOMException('Aborted', 'AbortError'));
+          });
+        }
+        return deferred1.promise;
+      })
+      .mockImplementationOnce((_: Date, __: number, options?: { signal?: AbortSignal }) => {
+        const signal = options?.signal;
+        if (signal) {
+          signals.push(signal);
+          signal.addEventListener('abort', () => {
+            deferred2.reject(new DOMException('Aborted', 'AbortError'));
+          });
+        }
+        return deferred2.promise;
+      });
+
+    render(<TimeController frames={makeFrames()} loadFrame={loadFrame} dragDebounceMs={400} />);
+
+    const slider = screen.getByLabelText('时间轴');
+    fireEvent.change(slider, { target: { value: '1' } });
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(400);
+    });
+
+    expect(loadFrame).toHaveBeenCalledTimes(1);
+    expect(signals[0]?.aborted).toBe(false);
+
+    fireEvent.change(slider, { target: { value: '2' } });
+    expect(signals[0]?.aborted).toBe(true);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(400);
+    });
+
+    expect(loadFrame).toHaveBeenCalledTimes(2);
+
+    deferred2.resolve();
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(screen.queryByLabelText('加载中')).not.toBeInTheDocument();
+
+    vi.useRealTimers();
+  });
 });

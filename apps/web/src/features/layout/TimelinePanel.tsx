@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 
+import { DEFAULT_TIME_KEY, useTimeStore } from '../../state/time';
 import { TimeController } from '../timeline/TimeController';
 
 export type TimelinePanelProps = {
@@ -22,7 +23,8 @@ function makeHourlyFrames(baseUtcIso: string, count: number): Date[] {
 
 export function TimelinePanel({ collapsed, onToggleCollapsed }: TimelinePanelProps) {
   const [activeTimeIndex, setActiveTimeIndex] = useState(0);
-  const frames = useMemo(() => makeHourlyFrames('2024-01-15T00:00:00Z', 24), []);
+  const frames = useMemo(() => makeHourlyFrames(DEFAULT_TIME_KEY, 24), []);
+  const setTimeKey = useTimeStore((state) => state.setTimeKey);
 
   return (
     <section
@@ -53,10 +55,13 @@ export function TimelinePanel({ collapsed, onToggleCollapsed }: TimelinePanelPro
             frames={frames}
             baseIntervalMs={1000}
             onTimeChange={(_, nextIndex) => setActiveTimeIndex(nextIndex)}
+            onRefreshLayers={(time) => {
+              const iso = time.toISOString().replace(/\.\d{3}Z$/, 'Z');
+              setTimeKey(iso);
+            }}
           />
         </div>
       )}
     </section>
   );
 }
-

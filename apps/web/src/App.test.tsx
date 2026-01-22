@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { expect, it, vi } from 'vitest';
 
 vi.mock('./features/viewer/CesiumViewer', () => ({
@@ -55,8 +55,10 @@ it('switches active layer and updates legend', async () => {
 
   expect(await screen.findByText('风速')).toBeInTheDocument();
 
-  expect(fetchMock).toHaveBeenCalledWith(
-    'http://api.test/api/v1/legends?layer_type=wind',
-    expect.any(Object),
-  );
+  await waitFor(() => {
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://api.test/api/v1/legends?layer_type=wind',
+      expect.any(Object),
+    );
+  });
 });

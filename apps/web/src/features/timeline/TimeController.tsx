@@ -6,10 +6,13 @@ export type TimeControllerProps = {
   frames: Date[];
   initialIndex?: number;
   baseIntervalMs?: number;
+  dragDebounceMs?: number;
   onTimeChange?: (time: Date, index: number) => void;
   onRefreshLayers?: (time: Date, index: number) => void;
-  loadFrame?: (time: Date, index: number) => Promise<void>;
+  loadFrame?: (time: Date, index: number, options?: { signal?: AbortSignal }) => Promise<void>;
 };
+
+const DEFAULT_DRAG_DEBOUNCE_MS = 400;
 
 function clampIndex(index: number, length: number): number {
   if (length <= 0) return 0;
@@ -24,6 +27,7 @@ export function TimeController({
   frames,
   initialIndex = 0,
   baseIntervalMs = 1000,
+  dragDebounceMs = DEFAULT_DRAG_DEBOUNCE_MS,
   onTimeChange,
   onRefreshLayers,
   loadFrame
@@ -41,6 +45,8 @@ export function TimeController({
   const currentIndexRef = useRef(currentIndex);
   const isLoadingRef = useRef(isLoading);
   const requestIdRef = useRef(0);
+  const dragTimerRef = useRef<number | null>(null);
+  const loadAbortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     currentIndexRef.current = currentIndex;
@@ -50,8 +56,26 @@ export function TimeController({
     isLoadingRef.current = isLoading;
   }, [isLoading]);
 
+  const cancelDragTimer = useCallback(() => {
+    if (dragTimerRef.current == null) return;
+    window.clearTimeout(dragTimerRef.current);
+    dragTimerRef.current = null;
+  }, []);
+
+  const abortLoad = useCallback(() => {
+    loadAbortRef.current?.abort();
+    loadAbortRef.current = null;
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      cancelDragTimer();
+      abortLoad();
+    };
+  }, [abortLoad, cancelDragTimer]);
+
   const goToIndex = useCallback(
-    async (nextIndex: number): Promise<boolean> => {
+    async (nextIndex: number, options?: { debounced?: boolean }): Promise<boolean> => {
       if (frames.length === 0) return false;
 
       const clamped = clampIndex(nextIndex, frames.length);
@@ -63,27 +87,70 @@ export function TimeController({
       setCurrentIndex(clamped);
 
       onTimeChange?.(nextTime, clamped);
+
+      const shouldDebounce = options?.debounced === true;
+      if (shouldDebounce) {
+        cancelDragTimer();
+        abortLoad();
+
+        if (loadFrame) {
+          isLoadingRef.current = true;
+          setIsLoading(true);
+        }
+
+        const requestId = (requestIdRef.current += 1);
+        dragTimerRef.current = window.setTimeout(() => {
+          dragTimerRef.current = null;
+          onRefreshLayers?.(nextTime, clamped);
+
+          if (!loadFrame) return;
+
+          abortLoad();
+          const controller = new AbortController();
+          loadAbortRef.current = controller;
+
+          void loadFrame(nextTime, clamped, { signal: controller.signal })
+            .catch(() => null)
+            .finally(() => {
+              if (controller.signal.aborted) return;
+              if (requestIdRef.current !== requestId) return;
+              if (loadAbortRef.current === controller) loadAbortRef.current = null;
+              isLoadingRef.current = false;
+              setIsLoading(false);
+            });
+        }, Math.max(0, dragDebounceMs));
+
+        return true;
+      }
+
+      cancelDragTimer();
       onRefreshLayers?.(nextTime, clamped);
 
       if (!loadFrame) return true;
+
+      abortLoad();
 
       const requestId = (requestIdRef.current += 1);
       isLoadingRef.current = true;
       setIsLoading(true);
 
+      const controller = new AbortController();
+      loadAbortRef.current = controller;
+
       try {
-        await loadFrame(nextTime, clamped);
+        await loadFrame(nextTime, clamped, { signal: controller.signal });
         return true;
       } catch {
         return false;
       } finally {
+        if (loadAbortRef.current === controller) loadAbortRef.current = null;
         if (requestIdRef.current === requestId) {
           isLoadingRef.current = false;
           setIsLoading(false);
         }
       }
     },
-    [frames, loadFrame, onRefreshLayers, onTimeChange],
+    [abortLoad, cancelDragTimer, dragDebounceMs, frames, loadFrame, onRefreshLayers, onTimeChange],
   );
 
   useEffect(() => {
@@ -218,7 +285,7 @@ export function TimeController({
           value={currentIndex}
           onChange={(e) => {
             const next = Number(e.target.value);
-            void goToIndex(next);
+            void goToIndex(next, { debounced: true });
           }}
           disabled={frames.length <= 1}
           style={{ width: '100%' }}

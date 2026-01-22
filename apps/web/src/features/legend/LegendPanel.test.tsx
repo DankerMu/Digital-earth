@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
 import { LegendPanel, type LayerSelection } from './LegendPanel';
@@ -51,10 +51,12 @@ describe('LegendPanel', () => {
     expect(await screen.findByText('温度')).toBeInTheDocument();
     expect(screen.getByText('°C')).toBeInTheDocument();
 
-    expect(fetchMock).toHaveBeenCalledWith(
-      'http://api.test/api/v1/legends?layer_type=temperature',
-      expect.any(Object),
-    );
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        'http://api.test/api/v1/legends?layer_type=temperature',
+        expect.any(Object),
+      );
+    });
 
     rerender(
       <LegendPanel
@@ -68,10 +70,12 @@ describe('LegendPanel', () => {
     expect(await screen.findByText('风速')).toBeInTheDocument();
     expect(screen.getByText('m/s')).toBeInTheDocument();
 
-    expect(fetchMock).toHaveBeenCalledWith(
-      'http://api.test/api/v1/legends?layer_type=wind',
-      expect.any(Object),
-    );
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        'http://api.test/api/v1/legends?layer_type=wind',
+        expect.any(Object),
+      );
+    });
   });
 
   it('positions tick labels at threshold percents (no off-by-one)', async () => {

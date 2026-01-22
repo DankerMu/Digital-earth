@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
 vi.mock('../viewer/CesiumViewer', () => ({
@@ -95,6 +95,13 @@ describe('AppLayout', () => {
     expect(await screen.findByText('图层 (wind)')).toBeInTheDocument();
     expect((await screen.findAllByText('风速')).length).toBeGreaterThan(0);
 
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        'http://api.test/api/v1/legends?layer_type=wind',
+        expect.any(Object),
+      );
+    });
+
     fireEvent.change(screen.getByLabelText('透明度 wind'), { target: { value: '50' } });
     expect(screen.getAllByText('50%').length).toBeGreaterThan(0);
 
@@ -103,10 +110,5 @@ describe('AppLayout', () => {
 
     fireEvent.click(screen.getByRole('button', { name: '返回上一视图' }));
     expect(await screen.findByText('全局')).toBeInTheDocument();
-
-    expect(fetchMock).toHaveBeenCalledWith(
-      'http://api.test/api/v1/legends?layer_type=wind',
-      expect.any(Object),
-    );
   });
 });
