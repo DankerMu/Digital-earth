@@ -4,14 +4,15 @@ import { describe, expect, it, vi } from 'vitest';
 
 const STORAGE_KEY = 'digital-earth.productDraft';
 
-async function importFresh() {
+async function importFreshEditor() {
   vi.resetModules();
   return await import('./ProductEditor');
 }
 
 describe('ProductEditor', () => {
   it('validateProductEditor reports invalid time values', async () => {
-    const { validateProductEditor } = await importFresh();
+    vi.resetModules();
+    const { validateProductEditor } = await import('./productEditorValidation');
     const errors = validateProductEditor({
       title: 't',
       type: 'snow',
@@ -29,7 +30,7 @@ describe('ProductEditor', () => {
 
   it('shows required field errors and blocks submit', async () => {
     localStorage.removeItem(STORAGE_KEY);
-    const { ProductEditor } = await importFresh();
+    const { ProductEditor } = await importFreshEditor();
     const onSubmit = vi.fn();
     const onClose = vi.fn();
 
@@ -44,7 +45,7 @@ describe('ProductEditor', () => {
 
   it('validates time ordering rules', async () => {
     localStorage.removeItem(STORAGE_KEY);
-    const { ProductEditor } = await importFresh();
+    const { ProductEditor } = await importFreshEditor();
     const onSubmit = vi.fn();
     const onClose = vi.fn();
 
@@ -70,7 +71,7 @@ describe('ProductEditor', () => {
 
   it('submits normalized values, clears draft, and closes', async () => {
     localStorage.removeItem(STORAGE_KEY);
-    const { ProductEditor } = await importFresh();
+    const { ProductEditor } = await importFreshEditor();
     const onSubmit = vi.fn();
     const onClose = vi.fn();
 
@@ -116,7 +117,7 @@ describe('ProductEditor', () => {
 
   it('restores a saved draft after module reload', async () => {
     localStorage.removeItem(STORAGE_KEY);
-    const { ProductEditor: ProductEditor1 } = await importFresh();
+    const { ProductEditor: ProductEditor1 } = await importFreshEditor();
 
     const first = render(<ProductEditor1 open onClose={() => {}} onSubmit={() => {}} />);
     const user = userEvent.setup();
@@ -134,7 +135,7 @@ describe('ProductEditor', () => {
     first.unmount();
 
     // Simulate a page refresh by re-importing modules.
-    const { ProductEditor: ProductEditor2 } = await importFresh();
+    const { ProductEditor: ProductEditor2 } = await importFreshEditor();
 
     render(<ProductEditor2 open onClose={() => {}} onSubmit={() => {}} />);
 
@@ -145,7 +146,7 @@ describe('ProductEditor', () => {
 
   it('shows a submit error when onSubmit throws', async () => {
     localStorage.removeItem(STORAGE_KEY);
-    const { ProductEditor } = await importFresh();
+    const { ProductEditor } = await importFreshEditor();
     const onSubmit = vi.fn(() => {
       throw new Error('boom');
     });

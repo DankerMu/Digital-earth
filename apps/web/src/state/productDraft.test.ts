@@ -2,6 +2,8 @@ import { act, render, screen } from '@testing-library/react';
 import { createElement } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import type { ProductDraft } from './productDraft';
+
 const STORAGE_KEY = 'digital-earth.productDraft';
 
 async function importFresh() {
@@ -189,7 +191,7 @@ describe('productDraft store', () => {
     const { useProductDraftStore } = await importFresh();
 
     expect(() => {
-      useProductDraftStore.getState().setDraft(null as unknown as any);
+      useProductDraftStore.getState().setDraft(null as unknown as ProductDraft);
     }).not.toThrow();
 
     expect(useProductDraftStore.getState().draft).toBeNull();

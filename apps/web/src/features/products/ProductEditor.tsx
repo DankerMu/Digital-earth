@@ -2,69 +2,16 @@ import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 
 import { useModal } from '../../lib/useModal';
-import { createEmptyProductDraft, useProductDraftStore, type ProductDraft } from '../../state/productDraft';
+import { createEmptyProductDraft, useProductDraftStore } from '../../state/productDraft';
 
-export type ProductEditorValues = ProductDraft;
+import {
+  normalizeProductEditorValues,
+  validateProductEditor,
+  type ProductEditorErrors,
+  type ProductEditorValues,
+} from './productEditorValidation';
 
-type ProductEditorErrors = Partial<Record<keyof ProductEditorValues, string>> & {
-  form?: string;
-};
-
-function normalizeText(value: string): string {
-  return value.trim();
-}
-
-function toEpochMs(value: string): number | null {
-  const trimmed = value.trim();
-  if (!trimmed) return null;
-  const date = new Date(trimmed);
-  const ms = date.getTime();
-  return Number.isNaN(ms) ? null : ms;
-}
-
-export function validateProductEditor(values: ProductEditorValues): ProductEditorErrors {
-  const errors: ProductEditorErrors = {};
-
-  const required: Array<keyof ProductEditorValues> = [
-    'title',
-    'text',
-    'issued_at',
-    'valid_from',
-    'valid_to',
-    'type',
-  ];
-
-  for (const field of required) {
-    if (!normalizeText(values[field])) {
-      errors[field] = '此项为必填';
-    }
-  }
-
-  const issuedAtMs = toEpochMs(values.issued_at);
-  if (normalizeText(values.issued_at) && issuedAtMs == null) {
-    errors.issued_at = '请输入合法的时间';
-  }
-
-  const validFromMs = toEpochMs(values.valid_from);
-  if (normalizeText(values.valid_from) && validFromMs == null) {
-    errors.valid_from = '请输入合法的时间';
-  }
-
-  const validToMs = toEpochMs(values.valid_to);
-  if (normalizeText(values.valid_to) && validToMs == null) {
-    errors.valid_to = '请输入合法的时间';
-  }
-
-  if (validFromMs != null && validToMs != null && validFromMs >= validToMs) {
-    errors.valid_to = '结束时间必须晚于开始时间';
-  }
-
-  if (issuedAtMs != null && validFromMs != null && issuedAtMs > validFromMs) {
-    errors.issued_at = '发布时间需早于或等于有效开始时间';
-  }
-
-  return errors;
-}
+export type { ProductEditorValues };
 
 function hasErrors(errors: ProductEditorErrors): boolean {
   return Object.keys(errors).length > 0;
@@ -76,18 +23,6 @@ function fieldClasses(hasError: boolean): string {
     'bg-slate-950/30 placeholder:text-slate-500',
     hasError ? 'border-rose-400/40 focus:border-rose-400/60 focus:ring-2 focus:ring-rose-400/30' : 'border-slate-400/20 focus:border-blue-400/50 focus:ring-2 focus:ring-blue-400/30',
   ].join(' ');
-}
-
-function normalizeValues(values: ProductEditorValues): ProductEditorValues {
-  return {
-    title: normalizeText(values.title),
-    text: normalizeText(values.text),
-    issued_at: normalizeText(values.issued_at),
-    valid_from: normalizeText(values.valid_from),
-    valid_to: normalizeText(values.valid_to),
-    type: normalizeText(values.type),
-    severity: normalizeText(values.severity),
-  };
 }
 
 type Props = {
@@ -183,7 +118,7 @@ export function ProductEditor({
     setSubmitError(null);
 
     try {
-      const normalized = normalizeValues(values);
+      const normalized = normalizeProductEditorValues(values);
       await onSubmit(normalized);
       useProductDraftStore.getState().clearDraft();
       onClose();

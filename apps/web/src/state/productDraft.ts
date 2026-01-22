@@ -113,7 +113,7 @@ function safeWritePersistedDraft(value: PersistedProductDraft | null) {
   }
 }
 
-let persisted = safeReadPersistedDraft();
+const persisted = safeReadPersistedDraft();
 let draft: ProductDraft | null = persisted?.draft ?? null;
 let updatedAt: number | null = persisted?.updatedAt ?? null;
 
