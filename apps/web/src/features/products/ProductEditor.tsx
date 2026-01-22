@@ -2,6 +2,7 @@ import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 
 import { useModal } from '../../lib/useModal';
+import { bboxFromLonLat, polygonAreaKm2, polygonHasSelfIntersections } from '../../lib/geo';
 import { createEmptyProductDraft, getProductDraftStorageKey, useProductDraftStore } from '../../state/productDraft';
 
 import {
@@ -13,6 +14,7 @@ import {
   type ProductEditorSubmitValues,
   type ProductEditorValues,
 } from './productEditorValidation';
+import { HazardPolygonMap } from './HazardPolygonMap';
 
 export type { ProductEditorValues };
 
@@ -26,6 +28,10 @@ function fieldClasses(hasError: boolean): string {
     'bg-slate-950/30 placeholder:text-slate-500',
     hasError ? 'border-rose-400/40 focus:border-rose-400/60 focus:ring-2 focus:ring-rose-400/30' : 'border-slate-400/20 focus:border-blue-400/50 focus:ring-2 focus:ring-blue-400/30',
   ].join(' ');
+}
+
+function createHazardId(): string {
+  return `hazard-${Math.random().toString(36).slice(2, 10)}-${Date.now().toString(36)}`;
 }
 
 type Props = {
@@ -76,6 +82,11 @@ export function ProductEditor({
     if (isEditing) return baseValues;
     return useProductDraftStore.getState(storageKey).draft ?? baseValues;
   });
+  const [activeHazardId, setActiveHazardId] = useState<string | null>(() => {
+    const initialDraft = isEditing ? baseValues : useProductDraftStore.getState(storageKey).draft ?? baseValues;
+    return initialDraft.hazards[0]?.id ?? null;
+  });
+  const [isDrawingHazard, setIsDrawingHazard] = useState(false);
   const [errors, setErrors] = useState<ProductEditorErrors>({});
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -95,6 +106,7 @@ export function ProductEditor({
       valid_to: `product-editor-valid-to-${baseId}`,
       type: `product-editor-type-${baseId}`,
       severity: `product-editor-severity-${baseId}`,
+      hazards: `product-editor-hazards-${baseId}`,
     };
   }, [baseId]);
 
@@ -110,6 +122,8 @@ export function ProductEditor({
     const stored = useProductDraftStore.getState(storageKey).draft;
     const nextValues = !isEditing && stored ? stored : baseValues;
     setValues(nextValues);
+    setActiveHazardId(nextValues.hazards[0]?.id ?? null);
+    setIsDrawingHazard(false);
     setErrors({});
     setSubmitError(null);
     setIsSubmitting(false);
@@ -131,14 +145,42 @@ export function ProductEditor({
     return date.toLocaleString();
   }, [savedDraftUpdatedAt]);
 
-  function updateField(field: keyof ProductEditorValues, value: string) {
+  type TextField = 'title' | 'text' | 'issued_at' | 'valid_from' | 'valid_to' | 'type' | 'severity';
+
+  function updateValues(patch: Partial<ProductEditorValues>) {
     setValues((current) => {
-      const next = { ...current, [field]: value };
+      const next = { ...current, ...patch };
       if (!validatedOnce) return next;
       setErrors(validateProductEditor(next));
       return next;
     });
   }
+
+  function updateField(field: TextField, value: string) {
+    updateValues({ [field]: value } as Pick<ProductEditorValues, TextField>);
+  }
+
+  function updateHazards(
+    update: (hazards: ProductEditorValues['hazards']) => ProductEditorValues['hazards'],
+  ) {
+    setValues((current) => {
+      const hazards = update(current.hazards);
+      const next = { ...current, hazards };
+      if (!validatedOnce) return next;
+      setErrors(validateProductEditor(next));
+      return next;
+    });
+  }
+
+  useEffect(() => {
+    if (values.hazards.length === 0) {
+      if (activeHazardId !== null) setActiveHazardId(null);
+      return;
+    }
+    if (!activeHazardId || !values.hazards.some((hazard) => hazard.id === activeHazardId)) {
+      setActiveHazardId(values.hazards[0]!.id);
+    }
+  }, [activeHazardId, values.hazards]);
 
   async function handleSubmit() {
     setValidatedOnce(true);
@@ -170,11 +212,36 @@ export function ProductEditor({
     const draft = useProductDraftStore.getState(storageKey).draft;
     if (!draft) return;
     setValues(draft);
+    setActiveHazardId(draft.hazards[0]?.id ?? null);
+    setIsDrawingHazard(false);
     setErrors({});
     setSubmitError(null);
     setValidatedOnce(false);
     setRestoredDraft(true);
   }
+
+  const hazardsSummary = useMemo(() => {
+    return values.hazards.map((hazard) => {
+      const bbox = bboxFromLonLat(hazard.vertices);
+      const areaKm2 = polygonAreaKm2(hazard.vertices);
+      const selfIntersecting =
+        hazard.vertices.length >= 4 ? polygonHasSelfIntersections(hazard.vertices) : false;
+
+      return {
+        id: hazard.id,
+        vertices: hazard.vertices,
+        bbox,
+        areaKm2,
+        selfIntersecting,
+        isComplete: hazard.vertices.length >= 3,
+      };
+    });
+  }, [values.hazards]);
+
+  const activeHazard = useMemo(() => {
+    if (!activeHazardId) return null;
+    return hazardsSummary.find((hazard) => hazard.id === activeHazardId) ?? null;
+  }, [activeHazardId, hazardsSummary]);
 
   if (!open) return null;
 
@@ -225,6 +292,8 @@ export function ProductEditor({
               onClick={() => {
                 useProductDraftStore.getState(storageKey).clearDraft();
                 setValues(baseValues);
+                setActiveHazardId(baseValues.hazards[0]?.id ?? null);
+                setIsDrawingHazard(false);
                 setErrors({});
                 setSubmitError(null);
                 setValidatedOnce(false);
@@ -421,6 +490,351 @@ export function ProductEditor({
                   <li>有效开始时间需早于有效结束时间</li>
                   <li>发布时间需早于或等于有效开始时间</li>
                 </ul>
+              </div>
+            </div>
+
+            <div className="rounded-lg border border-slate-400/10 bg-slate-900/10 p-3">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <div className="text-sm font-medium text-slate-200">
+                    风险区域 <span className="text-rose-300">*</span>
+                  </div>
+                  <div className="mt-1 text-xs text-slate-400">
+                    点击地图添加顶点，拖拽顶点编辑位置；右键或按钮删除顶点；双击或按钮完成绘制。
+                  </div>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    className="rounded-lg border border-slate-400/20 bg-slate-700/30 px-2 py-1 text-xs text-slate-200 hover:bg-slate-700/50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-400"
+                    onClick={() => {
+                      const id = createHazardId();
+                      updateValues({
+                        hazards: [...values.hazards, { id, vertices: [] }],
+                      });
+                      setActiveHazardId(id);
+                      setIsDrawingHazard(true);
+                    }}
+                  >
+                    新增区域
+                  </button>
+                  {activeHazard ? (
+                    <button
+                      type="button"
+                      className="rounded-lg border border-rose-400/20 bg-rose-500/10 px-2 py-1 text-xs text-rose-200 hover:bg-rose-500/20 focus-visible:outline focus-visible:outline-2 focus-visible:outline-rose-400"
+                      onClick={() => {
+                        const next = values.hazards.filter((hazard) => hazard.id !== activeHazard.id);
+                        updateValues({ hazards: next });
+                        setActiveHazardId(next[0]?.id ?? null);
+                        setIsDrawingHazard(false);
+                      }}
+                      aria-label="删除当前风险区域"
+                    >
+                      删除当前
+                    </button>
+                  ) : null}
+                </div>
+              </div>
+
+              {errors.hazards ? (
+                <div id={`${fieldIds.hazards}-error`} className="mt-2 text-xs text-rose-200" role="alert">
+                  {errors.hazards}
+                </div>
+              ) : null}
+
+              <div className="mt-3 grid gap-3 md:grid-cols-2">
+                <div className="grid gap-3">
+                  <div className="grid gap-2">
+                    {hazardsSummary.length === 0 ? (
+                      <div className="text-sm text-slate-400">尚未添加风险区域。</div>
+                    ) : (
+                      <div className="grid gap-2">
+                        {hazardsSummary.map((hazard, index) => {
+                          const selected = hazard.id === activeHazardId;
+                          const status = hazard.selfIntersecting
+                            ? '自交'
+                            : hazard.vertices.length < 3
+                              ? `点数不足(${hazard.vertices.length}/3)`
+                              : '已完成';
+
+                          return (
+                            <button
+                              key={hazard.id}
+                              type="button"
+                              className={[
+                                'flex w-full items-center justify-between gap-3 rounded-lg border px-3 py-2 text-left text-xs transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-400',
+                                selected
+                                  ? 'border-blue-400/60 bg-blue-500/10'
+                                  : 'border-slate-400/10 bg-slate-950/10 hover:bg-slate-950/20',
+                              ].join(' ')}
+                              onClick={() => {
+                                setActiveHazardId(hazard.id);
+                                setIsDrawingHazard(false);
+                              }}
+                              aria-selected={selected}
+                            >
+                              <div className="min-w-0">
+                                <div className="truncate font-medium text-slate-100">区域 {index + 1}</div>
+                                <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-slate-400">
+                                  <span>顶点: {hazard.vertices.length}</span>
+                                  <span>
+                                    面积:{' '}
+                                    {hazard.areaKm2 == null ? '—' : `${hazard.areaKm2.toFixed(2)} km²`}
+                                  </span>
+                                  <span
+                                    className={
+                                      hazard.selfIntersecting ? 'text-rose-200' : 'text-slate-400'
+                                    }
+                                  >
+                                    状态: {status}
+                                  </span>
+                                </div>
+                              </div>
+                              {selected ? (
+                                <span className="shrink-0 rounded-md border border-blue-400/30 bg-blue-500/10 px-2 py-0.5 text-[11px] text-blue-100">
+                                  当前
+                                </span>
+                              ) : null}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      className="rounded-lg border border-slate-400/20 bg-slate-700/30 px-2 py-1 text-xs text-slate-200 hover:bg-slate-700/50 disabled:cursor-not-allowed disabled:opacity-60 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-400"
+                      disabled={!activeHazard}
+                      onClick={() => setIsDrawingHazard(true)}
+                    >
+                      {isDrawingHazard ? '绘制中…' : '开始/继续绘制'}
+                    </button>
+                    <button
+                      type="button"
+                      className="rounded-lg border border-blue-400/30 bg-blue-500/20 px-2 py-1 text-xs text-blue-100 hover:bg-blue-500/30 disabled:cursor-not-allowed disabled:opacity-60 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-400"
+                      disabled={!isDrawingHazard}
+                      onClick={() => setIsDrawingHazard(false)}
+                    >
+                      完成绘制
+                    </button>
+                    <button
+                      type="button"
+                      className="rounded-lg border border-slate-400/20 bg-slate-700/30 px-2 py-1 text-xs text-slate-200 hover:bg-slate-700/50 disabled:cursor-not-allowed disabled:opacity-60 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-400"
+                      disabled={!activeHazard || activeHazard.vertices.length === 0}
+                      onClick={() => {
+                        if (!activeHazard) return;
+                        const nextVertices = activeHazard.vertices.slice(0, -1);
+                        updateValues({
+                          hazards: values.hazards.map((hazard) =>
+                            hazard.id === activeHazard.id ? { ...hazard, vertices: nextVertices } : hazard,
+                          ),
+                        });
+                      }}
+                    >
+                      删除最后顶点
+                    </button>
+                    <button
+                      type="button"
+                      className="rounded-lg border border-slate-400/20 bg-slate-700/30 px-2 py-1 text-xs text-slate-200 hover:bg-slate-700/50 disabled:cursor-not-allowed disabled:opacity-60 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-400"
+                      disabled={!activeHazard || activeHazard.vertices.length === 0}
+                      onClick={() => {
+                        if (!activeHazard) return;
+                        updateValues({
+                          hazards: values.hazards.map((hazard) =>
+                            hazard.id === activeHazard.id ? { ...hazard, vertices: [] } : hazard,
+                          ),
+                        });
+                      }}
+                    >
+                      清空顶点
+                    </button>
+                  </div>
+
+                  <HazardPolygonMap
+                    hazards={values.hazards}
+                    activeHazardId={activeHazardId}
+                    drawing={isDrawingHazard}
+                    onSetActiveHazardId={(id) => {
+                      setActiveHazardId(id);
+                      setIsDrawingHazard(false);
+                    }}
+                    onFinishDrawing={() => setIsDrawingHazard(false)}
+                    onDeleteVertex={(hazardId, vertexIndex) => {
+                      updateHazards((hazards) =>
+                        hazards.map((hazard) => {
+                          if (hazard.id !== hazardId) return hazard;
+                          return {
+                            ...hazard,
+                            vertices: hazard.vertices.filter((_, index) => index !== vertexIndex),
+                          };
+                        }),
+                      );
+                    }}
+                    onChangeVertices={(hazardId, vertices) => {
+                      updateHazards((hazards) =>
+                        hazards.map((hazard) =>
+                          hazard.id === hazardId ? { ...hazard, vertices } : hazard,
+                        ),
+                      );
+                    }}
+                  />
+                </div>
+
+                <div className="grid gap-3">
+                  {!activeHazard ? (
+                    <div className="rounded-lg border border-slate-400/10 bg-slate-950/10 p-3 text-sm text-slate-400">
+                      请选择或新增一个风险区域以编辑顶点。
+                    </div>
+                  ) : (
+                    <div className="grid gap-3">
+                      <div className="rounded-lg border border-slate-400/10 bg-slate-950/10 p-3 text-xs text-slate-300">
+                        <div className="grid gap-1">
+                          <div>
+                            顶点数: <span className="font-medium">{activeHazard.vertices.length}</span>
+                          </div>
+                          <div>
+                            面积:{' '}
+                            <span className="font-medium">
+                              {activeHazard.areaKm2 == null ? '—' : `${activeHazard.areaKm2.toFixed(2)} km²`}
+                            </span>
+                          </div>
+                          <div>
+                            bbox:{' '}
+                            <span className="font-medium">
+                              {activeHazard.bbox
+                                ? `lon[${activeHazard.bbox.min_x.toFixed(4)}, ${activeHazard.bbox.max_x.toFixed(4)}], lat[${activeHazard.bbox.min_y.toFixed(4)}, ${activeHazard.bbox.max_y.toFixed(4)}]`
+                                : '—'}
+                            </span>
+                          </div>
+                        </div>
+                        {activeHazard.selfIntersecting ? (
+                          <div className="mt-2 rounded-md border border-rose-400/20 bg-rose-500/10 p-2 text-rose-200">
+                            检测到多边形自交，请调整顶点。
+                          </div>
+                        ) : null}
+                        {activeHazard.vertices.length > 0 && activeHazard.vertices.length < 3 ? (
+                          <div className="mt-2 rounded-md border border-amber-400/20 bg-amber-500/10 p-2 text-amber-100">
+                            多边形至少需要 3 个顶点。
+                          </div>
+                        ) : null}
+                      </div>
+
+                      <div className="rounded-lg border border-slate-400/10 bg-slate-950/10 p-3">
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="text-sm font-medium text-slate-200">顶点列表</div>
+                          <button
+                            type="button"
+                            className="rounded-lg border border-slate-400/20 bg-slate-700/30 px-2 py-1 text-xs text-slate-200 hover:bg-slate-700/50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-400"
+                            onClick={() => {
+                              const lastVertex = activeHazard.vertices[activeHazard.vertices.length - 1];
+                              const nextVertex = lastVertex ? { ...lastVertex } : { lon: 116.391, lat: 39.9075 };
+                              const nextVertices = [...activeHazard.vertices, nextVertex];
+                              updateValues({
+                                hazards: values.hazards.map((hazard) =>
+                                  hazard.id === activeHazard.id
+                                    ? { ...hazard, vertices: nextVertices }
+                                    : hazard,
+                                ),
+                              });
+                            }}
+                          >
+                            添加顶点
+                          </button>
+                        </div>
+
+                        {activeHazard.vertices.length === 0 ? (
+                          <div className="mt-2 text-sm text-slate-400">暂无顶点，可点击地图或按钮添加。</div>
+                        ) : (
+                          <div className="mt-2 grid gap-2">
+                            {activeHazard.vertices.map((vertex, index) => {
+                              const lonId = `${fieldIds.hazards}-lon-${activeHazard.id}-${index}`;
+                              const latId = `${fieldIds.hazards}-lat-${activeHazard.id}-${index}`;
+                              return (
+                                <div
+                                  key={`${activeHazard.id}-${index}`}
+                                  className="grid grid-cols-[1fr_1fr_auto] items-center gap-2"
+                                >
+                                  <div>
+                                    <label htmlFor={lonId} className="sr-only">
+                                      顶点 {index + 1} 经度
+                                    </label>
+                                    <input
+                                      id={lonId}
+                                      type="number"
+                                      step="0.0001"
+                                      className={fieldClasses(false)}
+                                      value={String(vertex.lon)}
+                                      onChange={(event) => {
+                                        const value = Number(event.target.value);
+                                        if (!Number.isFinite(value)) return;
+                                        const nextVertices = activeHazard.vertices.map((current, i) =>
+                                          i === index ? { ...current, lon: value } : current,
+                                        );
+                                        updateValues({
+                                          hazards: values.hazards.map((hazard) =>
+                                            hazard.id === activeHazard.id
+                                              ? { ...hazard, vertices: nextVertices }
+                                              : hazard,
+                                          ),
+                                        });
+                                      }}
+                                    />
+                                  </div>
+                                  <div>
+                                    <label htmlFor={latId} className="sr-only">
+                                      顶点 {index + 1} 纬度
+                                    </label>
+                                    <input
+                                      id={latId}
+                                      type="number"
+                                      step="0.0001"
+                                      className={fieldClasses(false)}
+                                      value={String(vertex.lat)}
+                                      onChange={(event) => {
+                                        const value = Number(event.target.value);
+                                        if (!Number.isFinite(value)) return;
+                                        const nextVertices = activeHazard.vertices.map((current, i) =>
+                                          i === index ? { ...current, lat: value } : current,
+                                        );
+                                        updateValues({
+                                          hazards: values.hazards.map((hazard) =>
+                                            hazard.id === activeHazard.id
+                                              ? { ...hazard, vertices: nextVertices }
+                                              : hazard,
+                                          ),
+                                        });
+                                      }}
+                                    />
+                                  </div>
+                                  <button
+                                    type="button"
+                                    className="rounded-lg border border-rose-400/20 bg-rose-500/10 px-2 py-1 text-xs text-rose-200 hover:bg-rose-500/20 focus-visible:outline focus-visible:outline-2 focus-visible:outline-rose-400"
+                                    onClick={() => {
+                                      updateValues({
+                                        hazards: values.hazards.map((hazard) => {
+                                          if (hazard.id !== activeHazard.id) return hazard;
+                                          return {
+                                            ...hazard,
+                                            vertices: hazard.vertices.filter((_, i) => i !== index),
+                                          };
+                                        }),
+                                      });
+                                    }}
+                                    aria-label={`删除顶点 ${index + 1}`}
+                                  >
+                                    删除
+                                  </button>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
 

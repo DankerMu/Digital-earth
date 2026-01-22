@@ -1,4 +1,14 @@
-import type { ProductDraft } from '../../state/productDraft';
+import {
+  bboxFromLonLat,
+  geoJsonPolygonFromLonLat,
+  polygonAreaKm2,
+  polygonHasDistinctNonCollinearVertices,
+  polygonHasDuplicateVertices,
+  polygonHasSelfIntersections,
+  polygonMeetsMinimumAreaKm2,
+  type BBox,
+} from '../../lib/geo';
+import type { ProductDraft, ProductHazardDraft } from '../../state/productDraft';
 
 /**
  * Form values for the product editor.
@@ -8,20 +18,30 @@ import type { ProductDraft } from '../../state/productDraft';
  */
 export type ProductEditorValues = ProductDraft;
 
+export type ProductEditorHazardSubmit = {
+  id: string;
+  geometry: { type: 'Polygon'; coordinates: number[][][] };
+  bbox: BBox;
+  area_km2: number;
+};
+
 /**
  * Payload values after normalization.
  *
  * Date fields are ISO 8601 strings in UTC (e.g. `2026-01-01T00:00:00.000Z`).
  */
-export type ProductEditorSubmitValues = Omit<ProductDraft, 'issued_at' | 'valid_from' | 'valid_to'> & {
+export type ProductEditorSubmitValues = Omit<ProductDraft, 'issued_at' | 'valid_from' | 'valid_to' | 'hazards'> & {
   issued_at: string;
   valid_from: string;
   valid_to: string;
+  hazards: ProductEditorHazardSubmit[];
 };
 
 export type ProductEditorErrors = Partial<Record<keyof ProductEditorValues, string>> & {
   form?: string;
 };
+
+const MIN_HAZARD_POLYGON_AREA_KM2 = 0.01;
 
 type DateTimeLocalParts = {
   year: number;
@@ -137,6 +157,25 @@ export function normalizeProductEditorValues(values: ProductEditorValues): Produ
   const validFromIso = datetimeLocalToIso(values.valid_from);
   const validToIso = datetimeLocalToIso(values.valid_to);
 
+  const normalizedHazards: ProductEditorHazardSubmit[] = values.hazards
+    .map((hazard) => {
+      if (polygonHasDuplicateVertices(hazard.vertices)) return null;
+      if (!polygonHasDistinctNonCollinearVertices(hazard.vertices)) return null;
+      if (polygonHasSelfIntersections(hazard.vertices)) return null;
+      if (!polygonMeetsMinimumAreaKm2(hazard.vertices, MIN_HAZARD_POLYGON_AREA_KM2)) return null;
+      const geometry = geoJsonPolygonFromLonLat(hazard.vertices);
+      const bbox = bboxFromLonLat(hazard.vertices);
+      const area_km2 = polygonAreaKm2(hazard.vertices);
+      if (!geometry || !bbox || area_km2 == null) return null;
+      return {
+        id: hazard.id,
+        geometry,
+        bbox,
+        area_km2,
+      };
+    })
+    .filter((hazard): hazard is ProductEditorHazardSubmit => hazard != null);
+
   return {
     title: normalizeText(values.title),
     text: normalizeText(values.text),
@@ -145,13 +184,24 @@ export function normalizeProductEditorValues(values: ProductEditorValues): Produ
     valid_to: validToIso ?? normalizeText(values.valid_to),
     type: normalizeText(values.type),
     severity: normalizeText(values.severity),
+    hazards: normalizedHazards,
   };
+}
+
+function hazardStatus(hazard: ProductHazardDraft): string | null {
+  if (hazard.vertices.length < 3) return '至少需要 3 个顶点';
+  if (polygonHasDuplicateVertices(hazard.vertices)) return '顶点存在重复，请删除重复顶点';
+  if (!polygonHasDistinctNonCollinearVertices(hazard.vertices)) return '至少需要 3 个不同且不共线的顶点';
+  if (polygonHasSelfIntersections(hazard.vertices)) return '多边形存在自交';
+  if (!polygonMeetsMinimumAreaKm2(hazard.vertices, MIN_HAZARD_POLYGON_AREA_KM2))
+    return `多边形面积需至少 ${MIN_HAZARD_POLYGON_AREA_KM2} km²`;
+  return null;
 }
 
 export function validateProductEditor(values: ProductEditorValues): ProductEditorErrors {
   const errors: ProductEditorErrors = {};
 
-  const required: Array<keyof ProductEditorValues> = [
+  const required: Array<'title' | 'text' | 'issued_at' | 'valid_from' | 'valid_to' | 'type'> = [
     'title',
     'text',
     'issued_at',
@@ -164,6 +214,18 @@ export function validateProductEditor(values: ProductEditorValues): ProductEdito
     if (!normalizeText(values[field])) {
       errors[field] = '此项为必填';
     }
+  }
+
+  if (values.hazards.length === 0) {
+    errors.hazards = '请至少添加一个风险区域';
+  } else {
+    const hazardMessages: string[] = [];
+    values.hazards.forEach((hazard, index) => {
+      const status = hazardStatus(hazard);
+      if (!status) return;
+      hazardMessages.push(`风险区域 ${index + 1}: ${status}`);
+    });
+    if (hazardMessages.length > 0) errors.hazards = hazardMessages.join('；');
   }
 
   const issuedAtMs = toEpochMs(values.issued_at);
@@ -186,7 +248,7 @@ export function validateProductEditor(values: ProductEditorValues): ProductEdito
   }
 
   if (issuedAtMs != null && validFromMs != null && issuedAtMs > validFromMs) {
-      errors.issued_at = '发布时间需早于或等于有效开始时间';
+    errors.issued_at = '发布时间需早于或等于有效开始时间';
   }
 
   const severity = normalizeText(values.severity);

@@ -1,5 +1,16 @@
 import { useSyncExternalStore } from 'react';
 
+import type { LonLat } from '../lib/geo';
+
+export type ProductHazardDraft = {
+  /**
+   * Client-generated stable identifier used for editing/picking.
+   * Not necessarily the backend hazard id.
+   */
+  id: string;
+  vertices: LonLat[];
+};
+
 export type ProductDraft = {
   title: string;
   text: string;
@@ -12,6 +23,7 @@ export type ProductDraft = {
    * An empty string means unset.
    */
   severity: string;
+  hazards: ProductHazardDraft[];
 };
 
 type PersistedProductDraft = {
@@ -62,7 +74,31 @@ export function createEmptyProductDraft(): ProductDraft {
     valid_to: '',
     type: '',
     severity: '',
+    hazards: [],
   };
+}
+
+function normalizeFiniteNumber(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+function parseHazardVertex(value: unknown): LonLat | null {
+  if (!isRecord(value)) return null;
+  const lon = normalizeFiniteNumber(value.lon);
+  const lat = normalizeFiniteNumber(value.lat);
+  if (lon == null || lat == null) return null;
+  return { lon, lat };
+}
+
+function parseHazardDraft(value: unknown): ProductHazardDraft | null {
+  if (!isRecord(value)) return null;
+  const id = normalizeString(value.id).trim();
+  if (!id) return null;
+  const verticesRaw = value.vertices;
+  const vertices = Array.isArray(verticesRaw)
+    ? verticesRaw.map(parseHazardVertex).filter((vertex): vertex is LonLat => vertex != null)
+    : [];
+  return { id, vertices };
 }
 
 function parseProductDraft(value: unknown): ProductDraft | null {
@@ -76,6 +112,11 @@ function parseProductDraft(value: unknown): ProductDraft | null {
     valid_to: normalizeString(value.valid_to),
     type: normalizeString(value.type),
     severity: normalizeString(value.severity),
+    hazards: Array.isArray(value.hazards)
+      ? value.hazards
+          .map(parseHazardDraft)
+          .filter((hazard): hazard is ProductHazardDraft => hazard != null)
+      : [],
   };
 }
 

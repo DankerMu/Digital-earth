@@ -1,4 +1,6 @@
-export type LonLat = { lon: number; lat: number };
+import type { LonLat } from '../../lib/geo';
+
+export type { LonLat };
 export type PolygonLonLat = { outer: LonLat[]; holes: LonLat[][] };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -70,4 +72,3 @@ export function extractGeoJsonPolygons(value: unknown): PolygonLonLat[] {
 
   return [];
 }
-
