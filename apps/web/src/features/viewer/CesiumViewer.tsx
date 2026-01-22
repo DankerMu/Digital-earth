@@ -32,6 +32,7 @@ import { resolveEventLayerTemplateSpec, useEventAutoLayersStore } from '../../st
 import { useLayerManagerStore, type LayerConfig, type LayerType } from '../../state/layerManager';
 import { usePerformanceModeStore } from '../../state/performanceMode';
 import { useSceneModeStore } from '../../state/sceneMode';
+import { useTimeStore } from '../../state/time';
 import { useViewModeStore, type ViewModeRoute } from '../../state/viewMode';
 import { PrecipitationParticles } from '../effects/PrecipitationParticles';
 import { DisasterDemo } from '../effects/DisasterDemo';
@@ -76,7 +77,6 @@ const DEFAULT_CAMERA = {
 const MIN_ZOOM_DISTANCE_METERS = 100;
 const MAX_ZOOM_DISTANCE_METERS = 40_000_000;
 
-const DEFAULT_LAYER_TIME_KEY = '2024-01-15T00:00:00Z';
 const CLOUD_LAYER_REFRESH_INTERVAL_MS = 5 * 60 * 1000;
 const CLOUD_LAYER_FRAME_COUNT = 24;
 const CLOUD_LAYER_FRAME_STEP_MS = 60 * 60 * 1000;
@@ -533,6 +533,7 @@ export function CesiumViewer() {
   const canGoBack = useViewModeStore((state) => state.canGoBack);
   const goBack = useViewModeStore((state) => state.goBack);
   const layers = useLayerManagerStore((state) => state.layers);
+  const timeKey = useTimeStore((state) => state.timeKey);
   const performanceModeEnabled = usePerformanceModeStore((state) => state.enabled);
   const cameraPerspectiveId = useCameraPerspectiveStore((state) => state.cameraPerspectiveId);
   const appliedBasemapIdRef = useRef<BasemapId | null>(null);
@@ -610,8 +611,8 @@ export function CesiumViewer() {
     setError: setSamplingError,
   } = useSamplingCard();
   const cloudTimeKey = useMemo(
-    () => makeHourlyUtcIso(DEFAULT_LAYER_TIME_KEY, cloudFrameIndex),
-    [cloudFrameIndex],
+    () => makeHourlyUtcIso(timeKey, cloudFrameIndex),
+    [cloudFrameIndex, timeKey],
   );
 
   const maybeApplyEventAutoLayerTemplate = useCallback(() => {
@@ -659,15 +660,15 @@ export function CesiumViewer() {
 
   const localTimeKey = useMemo(() => {
     if (activeLayer?.type === 'cloud') return cloudTimeKey;
-    return DEFAULT_LAYER_TIME_KEY;
-  }, [activeLayer, cloudTimeKey]);
+    return timeKey;
+  }, [activeLayer, cloudTimeKey, timeKey]);
 
   const snowDepthTimeKey = useMemo(() => {
     if (viewModeRoute.viewModeId === 'event' && eventMonitoringTimeKey) {
       return eventMonitoringTimeKey;
     }
-    return DEFAULT_LAYER_TIME_KEY;
-  }, [eventMonitoringTimeKey, viewModeRoute.viewModeId]);
+    return timeKey;
+  }, [eventMonitoringTimeKey, timeKey, viewModeRoute.viewModeId]);
 
   const layerGlobalLayerId =
     viewModeRoute.viewModeId === 'layerGlobal' ? viewModeRoute.layerId : null;
@@ -1115,14 +1116,14 @@ export function CesiumViewer() {
 
     const precipitationTemplate = buildPrecipitationTileUrlTemplate({
       apiBaseUrl,
-      timeKey: DEFAULT_LAYER_TIME_KEY,
+      timeKey,
       threshold: precipitationLayerConfig.threshold,
     });
 
     const temperatureVariable = (temperatureLayerConfig?.variable || 'TMP').trim() || 'TMP';
     const temperatureTemplate = buildCldasTileUrlTemplate({
       apiBaseUrl,
-      timeKey: DEFAULT_LAYER_TIME_KEY,
+      timeKey,
       variable: temperatureVariable.toUpperCase(),
     });
 
@@ -1131,7 +1132,7 @@ export function CesiumViewer() {
       precipitation: { urlTemplate: precipitationTemplate },
       temperature: { urlTemplate: temperatureTemplate },
     });
-  }, [apiBaseUrl, precipitationLayerConfig, temperatureLayerConfig]);
+  }, [apiBaseUrl, precipitationLayerConfig, temperatureLayerConfig, timeKey]);
 
   useEffect(() => {
     if (!apiBaseUrl) {
@@ -2011,14 +2012,14 @@ export function CesiumViewer() {
         const [first, second] = await Promise.all([
           fetchWindVectorData({
             apiBaseUrl: apiBaseUrl ?? '',
-            timeKey: DEFAULT_LAYER_TIME_KEY,
+            timeKey,
             bbox: { ...options.bbox, east: 180 },
             density: options.density,
             signal: options.signal,
           }),
           fetchWindVectorData({
             apiBaseUrl: apiBaseUrl ?? '',
-            timeKey: DEFAULT_LAYER_TIME_KEY,
+            timeKey,
             bbox: { ...options.bbox, west: -180 },
             density: options.density,
             signal: options.signal,
@@ -2029,7 +2030,7 @@ export function CesiumViewer() {
 
       const data = await fetchWindVectorData({
         apiBaseUrl: apiBaseUrl ?? '',
-        timeKey: DEFAULT_LAYER_TIME_KEY,
+        timeKey,
         bbox: options.bbox,
         density: options.density,
         signal: options.signal,
@@ -2077,7 +2078,7 @@ export function CesiumViewer() {
       });
 
       const normalizedApiBaseUrl = apiBaseUrl.trim().replace(/\/+$/, '');
-      const viewKey = `${normalizedApiBaseUrl}:${DEFAULT_LAYER_TIME_KEY}:${density}:${bbox.west},${bbox.south},${bbox.east},${bbox.north}`;
+      const viewKey = `${normalizedApiBaseUrl}:${timeKey}:${density}:${bbox.west},${bbox.south},${bbox.east},${bbox.north}`;
       const styleKey = `${windLayerConfig.opacity}:${windVisible}:${performanceModeEnabled}`;
 
       if (windViewKeyRef.current !== viewKey) {
@@ -2197,7 +2198,7 @@ export function CesiumViewer() {
       clearTimer();
       cancelInFlight();
     };
-  }, [apiBaseUrl, performanceModeEnabled, viewer, windLayerConfig]);
+  }, [apiBaseUrl, performanceModeEnabled, timeKey, viewer, windLayerConfig]);
 
   useEffect(() => {
     if (!viewer) return;
@@ -2336,7 +2337,7 @@ export function CesiumViewer() {
       const params = {
         id: config.id,
         apiBaseUrl,
-        timeKey: DEFAULT_LAYER_TIME_KEY,
+        timeKey,
         variable: config.variable,
         opacity: config.opacity,
         visible: config.visible,
@@ -2356,7 +2357,7 @@ export function CesiumViewer() {
       layer.destroy();
       existing.delete(id);
     }
-  }, [apiBaseUrl, layers, viewer]);
+  }, [apiBaseUrl, layers, timeKey, viewer]);
 
   useEffect(() => {
     if (!viewer) return;
@@ -2408,7 +2409,7 @@ export function CesiumViewer() {
       const params = {
         id: config.id,
         apiBaseUrl,
-        timeKey: DEFAULT_LAYER_TIME_KEY,
+        timeKey,
         opacity: config.opacity,
         visible: config.visible,
         zIndex: config.zIndex,
@@ -2428,7 +2429,7 @@ export function CesiumViewer() {
       layer.destroy();
       existing.delete(id);
     }
-  }, [apiBaseUrl, layers, viewer]);
+  }, [apiBaseUrl, layers, timeKey, viewer]);
 
   useEffect(() => {
     if (!viewer) return;
@@ -2485,7 +2486,7 @@ export function CesiumViewer() {
     if (didReorder) {
       viewer.scene.requestRender();
     }
-  }, [apiBaseUrl, cloudTimeKey, layers, viewer]);
+  }, [apiBaseUrl, cloudTimeKey, layers, timeKey, viewer]);
 
   return (
     <div className="viewerRoot">

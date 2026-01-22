@@ -403,6 +403,7 @@ import { DEFAULT_EVENT_LAYER_MODE, useEventLayersStore } from '../../state/event
 import { useLayerManagerStore } from '../../state/layerManager';
 import { usePerformanceModeStore } from '../../state/performanceMode';
 import { DEFAULT_SCENE_MODE_ID, useSceneModeStore } from '../../state/sceneMode';
+import { DEFAULT_TIME_KEY, useTimeStore } from '../../state/time';
 import { useViewModeStore } from '../../state/viewMode';
 import { CesiumViewer } from './CesiumViewer';
 
@@ -436,6 +437,7 @@ describe('CesiumViewer', () => {
     useEventAutoLayersStore.setState({ restoreOnExit: true, overrides: {} });
     useEventLayersStore.setState({ enabled: false, mode: DEFAULT_EVENT_LAYER_MODE });
     useSceneModeStore.setState({ sceneModeId: DEFAULT_SCENE_MODE_ID });
+    useTimeStore.setState({ timeKey: DEFAULT_TIME_KEY });
     useLayerManagerStore.setState({ layers: [] });
     usePerformanceModeStore.setState({ enabled: false });
     useViewModeStore.setState({ route: { viewModeId: 'global' }, history: [], saved: {} });

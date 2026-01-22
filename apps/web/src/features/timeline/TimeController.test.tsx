@@ -76,6 +76,7 @@ describe('TimeController', () => {
   it('does not start playing if loadFrame fails', async () => {
     const deferred = createDeferred<void>();
     const loadFrame = vi.fn().mockReturnValue(deferred.promise);
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
 
     render(
       <TimeController frames={makeFrames()} initialIndex={2} loadFrame={loadFrame} />,
@@ -94,6 +95,8 @@ describe('TimeController', () => {
     });
 
     expect(screen.getByRole('button', { name: '播放' })).toBeInTheDocument();
+    expect(consoleError).toHaveBeenCalledWith('[TimeController] loadFrame failed', expect.any(Error));
+    consoleError.mockRestore();
   });
 
   it('plays smoothly and respects speed', async () => {
@@ -130,6 +133,228 @@ describe('TimeController', () => {
 
     expect(onTimeChange).toHaveBeenCalledTimes(2);
     expect(screen.getByText('2024-01-15 14:00')).toBeInTheDocument();
+
+    vi.useRealTimers();
+  });
+
+  it('refreshes and loads immediately on slider click', async () => {
+    const onRefreshLayers = vi.fn();
+    const loadFrame = vi.fn(async () => undefined);
+
+    render(
+      <TimeController
+        frames={makeFrames()}
+        onRefreshLayers={onRefreshLayers}
+        loadFrame={loadFrame}
+        dragDebounceMs={400}
+      />,
+    );
+
+    const slider = screen.getByLabelText('时间轴');
+
+    fireEvent.change(slider, { target: { value: '1' } });
+
+    expect(onRefreshLayers).toHaveBeenCalledTimes(1);
+    expect(onRefreshLayers).toHaveBeenLastCalledWith(expect.any(Date), 1);
+    expect(loadFrame).toHaveBeenCalledTimes(1);
+    expect(loadFrame).toHaveBeenLastCalledWith(expect.any(Date), 1, expect.any(Object));
+  });
+
+  it('debounces refresh and loadFrame while dragging the timeline slider', async () => {
+    vi.useFakeTimers();
+
+    const onRefreshLayers = vi.fn();
+    const loadFrame = vi.fn(async () => undefined);
+
+    render(
+      <TimeController
+        frames={makeFrames()}
+        onRefreshLayers={onRefreshLayers}
+        loadFrame={loadFrame}
+        dragDebounceMs={400}
+      />,
+    );
+
+    const slider = screen.getByLabelText('时间轴');
+
+    fireEvent.pointerDown(slider, { pointerId: 1 });
+    fireEvent.pointerMove(slider, { pointerId: 1 });
+    fireEvent.change(slider, { target: { value: '1' } });
+    fireEvent.change(slider, { target: { value: '2' } });
+
+    await act(async () => {});
+    expect(screen.getByLabelText('加载中')).toBeInTheDocument();
+
+    expect(onRefreshLayers).not.toHaveBeenCalled();
+    expect(loadFrame).not.toHaveBeenCalled();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(399);
+    });
+
+    expect(onRefreshLayers).not.toHaveBeenCalled();
+    expect(loadFrame).not.toHaveBeenCalled();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1);
+    });
+
+    expect(onRefreshLayers).toHaveBeenCalledTimes(1);
+    expect(onRefreshLayers).toHaveBeenLastCalledWith(expect.any(Date), 2);
+    expect(loadFrame).toHaveBeenCalledTimes(1);
+    expect(loadFrame).toHaveBeenLastCalledWith(expect.any(Date), 2, expect.any(Object));
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(screen.queryByLabelText('加载中')).not.toBeInTheDocument();
+
+    vi.useRealTimers();
+  });
+
+  it('reports non-abort loadFrame errors during drag debounce', async () => {
+    vi.useFakeTimers();
+
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const loadFrame = vi.fn().mockRejectedValue(new Error('load failed'));
+
+    render(<TimeController frames={makeFrames()} loadFrame={loadFrame} dragDebounceMs={400} />);
+
+    const slider = screen.getByLabelText('时间轴');
+    fireEvent.pointerDown(slider, { pointerId: 1 });
+    fireEvent.pointerMove(slider, { pointerId: 1 });
+    fireEvent.change(slider, { target: { value: '1' } });
+
+    await act(async () => {});
+    expect(screen.getByLabelText('加载中')).toBeInTheDocument();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(400);
+    });
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(loadFrame).toHaveBeenCalledTimes(1);
+    expect(consoleError).toHaveBeenCalledWith(
+      '[TimeController] loadFrame failed',
+      expect.any(Error),
+    );
+    expect(screen.queryByLabelText('加载中')).not.toBeInTheDocument();
+
+    consoleError.mockRestore();
+    vi.useRealTimers();
+  });
+
+  it('cancels pending debounced work when frames change', async () => {
+    vi.useFakeTimers();
+
+    const onRefreshLayers = vi.fn();
+    const loadFrame = vi.fn(async () => undefined);
+
+    const { rerender } = render(
+      <TimeController
+        frames={makeFrames()}
+        onRefreshLayers={onRefreshLayers}
+        loadFrame={loadFrame}
+        dragDebounceMs={400}
+      />,
+    );
+
+    const slider = screen.getByLabelText('时间轴');
+    fireEvent.pointerDown(slider, { pointerId: 1 });
+    fireEvent.pointerMove(slider, { pointerId: 1 });
+    fireEvent.change(slider, { target: { value: '2' } });
+
+    await act(async () => {});
+    expect(screen.getByLabelText('加载中')).toBeInTheDocument();
+
+    rerender(
+      <TimeController
+        frames={[
+          new Date('2024-01-15T15:00:00Z'),
+          new Date('2024-01-15T16:00:00Z'),
+          new Date('2024-01-15T17:00:00Z')
+        ]}
+        onRefreshLayers={onRefreshLayers}
+        loadFrame={loadFrame}
+        dragDebounceMs={400}
+      />,
+    );
+
+    await act(async () => {});
+    expect(screen.queryByLabelText('加载中')).not.toBeInTheDocument();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(400);
+    });
+
+    expect(onRefreshLayers).not.toHaveBeenCalled();
+    expect(loadFrame).not.toHaveBeenCalled();
+
+    vi.useRealTimers();
+  });
+
+  it('aborts the previous loadFrame request when a new drag is scheduled', async () => {
+    vi.useFakeTimers();
+
+    const deferred1 = createDeferred<void>();
+    const deferred2 = createDeferred<void>();
+    const signals: AbortSignal[] = [];
+
+    const loadFrame = vi
+      .fn()
+      .mockImplementationOnce((_: Date, __: number, options?: { signal?: AbortSignal }) => {
+        const signal = options?.signal;
+        if (signal) {
+          signals.push(signal);
+          signal.addEventListener('abort', () => {
+            deferred1.reject(new DOMException('Aborted', 'AbortError'));
+          });
+        }
+        return deferred1.promise;
+      })
+      .mockImplementationOnce((_: Date, __: number, options?: { signal?: AbortSignal }) => {
+        const signal = options?.signal;
+        if (signal) {
+          signals.push(signal);
+          signal.addEventListener('abort', () => {
+            deferred2.reject(new DOMException('Aborted', 'AbortError'));
+          });
+        }
+        return deferred2.promise;
+      });
+
+    render(<TimeController frames={makeFrames()} loadFrame={loadFrame} dragDebounceMs={400} />);
+
+    const slider = screen.getByLabelText('时间轴');
+    fireEvent.pointerDown(slider, { pointerId: 1 });
+    fireEvent.pointerMove(slider, { pointerId: 1 });
+    fireEvent.change(slider, { target: { value: '1' } });
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(400);
+    });
+
+    expect(loadFrame).toHaveBeenCalledTimes(1);
+    expect(signals[0]?.aborted).toBe(false);
+
+    fireEvent.change(slider, { target: { value: '2' } });
+    expect(signals[0]?.aborted).toBe(true);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(400);
+    });
+
+    expect(loadFrame).toHaveBeenCalledTimes(2);
+
+    deferred2.resolve();
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(screen.queryByLabelText('加载中')).not.toBeInTheDocument();
 
     vi.useRealTimers();
   });
