@@ -4,6 +4,7 @@ import { useLayoutPanelsStore } from '../../state/layoutPanels';
 import type { LayerConfig } from '../../state/layerManager';
 import { useLayerManagerStore } from '../../state/layerManager';
 import { CesiumViewer } from '../viewer/CesiumViewer';
+import { DisclaimerLauncher } from '../disclaimer/DisclaimerLauncher';
 import { InfoPanel } from './InfoPanel';
 import { LayerTree } from './LayerTree';
 import { LegendPanel } from './LegendPanel';
@@ -107,6 +108,8 @@ export function AppLayout() {
           onToggleCollapsed={toggleLegendCollapsed}
         />
       </div>
+
+      <DisclaimerLauncher />
     </div>
   );
 }
