@@ -16,6 +16,7 @@ def test_grid_statistics_accumulator_basic_stats() -> None:
     result = acc.finalize()
 
     assert result.count.tolist() == [[2, 1], [1, 2]]
+    np.testing.assert_allclose(result.sum, [[3.0, 2.0], [3.0, 4.0]], rtol=0, atol=1e-6)
     np.testing.assert_allclose(result.mean, [[1.5, 2.0], [3.0, 2.0]], rtol=0, atol=1e-6)
     np.testing.assert_allclose(result.min, [[1.0, 2.0], [3.0, 0.0]], rtol=0, atol=1e-6)
     np.testing.assert_allclose(result.max, [[2.0, 2.0], [3.0, 4.0]], rtol=0, atol=1e-6)

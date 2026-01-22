@@ -7,6 +7,7 @@ import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from io import BytesIO
+from pathlib import Path as PathlibPath
 from typing import Any, Optional
 
 from fastapi import APIRouter, HTTPException, Path, Query, Request
@@ -348,6 +349,45 @@ def _build_tile_location(key: str) -> _TileLocation:
     )
 
 
+def _local_tiles_dir() -> PathlibPath | None:
+    settings = get_settings()
+    raw = settings.storage.tiles_dir
+    if raw is None:
+        return None
+
+    candidate = PathlibPath(raw).expanduser()
+    if not candidate.is_absolute():
+        candidate = (PathlibPath.cwd() / candidate).resolve()
+    return candidate
+
+
+def _resolve_local_tile_path(*, tiles_dir: PathlibPath, key: str) -> PathlibPath:
+    base = tiles_dir.resolve()
+    path = (base / key).resolve()
+    if not path.is_relative_to(base):
+        raise HTTPException(status_code=400, detail="Invalid tile path")
+    return path
+
+
+def _read_local_tile(*, tiles_dir: PathlibPath, key: str) -> tuple[bytes, str, str]:
+    path = _resolve_local_tile_path(tiles_dir=tiles_dir, key=key)
+    try:
+        stat = path.stat()
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Not Found") from exc
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail="Internal Server Error") from exc
+
+    try:
+        data = path.read_bytes()
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail="Internal Server Error") from exc
+
+    etag_payload = f"{key}\n{stat.st_mtime_ns}\n{stat.st_size}".encode("utf-8")
+    etag = f'"sha256-{hashlib.sha256(etag_payload).hexdigest()}"'
+    return data, etag, _guess_media_type(key)
+
+
 def _s3_error_code(exc: Exception) -> str | None:
     response = getattr(exc, "response", None)
     if not isinstance(response, dict):
@@ -464,6 +504,53 @@ def get_tile(
         vary.add("Accept")
 
     wants_gzip = _accepts_gzip(accept_encoding)
+
+    local_dir = _local_tiles_dir()
+    if local_dir is not None:
+        key_to_fetch = negotiated_key
+        try:
+            data, etag, content_type = _read_local_tile(
+                tiles_dir=local_dir, key=key_to_fetch
+            )
+        except HTTPException as exc:
+            if exc.status_code == 404 and key_to_fetch != key:
+                data, etag, content_type = _read_local_tile(
+                    tiles_dir=local_dir, key=key
+                )
+                key_to_fetch = key
+            else:
+                raise
+
+        headers: dict[str, str] = {"Cache-Control": _DEFAULT_CACHE_CONTROL, "ETag": etag}
+
+        transformed = False
+        if (
+            wants_gzip
+            and len(data) >= _GZIP_MIN_BYTES
+            and _is_compressible_content_type(content_type)
+        ):
+            data = gzip.compress(data)
+            headers["Content-Encoding"] = "gzip"
+            vary.add("Accept-Encoding")
+            transformed = True
+
+        if not transformed and if_none_match_matches(
+            request.headers.get("if-none-match"), etag
+        ):
+            response_headers: dict[str, str] = {
+                "Cache-Control": headers["Cache-Control"],
+                "ETag": etag,
+            }
+            vary_header = _vary_header(vary)
+            if vary_header:
+                response_headers["Vary"] = vary_header
+            return Response(status_code=304, headers=response_headers)
+
+        vary_header = _vary_header(vary)
+        if vary_header:
+            headers["Vary"] = vary_header
+
+        return Response(content=data, media_type=content_type, headers=headers)
 
     if redirect:
         try:

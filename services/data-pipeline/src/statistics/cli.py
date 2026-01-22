@@ -81,9 +81,9 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--window-kind",
-        choices=("monthly", "seasonal", "annual"),
+        choices=("monthly", "seasonal", "annual", "range"),
         required=True,
-        help="Time window kind: monthly/seasonal/annual",
+        help="Time window kind: monthly/seasonal/annual/range",
     )
 
     parser.add_argument(

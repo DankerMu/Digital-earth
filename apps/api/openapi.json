@@ -30,6 +30,74 @@
         "title": "BBoxResponse",
         "type": "object"
       },
+      "BiasTileSetItem": {
+        "additionalProperties": false,
+        "properties": {
+          "formats": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Formats",
+            "type": "array"
+          },
+          "layer": {
+            "title": "Layer",
+            "type": "string"
+          },
+          "level_key": {
+            "title": "Level Key",
+            "type": "string"
+          },
+          "max_zoom": {
+            "title": "Max Zoom",
+            "type": "integer"
+          },
+          "min_zoom": {
+            "title": "Min Zoom",
+            "type": "integer"
+          },
+          "tile": {
+            "$ref": "#/components/schemas/TileTemplate"
+          },
+          "time_key": {
+            "title": "Time Key",
+            "type": "string"
+          }
+        },
+        "required": [
+          "layer",
+          "time_key",
+          "level_key",
+          "min_zoom",
+          "max_zoom",
+          "tile"
+        ],
+        "title": "BiasTileSetItem",
+        "type": "object"
+      },
+      "BiasTileSetsResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "generated_at": {
+            "title": "Generated At",
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/BiasTileSetItem"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "schema_version": {
+            "default": 1,
+            "title": "Schema Version",
+            "type": "integer"
+          }
+        },
+        "title": "BiasTileSetsResponse",
+        "type": "object"
+      },
       "CldasTimesResponse": {
         "additionalProperties": false,
         "properties": {
@@ -522,6 +590,95 @@
           }
         },
         "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "HistoricalStatisticItem": {
+        "additionalProperties": false,
+        "properties": {
+          "dataset_path": {
+            "title": "Dataset Path",
+            "type": "string"
+          },
+          "metadata_path": {
+            "title": "Metadata Path",
+            "type": "string"
+          },
+          "samples": {
+            "title": "Samples",
+            "type": "integer"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          },
+          "tiles": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/TileTemplate"
+            },
+            "title": "Tiles",
+            "type": "object"
+          },
+          "variable": {
+            "title": "Variable",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "string"
+          },
+          "window_end": {
+            "title": "Window End",
+            "type": "string"
+          },
+          "window_key": {
+            "title": "Window Key",
+            "type": "string"
+          },
+          "window_kind": {
+            "title": "Window Kind",
+            "type": "string"
+          },
+          "window_start": {
+            "title": "Window Start",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source",
+          "variable",
+          "window_kind",
+          "window_key",
+          "version",
+          "window_start",
+          "window_end",
+          "samples",
+          "dataset_path",
+          "metadata_path"
+        ],
+        "title": "HistoricalStatisticItem",
+        "type": "object"
+      },
+      "HistoricalStatisticsResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "generated_at": {
+            "title": "Generated At",
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/HistoricalStatisticItem"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "schema_version": {
+            "default": 1,
+            "title": "Schema Version",
+            "type": "integer"
+          }
+        },
+        "title": "HistoricalStatisticsResponse",
         "type": "object"
       },
       "IngestRun": {
@@ -1865,6 +2022,27 @@
         "title": "SampleResponse",
         "type": "object"
       },
+      "SnowStatisticsDefinitionResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "definition": {
+            "additionalProperties": true,
+            "title": "Definition",
+            "type": "object"
+          },
+          "generated_at": {
+            "title": "Generated At",
+            "type": "string"
+          },
+          "schema_version": {
+            "default": 1,
+            "title": "Schema Version",
+            "type": "integer"
+          }
+        },
+        "title": "SnowStatisticsDefinitionResponse",
+        "type": "object"
+      },
       "ThresholdDirection": {
         "enum": [
           "ascending",
@@ -1891,6 +2069,25 @@
           "score"
         ],
         "title": "ThresholdScore",
+        "type": "object"
+      },
+      "TileTemplate": {
+        "additionalProperties": false,
+        "properties": {
+          "legend": {
+            "title": "Legend",
+            "type": "string"
+          },
+          "template": {
+            "title": "Template",
+            "type": "string"
+          }
+        },
+        "required": [
+          "template",
+          "legend"
+        ],
+        "title": "TileTemplate",
         "type": "object"
       },
       "ValidationError": {
@@ -2078,6 +2275,239 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/api/v1/analytics/bias/tile-sets": {
+      "get": {
+        "operationId": "list_bias_tile_sets_api_v1_analytics_bias_tile_sets_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "layer",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Layer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "fmt",
+            "required": false,
+            "schema": {
+              "default": "png",
+              "title": "Fmt",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 500,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BiasTileSetsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Bias Tile Sets",
+        "tags": [
+          "analytics"
+        ]
+      }
+    },
+    "/api/v1/analytics/historical/statistics": {
+      "get": {
+        "operationId": "list_historical_statistics_api_v1_analytics_historical_statistics_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "source",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Source"
+            }
+          },
+          {
+            "in": "query",
+            "name": "variable",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Variable"
+            }
+          },
+          {
+            "in": "query",
+            "name": "window_kind",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Window Kind"
+            }
+          },
+          {
+            "in": "query",
+            "name": "version",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Version"
+            }
+          },
+          {
+            "in": "query",
+            "name": "fmt",
+            "required": false,
+            "schema": {
+              "default": "png",
+              "title": "Fmt",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 500,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HistoricalStatisticsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Historical Statistics",
+        "tags": [
+          "analytics"
+        ]
+      }
+    },
+    "/api/v1/analytics/snow/definition": {
+      "get": {
+        "operationId": "get_snow_statistics_definition_api_v1_analytics_snow_definition_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SnowStatisticsDefinitionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Snow Statistics Definition",
+        "tags": [
+          "analytics"
+        ]
+      }
+    },
     "/api/v1/attribution": {
       "get": {
         "operationId": "attribution_api_v1_attribution_get",
