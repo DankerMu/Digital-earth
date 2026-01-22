@@ -23,6 +23,10 @@ test('fetchHistoricalStatistics parses items and caches responses', async () => 
     const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
     expect(url).toContain('/api/v1/analytics/historical/statistics');
     expect(url).toContain('fmt=png');
+    expect(url).toContain('source=cldas');
+    expect(url).toContain('variable=SNOWFALL');
+    expect(url).toContain('window_kind=rolling_days');
+    expect(url).toContain('limit=10');
 
     return jsonResponse({
       schema_version: 1,
@@ -53,12 +57,26 @@ test('fetchHistoricalStatistics parses items and caches responses', async () => 
 
   vi.stubGlobal('fetch', fetchMock);
 
-  const first = await fetchHistoricalStatistics({ apiBaseUrl: 'http://api.test', fmt: 'png' });
+  const first = await fetchHistoricalStatistics({
+    apiBaseUrl: 'http://api.test',
+    fmt: 'png',
+    source: 'cldas',
+    variable: 'SNOWFALL',
+    window_kind: 'rolling_days',
+    limit: 10,
+  });
   expect(first.items).toHaveLength(1);
   expect(first.items[0]?.source).toBe('cldas');
   expect(first.items[0]?.tiles.mean?.template).toContain('/api/v1/tiles/statistics/');
 
-  const second = await fetchHistoricalStatistics({ apiBaseUrl: 'http://api.test', fmt: 'png' });
+  const second = await fetchHistoricalStatistics({
+    apiBaseUrl: 'http://api.test',
+    fmt: 'png',
+    source: 'cldas',
+    variable: 'SNOWFALL',
+    window_kind: 'rolling_days',
+    limit: 10,
+  });
   expect(second.items).toHaveLength(1);
   expect(fetchMock).toHaveBeenCalledTimes(1);
 });
@@ -68,6 +86,7 @@ test('fetchBiasTileSets parses items and honors the layer filter', async () => {
     const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
     expect(url).toContain('/api/v1/analytics/bias/tile-sets');
     expect(url).toContain('layer=bias%2Ftemp');
+    expect(url).toContain('limit=12');
 
     return jsonResponse({
       schema_version: 1,
@@ -91,9 +110,12 @@ test('fetchBiasTileSets parses items and honors the layer filter', async () => {
 
   vi.stubGlobal('fetch', fetchMock);
 
-  const response = await fetchBiasTileSets({ apiBaseUrl: 'http://api.test', layer: 'bias/temp' });
+  const response = await fetchBiasTileSets({
+    apiBaseUrl: 'http://api.test',
+    layer: 'bias/temp',
+    limit: 12,
+  });
   expect(response.items).toHaveLength(1);
   expect(response.items[0]?.layer).toBe('bias/temp');
   expect(response.items[0]?.formats).toEqual(['png', 'webp']);
 });
-

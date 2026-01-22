@@ -240,18 +240,18 @@ vi.mock('cesium', () => {
       }
     },
     screenSpaceEventHandler,
-	    imageryLayers: {
-	      get: vi.fn(() => baseLayer),
-	      remove: vi.fn(),
-	      addImageryProvider: vi.fn(() => baseLayer),
-	      add: vi.fn((layer: unknown) => layer),
-	      raiseToTop: vi.fn(),
-	    },
-	    terrainProvider: { kind: 'base-terrain' },
-	    scene: {
-	      requestRenderMode: false,
-	      maximumRenderTimeChange: 0,
-	      requestRender: vi.fn(),
+    imageryLayers: {
+      get: vi.fn(() => baseLayer),
+      remove: vi.fn(),
+      addImageryProvider: vi.fn(() => baseLayer),
+      add: vi.fn((layer: unknown) => layer),
+      raiseToTop: vi.fn(),
+    },
+    terrainProvider: { kind: 'base-terrain' },
+    scene: {
+      requestRenderMode: false,
+      maximumRenderTimeChange: 0,
+      requestRender: vi.fn(),
       mode: SceneMode.SCENE3D,
       morphComplete,
       morphTo2D: vi.fn(() => {
@@ -260,12 +260,12 @@ vi.mock('cesium', () => {
       morphTo3D: vi.fn(() => {
         viewer.scene.mode = SceneMode.SCENE3D;
       }),
-	      morphToColumbusView: vi.fn(() => {
-	        viewer.scene.mode = SceneMode.COLUMBUS_VIEW;
-	      }),
-	      globe: {
-	        ellipsoid: baseEllipsoid,
-	      },
+      morphToColumbusView: vi.fn(() => {
+        viewer.scene.mode = SceneMode.COLUMBUS_VIEW;
+      }),
+      globe: {
+        ellipsoid: baseEllipsoid,
+      },
       fog: {
         enabled: false,
         density: 0,
@@ -363,10 +363,10 @@ vi.mock('cesium', () => {
     UrlTemplateImageryProvider: vi.fn(function (options: unknown) {
       return { kind: 'url-template', options };
     }),
-	    WebMercatorTilingScheme: vi.fn(),
-	    GeographicTilingScheme,
-	    TextureMinificationFilter,
-	    TextureMagnificationFilter,
+    WebMercatorTilingScheme: vi.fn(),
+    GeographicTilingScheme,
+    TextureMinificationFilter,
+    TextureMagnificationFilter,
     Math: {
       toDegrees: vi.fn((radians: number) => radians),
       PI_OVER_TWO: Math.PI / 2
@@ -383,12 +383,12 @@ vi.mock('cesium', () => {
       triggerLeftDoubleClick: (movement: { position?: unknown }) => {
         leftDoubleClickHandler?.(movement);
       },
-	    },
-	    createWorldTerrainAsync,
-	    Ellipsoid,
-	    EllipsoidTerrainProvider,
-	    Ion,
-	  };
+    },
+    createWorldTerrainAsync,
+    Ellipsoid,
+    EllipsoidTerrainProvider,
+    Ion,
+  };
 });
 
 import { Cartesian3, EllipsoidTerrainProvider, Rectangle, createWorldTerrainAsync, Viewer } from 'cesium';
@@ -1890,14 +1890,14 @@ describe('CesiumViewer', () => {
         if (url.startsWith('http://api.test/api/v1/vectors/')) {
           if (url.includes('bbox=10,20,30,40')) {
             return Promise.resolve(jsonResponse({ vectors: vectorsA }));
-	          }
-	          if (url.includes('bbox=1,2,3,4')) {
-	            secondSignal = init?.signal ?? undefined;
-	            if (secondSignal) {
-	              secondAborted = secondSignal.aborted;
-	              secondSignal.addEventListener('abort', () => {
-	                secondAborted = true;
-	              });
+          }
+          if (url.includes('bbox=1,2,3,4')) {
+            secondSignal = init?.signal ?? undefined;
+            if (secondSignal) {
+              secondAborted = secondSignal.aborted;
+              secondSignal.addEventListener('abort', () => {
+                secondAborted = true;
+              });
             }
             return new Promise((resolve) => {
               resolveSecondFetch = resolve;
@@ -3141,6 +3141,13 @@ describe('CesiumViewer', () => {
           });
         }
         if (url.startsWith('http://api.test/api/v1/analytics/historical/statistics')) {
+          const parsed = new URL(url);
+          expect(parsed.searchParams.get('source')).toBe('cldas');
+          expect(parsed.searchParams.get('variable')).toBe('SNOWFALL');
+          expect(parsed.searchParams.get('window_kind')).toBe('rolling_days');
+          expect(parsed.searchParams.get('limit')).toBe('25');
+          expect(parsed.searchParams.get('fmt')).toBe('png');
+
           return jsonResponse({
             schema_version: 1,
             generated_at: '2026-01-01T01:00:00Z',
@@ -3199,14 +3206,14 @@ describe('CesiumViewer', () => {
     });
 
     await waitFor(() => {
-	      const layersAdded = viewer.imageryLayers.add.mock.calls.map(([layer]: [unknown]) => layer as {
-	        provider?: { options?: { url?: string; rectangle?: unknown } };
-	      });
-	      const snow = layersAdded.find((layer: {
-	        provider?: { options?: { url?: string; rectangle?: unknown } };
-	      }) => (layer.provider?.options?.url ?? '').includes('/SNOD/'));
-	      expect(snow).toBeTruthy();
-	    });
+      const layersAdded = viewer.imageryLayers.add.mock.calls.map(([layer]: [unknown]) => layer as {
+        provider?: { options?: { url?: string; rectangle?: unknown } };
+      });
+      const snow = layersAdded.find((layer: {
+        provider?: { options?: { url?: string; rectangle?: unknown } };
+      }) => (layer.provider?.options?.url ?? '').includes('/SNOD/'));
+      expect(snow).toBeTruthy();
+    });
 
     viewer.imageryLayers.add.mockClear();
 
@@ -3215,14 +3222,18 @@ describe('CesiumViewer', () => {
     });
 
     await waitFor(() => {
-	      const layersAdded = viewer.imageryLayers.add.mock.calls.map(([layer]: [unknown]) => layer as {
-	        provider?: { options?: { url?: string } };
-	      });
-	      const history = layersAdded.find((layer: { provider?: { options?: { url?: string } } }) =>
-	        (layer.provider?.options?.url ?? '').includes('/api/v1/tiles/statistics/'),
-	      );
-	      expect(history?.provider?.options?.url).toContain('/snowfall/');
-	    });
+      expect(useLayerManagerStore.getState().getVisibleLayers()).toHaveLength(0);
+    });
+
+    await waitFor(() => {
+      const layersAdded = viewer.imageryLayers.add.mock.calls.map(([layer]: [unknown]) => layer as {
+        provider?: { options?: { url?: string } };
+      });
+      const history = layersAdded.find((layer: { provider?: { options?: { url?: string } } }) =>
+        (layer.provider?.options?.url ?? '').includes('/api/v1/tiles/statistics/'),
+      );
+      expect(history?.provider?.options?.url).toContain('/snowfall/');
+    });
   });
 
   it('switches to the bias layer in event mode', async () => {
@@ -3269,6 +3280,11 @@ describe('CesiumViewer', () => {
           });
         }
         if (url.startsWith('http://api.test/api/v1/analytics/bias/tile-sets')) {
+          const parsed = new URL(url);
+          expect(parsed.searchParams.get('layer')).toBeNull();
+          expect(parsed.searchParams.get('limit')).toBe('25');
+          expect(parsed.searchParams.get('fmt')).toBe('png');
+
           return jsonResponse({
             schema_version: 1,
             generated_at: '2026-01-01T01:00:00Z',
@@ -3320,14 +3336,14 @@ describe('CesiumViewer', () => {
     });
 
     await waitFor(() => {
-	      const layersAdded = viewer.imageryLayers.add.mock.calls.map(([layer]: [unknown]) => layer as {
-	        provider?: { options?: { url?: string } };
-	      });
-	      const snow = layersAdded.find((layer: { provider?: { options?: { url?: string } } }) =>
-	        (layer.provider?.options?.url ?? '').includes('/SNOD/'),
-	      );
-	      expect(snow).toBeTruthy();
-	    });
+      const layersAdded = viewer.imageryLayers.add.mock.calls.map(([layer]: [unknown]) => layer as {
+        provider?: { options?: { url?: string } };
+      });
+      const snow = layersAdded.find((layer: { provider?: { options?: { url?: string } } }) =>
+        (layer.provider?.options?.url ?? '').includes('/SNOD/'),
+      );
+      expect(snow).toBeTruthy();
+    });
 
     viewer.imageryLayers.add.mockClear();
 
@@ -3336,14 +3352,76 @@ describe('CesiumViewer', () => {
     });
 
     await waitFor(() => {
-	      const layersAdded = viewer.imageryLayers.add.mock.calls.map(([layer]: [unknown]) => layer as {
-	        provider?: { options?: { url?: string } };
-	      });
-	      const bias = layersAdded.find((layer: { provider?: { options?: { url?: string } } }) =>
-	        (layer.provider?.options?.url ?? '').includes('/api/v1/tiles/bias/temp/'),
-	      );
-	      expect(bias?.provider?.options?.url).toContain('/20260101T000000Z/sfc/');
-	    });
+      expect(useLayerManagerStore.getState().getVisibleLayers()).toHaveLength(0);
+    });
+
+    await waitFor(() => {
+      const layersAdded = viewer.imageryLayers.add.mock.calls.map(([layer]: [unknown]) => layer as {
+        provider?: { options?: { url?: string } };
+      });
+      const bias = layersAdded.find((layer: { provider?: { options?: { url?: string } } }) =>
+        (layer.provider?.options?.url ?? '').includes('/api/v1/tiles/bias/temp/'),
+      );
+      expect(bias?.provider?.options?.url).toContain('/20260101T000000Z/sfc/');
+    });
+  });
+
+  it('enforces mutual exclusion between monitoring and analytics layers', async () => {
+    useLayerManagerStore.setState({
+      layers: [
+        {
+          id: 'snow-depth',
+          type: 'snow-depth',
+          variable: 'SNOD',
+          opacity: 0.8,
+          visible: false,
+          zIndex: 50,
+        },
+      ],
+    });
+
+    render(<CesiumViewer />);
+    await waitFor(() => expect(vi.mocked(Viewer)).toHaveBeenCalledTimes(1));
+
+    act(() => {
+      useViewModeStore.getState().enterEvent({ productId: '1' });
+    });
+
+    await waitFor(() => {
+      expect(useLayerManagerStore.getState().getVisibleLayers().map((layer) => layer.id)).toEqual(['snow-depth']);
+    });
+
+    act(() => {
+      useEventLayersStore.getState().setMode('history');
+    });
+
+    await waitFor(() => {
+      expect(useLayerManagerStore.getState().getVisibleLayers()).toHaveLength(0);
+    });
+
+    act(() => {
+      useEventLayersStore.getState().setMode('monitoring');
+    });
+
+    await waitFor(() => {
+      expect(useLayerManagerStore.getState().getVisibleLayers().map((layer) => layer.id)).toEqual(['snow-depth']);
+    });
+
+    act(() => {
+      useEventLayersStore.getState().setEnabled(false);
+    });
+
+    await waitFor(() => {
+      expect(useLayerManagerStore.getState().getVisibleLayers()).toHaveLength(0);
+    });
+
+    act(() => {
+      useEventLayersStore.getState().setEnabled(true);
+    });
+
+    await waitFor(() => {
+      expect(useLayerManagerStore.getState().getVisibleLayers().map((layer) => layer.id)).toEqual(['snow-depth']);
+    });
   });
 
   it('shows a monitoring notice when snow depth tiles are missing', async () => {
