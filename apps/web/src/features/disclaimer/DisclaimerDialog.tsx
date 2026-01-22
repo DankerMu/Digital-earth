@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 
-import { DISCLAIMER_CONTENT, type DisclaimerLocale } from './disclaimerContent';
+import { DISCLAIMER_CONTENT, DISCLAIMER_UI_STRINGS, type DisclaimerLocale } from './disclaimerContent';
 
 type Props = {
   open: boolean;
@@ -10,22 +10,40 @@ type Props = {
 
 export function DisclaimerDialog({ open, locale = 'zh-CN', onClose }: Props) {
   const closeButtonRef = useRef<HTMLButtonElement | null>(null);
+  const previouslyFocusedElementRef = useRef<HTMLElement | null>(null);
+  const onCloseRef = useRef(onClose);
+
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  }, [onClose]);
 
   useEffect(() => {
     if (!open) return;
+
+    const previouslyFocusedElement =
+      document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    previouslyFocusedElementRef.current = previouslyFocusedElement;
     closeButtonRef.current?.focus();
 
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') onClose();
+      if (event.key === 'Escape') onCloseRef.current();
     };
 
     window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
-  }, [open, onClose]);
+    return () => {
+      window.removeEventListener('keydown', onKeyDown);
+
+      if (previouslyFocusedElement && document.contains(previouslyFocusedElement)) {
+        previouslyFocusedElement.focus();
+      }
+      previouslyFocusedElementRef.current = null;
+    };
+  }, [open]);
 
   if (!open) return null;
 
   const content = DISCLAIMER_CONTENT[locale];
+  const uiStrings = DISCLAIMER_UI_STRINGS[locale];
 
   return (
     <div
@@ -53,9 +71,9 @@ export function DisclaimerDialog({ open, locale = 'zh-CN', onClose }: Props) {
               className="modalButton"
               onClick={onClose}
               ref={closeButtonRef}
-              aria-label="关闭弹窗"
+              aria-label={uiStrings.closeButtonAriaLabel}
             >
-              关闭
+              {uiStrings.closeButtonText}
             </button>
           </div>
         </div>
@@ -76,7 +94,7 @@ export function DisclaimerDialog({ open, locale = 'zh-CN', onClose }: Props) {
                             key={link.href}
                             href={link.href}
                             target="_blank"
-                            rel="noreferrer"
+                            rel="noopener noreferrer"
                             className="inlineLink"
                           >
                             {link.label}
@@ -94,4 +112,3 @@ export function DisclaimerDialog({ open, locale = 'zh-CN', onClose }: Props) {
     </div>
   );
 }
-

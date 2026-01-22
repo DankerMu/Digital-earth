@@ -25,7 +25,7 @@ export type DisclaimerContent = {
 export const DISCLAIMER_CONTENT: Record<DisclaimerLocale, DisclaimerContent> = {
   'zh-CN': {
     title: '数据来源与免责声明',
-    subtitle: '归因信息与版权声明（预留 i18n 结构）',
+    subtitle: '归因信息与版权声明',
     sections: [
       {
         title: '数据来源与归因',
@@ -113,7 +113,7 @@ export const DISCLAIMER_CONTENT: Record<DisclaimerLocale, DisclaimerContent> = {
   },
   en: {
     title: 'Data Sources & Disclaimer',
-    subtitle: 'Attribution and copyright notice (i18n placeholder)',
+    subtitle: 'Attribution and copyright notice',
     sections: [
       {
         title: 'Data Sources & Attribution',
@@ -202,3 +202,36 @@ export const DISCLAIMER_CONTENT: Record<DisclaimerLocale, DisclaimerContent> = {
   },
 };
 
+export type DisclaimerUiStrings = {
+  openButtonAriaLabel: string;
+  openButtonTitle: string;
+  loadingDialogAriaLabel: string;
+  loadingDialogTitle: string;
+  loadingDialogSubtitle: string;
+  loadingDialogBody: string;
+  closeButtonAriaLabel: string;
+  closeButtonText: string;
+};
+
+export const DISCLAIMER_UI_STRINGS: Record<DisclaimerLocale, DisclaimerUiStrings> = {
+  'zh-CN': {
+    openButtonAriaLabel: '打开数据来源与免责声明',
+    openButtonTitle: '数据来源与免责声明',
+    loadingDialogAriaLabel: '加载中',
+    loadingDialogTitle: '加载中…',
+    loadingDialogSubtitle: '正在加载数据来源与免责声明',
+    loadingDialogBody: '请稍候…',
+    closeButtonAriaLabel: '关闭弹窗',
+    closeButtonText: '关闭',
+  },
+  en: {
+    openButtonAriaLabel: 'Open Data Sources & Disclaimer',
+    openButtonTitle: 'Data Sources & Disclaimer',
+    loadingDialogAriaLabel: 'Loading',
+    loadingDialogTitle: 'Loading…',
+    loadingDialogSubtitle: 'Loading Data Sources & Disclaimer',
+    loadingDialogBody: 'Please wait…',
+    closeButtonAriaLabel: 'Close dialog',
+    closeButtonText: 'Close',
+  },
+};
