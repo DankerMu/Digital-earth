@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 
 import { useModal } from '../../lib/useModal';
@@ -11,11 +11,28 @@ type Props = {
   onClose: () => void;
 };
 
+function sanitizeHttpHref(href: string): string | null {
+  const trimmed = href.trim();
+  if (!trimmed) return null;
+
+  try {
+    const url = new URL(trimmed, 'http://localhost');
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') return null;
+    return trimmed;
+  } catch {
+    return null;
+  }
+}
+
 export function HelpDialog({ open, locale = 'zh-CN', onClose }: Props) {
   const closeButtonRef = useRef<HTMLButtonElement | null>(null);
   const modalRef = useRef<HTMLDivElement | null>(null);
   const [content, setContent] = useState<Record<HelpLocale, HelpContent> | null>(null);
-  const [loadError, setLoadError] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<Error | null>(null);
+  const [loadAttempts, setLoadAttempts] = useState(0);
+  const rawTitleId = useId();
+  const rawSubtitleId = useId();
+  const rawErrorId = useId();
 
   const { onOverlayMouseDown } = useModal({
     open,
@@ -38,21 +55,29 @@ export function HelpDialog({ open, locale = 'zh-CN', onClose }: Props) {
       })
       .catch((error: unknown) => {
         if (cancelled) return;
-        setLoadError(error instanceof Error ? error.message : String(error));
+        const normalizedError = error instanceof Error ? error : new Error(String(error));
+        console.error('[HelpDialog] Failed to load help content', normalizedError);
+        setLoadError(normalizedError);
       });
 
     return () => {
       cancelled = true;
     };
-  }, [content, open]);
+  }, [content, loadAttempts, open]);
 
   if (!open) return null;
 
   const uiStrings = HELP_UI_STRINGS[locale];
   const dialogContent = content ? content[locale] : null;
-  const dialogTitle = dialogContent?.title ?? uiStrings.loadingDialogTitle;
-  const dialogSubtitle = dialogContent?.subtitle ?? uiStrings.loadingDialogSubtitle;
-  const dialogLabel = dialogContent?.title ?? uiStrings.loadingDialogAriaLabel;
+  const dialogTitle =
+    dialogContent?.title ?? (loadError ? uiStrings.loadErrorPrefix : uiStrings.loadingDialogTitle);
+  const dialogSubtitle =
+    dialogContent?.subtitle ??
+    (loadError ? '' : uiStrings.loadingDialogSubtitle);
+  const dialogTitleId = `help-dialog-title-${rawTitleId}`;
+  const dialogSubtitleId = `help-dialog-subtitle-${rawSubtitleId}`;
+  const dialogErrorId = `help-dialog-error-${rawErrorId}`;
+  const dialogDescribedById = loadError ? dialogErrorId : dialogSubtitleId;
 
   return createPortal(
     <div
@@ -65,13 +90,18 @@ export function HelpDialog({ open, locale = 'zh-CN', onClose }: Props) {
         className="modal"
         role="dialog"
         aria-modal="true"
-        aria-label={dialogLabel}
+        aria-labelledby={dialogTitleId}
+        aria-describedby={dialogDescribedById}
         ref={modalRef}
       >
         <div className="modalHeader">
           <div>
-            <h2 className="modalTitle">{dialogTitle}</h2>
-            <div className="modalMeta">{dialogSubtitle}</div>
+            <h2 id={dialogTitleId} className="modalTitle">
+              {dialogTitle}
+            </h2>
+            <div id={dialogSubtitleId} className="modalMeta">
+              {dialogSubtitle}
+            </div>
           </div>
           <div className="modalHeaderActions">
             <button
@@ -88,13 +118,25 @@ export function HelpDialog({ open, locale = 'zh-CN', onClose }: Props) {
 
         <div className="modalBody">
           {loadError ? (
-            <p className="modalError">
-              {uiStrings.loadErrorPrefix}: {loadError}
-            </p>
+            <>
+              <p id={dialogErrorId} className="modalError">
+                {uiStrings.loadErrorMessage}
+              </p>
+              <button
+                type="button"
+                className="modalButton"
+                onClick={() => {
+                  setLoadError(null);
+                  setLoadAttempts((attempts) => attempts + 1);
+                }}
+              >
+                {uiStrings.retryButtonText}
+              </button>
+            </>
           ) : dialogContent ? (
             dialogContent.sections.map((section) => (
               <section key={section.title} className="grid gap-2">
-                <p className="modalSectionTitle">{section.title}</p>
+                <h3 className="modalSectionTitle">{section.title}</h3>
                 <ul className="modalList">
                   {section.items.map((item) => (
                     <li key={item.title} className="modalListItem">
@@ -102,17 +144,22 @@ export function HelpDialog({ open, locale = 'zh-CN', onClose }: Props) {
                       <div className="whitespace-pre-line text-slate-200">{item.description}</div>
                       {item.links?.length ? (
                         <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs">
-                          {item.links.map((link) => (
-                            <a
-                              key={link.href}
-                              href={link.href}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="inlineLink"
-                            >
-                              {link.label}
-                            </a>
-                          ))}
+                          {item.links.map((link) => {
+                            const safeHref = sanitizeHttpHref(link.href);
+                            if (!safeHref) return null;
+
+                            return (
+                              <a
+                                key={safeHref}
+                                href={safeHref}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="inlineLink"
+                              >
+                                {link.label}
+                              </a>
+                            );
+                          })}
                         </div>
                       ) : null}
                     </li>
@@ -129,4 +176,3 @@ export function HelpDialog({ open, locale = 'zh-CN', onClose }: Props) {
     document.body,
   );
 }
-

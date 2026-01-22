@@ -57,6 +57,18 @@ export const HELP_CONTENT: Record<HelpLocale, HelpContent> = {
         ],
       },
       {
+        title: 'UE 操作指南（UE）',
+        items: [
+          {
+            title: '即将上线',
+            description: [
+              '当前版本仅包含 Web 端帮助内容。',
+              'UE（Unreal Engine）端操作指南将在后续版本提供。',
+            ].join('\n'),
+          },
+        ],
+      },
+      {
         title: '常见问题（FAQ）',
         items: [
           {
@@ -123,6 +135,18 @@ export const HELP_CONTENT: Record<HelpLocale, HelpContent> = {
         ],
       },
       {
+        title: 'Unreal Engine (UE)',
+        items: [
+          {
+            title: 'Coming soon',
+            description: [
+              'This help dialog currently covers Web only.',
+              'UE (Unreal Engine) guides will be available in a future release.',
+            ].join('\n'),
+          },
+        ],
+      },
+      {
         title: 'FAQ',
         items: [
           {
@@ -156,4 +180,3 @@ export const HELP_CONTENT: Record<HelpLocale, HelpContent> = {
     ],
   },
 };
-

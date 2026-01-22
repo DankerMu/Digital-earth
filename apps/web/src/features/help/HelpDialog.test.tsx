@@ -15,15 +15,31 @@ describe('HelpDialog', () => {
   it('renders loading state first and then locale content', async () => {
     render(<HelpDialog open locale="en" onClose={() => {}} />);
 
-    expect(screen.getByRole('dialog', { name: 'Loading' })).toBeInTheDocument();
+    expect(screen.getByRole('dialog', { name: 'Loading…' })).toBeInTheDocument();
     expect(screen.getByText('Loading…')).toBeInTheDocument();
     expect(screen.getByText('Loading help content')).toBeInTheDocument();
     expect(screen.getByText('Please wait…')).toBeInTheDocument();
 
     expect(await screen.findByRole('dialog', { name: 'Help' })).toBeInTheDocument();
 
-    expect(screen.getByText('Core Workflows (Web)')).toBeInTheDocument();
+    expect(
+      screen.getByRole('heading', { level: 3, name: 'Core Workflows (Web)' }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('heading', { level: 3, name: 'Unreal Engine (UE)' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { level: 3, name: 'FAQ' })).toBeInTheDocument();
     expect(screen.getByText('Local mode (Upward view)')).toBeInTheDocument();
+  });
+
+  it('uses aria-labelledby for the dialog title', async () => {
+    render(<HelpDialog open locale="en" onClose={() => {}} />);
+
+    const dialog = await screen.findByRole('dialog', { name: 'Help' });
+    expect(dialog).toHaveAttribute('aria-labelledby');
+    expect(dialog).not.toHaveAttribute('aria-label');
+
+    const title = screen.getByRole('heading', { level: 2, name: 'Help' });
+    expect(title).toHaveAttribute('id');
+    expect(dialog.getAttribute('aria-labelledby')).toBe(title.getAttribute('id'));
   });
 
   it('renders locale content and only closes on overlay click', async () => {

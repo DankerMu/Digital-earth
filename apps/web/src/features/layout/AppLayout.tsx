@@ -154,10 +154,10 @@ export function AppLayout() {
           </div>
         </div>
 
-      <LegendPanel
-        collapsed={isLegendCollapsed}
-        onToggleCollapsed={toggleLegendCollapsed}
-      />
+        <LegendPanel
+          collapsed={isLegendCollapsed}
+          onToggleCollapsed={toggleLegendCollapsed}
+        />
       </div>
 
       <HelpLauncher />
