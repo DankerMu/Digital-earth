@@ -6,7 +6,7 @@ from typing import Iterable, Literal
 
 import numpy as np
 
-TimeWindowKind = Literal["monthly", "seasonal", "annual"]
+TimeWindowKind = Literal["monthly", "seasonal", "annual", "range", "rolling_days"]
 
 
 def parse_time(value: object) -> datetime:
@@ -38,6 +38,8 @@ def parse_time(value: object) -> datetime:
 
 
 def _validate_aligned(dt: datetime, *, kind: TimeWindowKind) -> None:
+    if kind in {"range", "rolling_days"}:
+        return
     if dt.tzinfo is None:
         raise ValueError("time must be timezone-aware")
     dt = dt.astimezone(timezone.utc)
@@ -62,6 +64,10 @@ def _validate_aligned(dt: datetime, *, kind: TimeWindowKind) -> None:
         return
 
     raise ValueError(f"Unsupported window kind: {kind}")
+
+
+def _time_key(dt: datetime) -> str:
+    return dt.astimezone(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
 
 
 def _add_months(dt: datetime, months: int) -> datetime:
@@ -106,6 +112,17 @@ class TimeWindow:
             return start.strftime("%Y")
         if self.kind == "seasonal":
             return _season_key(self.start)
+        if self.kind == "range":
+            return f"{_time_key(self.start)}_{_time_key(self.end)}"
+        if self.kind == "rolling_days":
+            delta_s = (self.end - self.start).total_seconds()
+            days_f = delta_s / 86400.0
+            days = int(round(days_f))
+            if days <= 0 or abs(days_f - float(days)) > 1e-6:
+                raise ValueError(
+                    "rolling_days windows must span an integer number of days"
+                )
+            return f"{_time_key(self.end)}-P{days}D"
         raise ValueError(f"Unsupported window kind: {self.kind}")
 
     @property
@@ -128,6 +145,10 @@ def iter_time_windows(
 
     if end_dt <= start_dt:
         raise ValueError("end must be after start")
+
+    if kind in {"range", "rolling_days"}:
+        yield TimeWindow(kind=kind, start=start_dt, end=end_dt)
+        return
 
     _validate_aligned(start_dt, kind=kind)
     _validate_aligned(end_dt, kind=kind)

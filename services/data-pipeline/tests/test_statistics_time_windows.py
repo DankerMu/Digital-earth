@@ -67,6 +67,33 @@ def test_iter_time_windows_annual_keys() -> None:
     assert [w.key for w in windows] == ["2020", "2021"]
 
 
+def test_iter_time_windows_range_accepts_arbitrary_bounds() -> None:
+    from statistics.time_windows import iter_time_windows
+
+    windows = list(
+        iter_time_windows(
+            kind="range",
+            start="2020-01-01T12:00:00Z",
+            end="2020-01-02T12:30:00Z",
+        )
+    )
+    assert len(windows) == 1
+    assert windows[0].key == "20200101T120000Z_20200102T123000Z"
+    assert windows[0].start_iso == "2020-01-01T12:00:00Z"
+    assert windows[0].end_iso == "2020-01-02T12:30:00Z"
+
+
+def test_time_window_key_rolling_days_formats_like_duration() -> None:
+    from statistics.time_windows import TimeWindow
+
+    window = TimeWindow(
+        kind="rolling_days",
+        start=datetime(2020, 1, 1, tzinfo=timezone.utc),
+        end=datetime(2020, 1, 8, tzinfo=timezone.utc),
+    )
+    assert window.key == "20200108T000000Z-P7D"
+
+
 def test_iter_time_windows_rejects_misaligned_inputs() -> None:
     from statistics.time_windows import iter_time_windows
 

@@ -22,6 +22,7 @@ def _validate_percentiles(percentiles: Sequence[float]) -> tuple[float, ...]:
 @dataclass(frozen=True)
 class GridStats:
     count: np.ndarray
+    sum: np.ndarray
     mean: np.ndarray
     min: np.ndarray
     max: np.ndarray
@@ -253,6 +254,7 @@ class GridStatisticsAccumulator:
 
         return GridStats(
             count=count,
+            sum=sum_.astype(np.float32, copy=False),
             mean=mean.astype(np.float32, copy=False),
             min=self._min.reshape(self._shape),
             max=self._max.reshape(self._shape),

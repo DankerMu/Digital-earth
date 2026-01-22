@@ -173,6 +173,7 @@ def test_run_historical_statistics_writes_netcdf_and_metadata(tmp_path: Path) ->
         assert ds.attrs["version"] == "vtest"
         assert ds.attrs["window_key"] == "202001"
         assert ds["mean"].shape == (2, 2)
+        assert float(ds["sum"].values[0, 0]) == pytest.approx(21.0)
         assert float(ds["mean"].values[0, 0]) == pytest.approx(3.5)
         assert float(ds["p50"].values[0, 0]) == pytest.approx(3.5)
         assert int(ds["count"].values[0, 0]) == 6

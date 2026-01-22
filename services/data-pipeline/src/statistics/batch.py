@@ -137,6 +137,7 @@ def compute_window_statistics(
     result = acc.finalize()
 
     stats: dict[str, np.ndarray] = {
+        "sum": result.sum,
         "mean": result.mean,
         "min": result.min,
         "max": result.max,

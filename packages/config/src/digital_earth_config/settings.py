@@ -323,6 +323,7 @@ class StorageSettings(BaseModel):
     endpoint_url: Optional[str] = None
     region_name: Optional[str] = None
     tiles_base_url: Optional[str] = None
+    tiles_dir: Optional[Path] = None
     access_key_id: Optional[SecretStr] = Field(default=None, repr=False)
     secret_access_key: Optional[SecretStr] = Field(default=None, repr=False)
 

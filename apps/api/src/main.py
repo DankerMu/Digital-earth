@@ -15,6 +15,7 @@ from observability import (
 )
 from rate_limit import RateLimitMiddleware, create_redis_client
 from routers.attribution import router as attribution_router
+from routers.analytics import router as analytics_router
 from routers.catalog import router as catalog_router
 from routers.errors import router as errors_router
 from routers.effects import router as effects_router
@@ -73,6 +74,7 @@ def create_app() -> FastAPI:
 
     api_v1 = APIRouter(prefix="/api/v1")
     api_v1.include_router(effects_router)
+    api_v1.include_router(analytics_router)
     api_v1.include_router(attribution_router)
     api_v1.include_router(catalog_router)
     api_v1.include_router(local_data_router)

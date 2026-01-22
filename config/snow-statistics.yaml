@@ -54,6 +54,12 @@ metrics:
     windows: rolling_days
     output_units: mm
 
+  - id: snow_depth_mean
+    source: snow_depth_cm
+    reducer: mean
+    windows: rolling_days
+    output_units: cm
+
   - id: snow_depth_max
     source: snow_depth_cm
     reducer: max
@@ -73,4 +79,3 @@ metrics:
     climatology: true
     windows: rolling_days
     output_units: percentile
-
