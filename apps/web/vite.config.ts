@@ -11,6 +11,7 @@ const config = {
     coverage: {
       provider: 'v8',
       reporter: ['text', 'lcov'],
+      include: ['src/**/*.{ts,tsx}'],
       thresholds: {
         lines: 90,
         functions: 90,
