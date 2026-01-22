@@ -1,6 +1,9 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 
-import { DISCLAIMER_CONTENT, DISCLAIMER_UI_STRINGS, type DisclaimerLocale } from './disclaimerContent';
+import { useModal } from '../../lib/useModal';
+import type { DisclaimerContent } from './disclaimerContent';
+import { DISCLAIMER_UI_STRINGS, type DisclaimerLocale } from './disclaimerUiStrings';
 
 type Props = {
   open: boolean;
@@ -10,60 +13,65 @@ type Props = {
 
 export function DisclaimerDialog({ open, locale = 'zh-CN', onClose }: Props) {
   const closeButtonRef = useRef<HTMLButtonElement | null>(null);
-  const previouslyFocusedElementRef = useRef<HTMLElement | null>(null);
-  const onCloseRef = useRef(onClose);
+  const modalRef = useRef<HTMLDivElement | null>(null);
+  const [content, setContent] = useState<Record<DisclaimerLocale, DisclaimerContent> | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
-  useEffect(() => {
-    onCloseRef.current = onClose;
-  }, [onClose]);
+  const { onOverlayMouseDown } = useModal({
+    open,
+    modalRef,
+    initialFocusRef: closeButtonRef,
+    onClose,
+  });
 
   useEffect(() => {
     if (!open) return;
+    if (content) return;
 
-    const previouslyFocusedElement =
-      document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    previouslyFocusedElementRef.current = previouslyFocusedElement;
-    closeButtonRef.current?.focus();
+    let cancelled = false;
+    setLoadError(null);
 
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') onCloseRef.current();
-    };
+    void import('./disclaimerContent')
+      .then((module) => {
+        if (cancelled) return;
+        setContent(module.DISCLAIMER_CONTENT);
+      })
+      .catch((error: unknown) => {
+        if (cancelled) return;
+        setLoadError(error instanceof Error ? error.message : String(error));
+      });
 
-    window.addEventListener('keydown', onKeyDown);
     return () => {
-      window.removeEventListener('keydown', onKeyDown);
-
-      if (previouslyFocusedElement && document.contains(previouslyFocusedElement)) {
-        previouslyFocusedElement.focus();
-      }
-      previouslyFocusedElementRef.current = null;
+      cancelled = true;
     };
-  }, [open]);
+  }, [content, open]);
 
   if (!open) return null;
 
-  const content = DISCLAIMER_CONTENT[locale];
   const uiStrings = DISCLAIMER_UI_STRINGS[locale];
+  const dialogContent = content ? content[locale] : null;
+  const dialogTitle = dialogContent?.title ?? uiStrings.loadingDialogTitle;
+  const dialogSubtitle = dialogContent?.subtitle ?? uiStrings.loadingDialogSubtitle;
+  const dialogLabel = dialogContent?.title ?? uiStrings.loadingDialogAriaLabel;
 
-  return (
+  return createPortal(
     <div
       className="modalOverlay"
       role="presentation"
       data-testid="disclaimer-overlay"
-      onMouseDown={(event) => {
-        if (event.target === event.currentTarget) onClose();
-      }}
+      onMouseDown={onOverlayMouseDown}
     >
       <div
         className="modal"
         role="dialog"
         aria-modal="true"
-        aria-label={content.title}
+        aria-label={dialogLabel}
+        ref={modalRef}
       >
         <div className="modalHeader">
           <div>
-            <h2 className="modalTitle">{content.title}</h2>
-            <div className="modalMeta">{content.subtitle}</div>
+            <h2 className="modalTitle">{dialogTitle}</h2>
+            <div className="modalMeta">{dialogSubtitle}</div>
           </div>
           <div className="modalHeaderActions">
             <button
@@ -79,36 +87,43 @@ export function DisclaimerDialog({ open, locale = 'zh-CN', onClose }: Props) {
         </div>
 
         <div className="modalBody">
-          {content.sections.map((section) => (
-            <section key={section.title} className="grid gap-2">
-              <p className="modalSectionTitle">{section.title}</p>
-              <ul className="modalList">
-                {section.items.map((item) => (
-                  <li key={item.title} className="modalListItem">
-                    <div className="font-semibold text-slate-100">{item.title}</div>
-                    <div className="text-slate-200">{item.description}</div>
-                    {item.links?.length ? (
-                      <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs">
-                        {item.links.map((link) => (
-                          <a
-                            key={link.href}
-                            href={link.href}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="inlineLink"
-                          >
-                            {link.label}
-                          </a>
-                        ))}
-                      </div>
-                    ) : null}
-                  </li>
-                ))}
-              </ul>
-            </section>
-          ))}
+          {loadError ? (
+            <p className="modalError">加载失败：{loadError}</p>
+          ) : dialogContent ? (
+            dialogContent.sections.map((section) => (
+              <section key={section.title} className="grid gap-2">
+                <p className="modalSectionTitle">{section.title}</p>
+                <ul className="modalList">
+                  {section.items.map((item) => (
+                    <li key={item.title} className="modalListItem">
+                      <div className="font-semibold text-slate-100">{item.title}</div>
+                      <div className="text-slate-200">{item.description}</div>
+                      {item.links?.length ? (
+                        <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs">
+                          {item.links.map((link) => (
+                            <a
+                              key={link.href}
+                              href={link.href}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="inlineLink"
+                            >
+                              {link.label}
+                            </a>
+                          ))}
+                        </div>
+                      ) : null}
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            ))
+          ) : (
+            <p className="modalMeta">{uiStrings.loadingDialogBody}</p>
+          )}
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

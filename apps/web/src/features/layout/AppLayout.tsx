@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 
 import { useLayoutPanelsStore } from '../../state/layoutPanels';
 import type { LayerConfig } from '../../state/layerManager';
@@ -54,6 +54,7 @@ const DEFAULT_LAYERS: LayerConfig[] = [
 ];
 
 export function AppLayout() {
+  const appRootRef = useRef<HTMLDivElement | null>(null);
   const isTimelineCollapsed = useLayoutPanelsStore((state) => state.timelineCollapsed);
   const isLayerTreeCollapsed = useLayoutPanelsStore((state) => state.layerTreeCollapsed);
   const isInfoPanelCollapsed = useLayoutPanelsStore((state) => state.infoPanelCollapsed);
@@ -75,8 +76,57 @@ export function AppLayout() {
     });
   }, []);
 
+  useEffect(() => {
+    const root = appRootRef.current;
+    if (!root) return;
+
+    const cssVar = '--disclaimer-fab-offset-bottom';
+    const extraOffsetPx = 8;
+
+    let resizeObserver: ResizeObserver | null = null;
+    let mutationObserver: MutationObserver | null = null;
+
+    const observeCredits = (creditsElement: HTMLElement) => {
+      resizeObserver = new ResizeObserver((entries) => {
+        const entry = entries[0];
+        const measuredHeight =
+          entry?.contentRect?.height ?? creditsElement.getBoundingClientRect().height;
+        const offset = Math.max(0, Math.ceil(measuredHeight + extraOffsetPx));
+        root.style.setProperty(cssVar, `${offset}px`);
+      });
+      resizeObserver.observe(creditsElement);
+    };
+
+    const findCreditsElement = () =>
+      document.querySelector<HTMLElement>('.cesium-widget-credits');
+
+    const connect = () => {
+      const creditsElement = findCreditsElement();
+      if (!creditsElement) return false;
+      observeCredits(creditsElement);
+      return true;
+    };
+
+    if (!connect()) {
+      mutationObserver = new MutationObserver(() => {
+        if (resizeObserver) return;
+        if (connect()) {
+          mutationObserver?.disconnect();
+          mutationObserver = null;
+        }
+      });
+      mutationObserver.observe(document.body, { childList: true, subtree: true });
+    }
+
+    return () => {
+      resizeObserver?.disconnect();
+      mutationObserver?.disconnect();
+      root.style.removeProperty(cssVar);
+    };
+  }, []);
+
   return (
-    <div className="h-screen w-screen bg-slate-950 text-slate-100">
+    <div ref={appRootRef} className="h-screen w-screen bg-slate-950 text-slate-100">
       <div className="grid h-full grid-rows-[auto_1fr_auto] gap-3 p-3">
         <TimelinePanel
           collapsed={isTimelineCollapsed}
