@@ -49,7 +49,7 @@ function safeWritePersisted(next: { enabled: boolean; mode: EventLayerMode }) {
 
 const persisted = safeReadPersisted();
 
-let enabled = persisted.enabled === true;
+let enabled = typeof persisted.enabled === 'boolean' ? persisted.enabled : true;
 let mode: EventLayerMode = isEventLayerMode(persisted.mode)
   ? persisted.mode
   : DEFAULT_EVENT_LAYER_MODE;
@@ -118,4 +118,3 @@ export const useEventLayersStore: StoreHook = Object.assign(useEventLayersStoreI
   getState,
   setState,
 });
-
