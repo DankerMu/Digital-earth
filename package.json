@@ -6,7 +6,7 @@
     "lint": "pnpm --filter web lint",
     "typecheck": "pnpm --filter web typecheck",
     "test": "pnpm --filter web test",
-    "build": "pnpm --filter web build"
+    "build": "pnpm --filter web build",
+    "test:e2e": "pnpm --filter web test:e2e"
   }
 }
-

@@ -17,6 +17,7 @@ import {
   PolygonHierarchy,
   Rectangle,
   SceneMode,
+  SceneTransforms,
   ScreenSpaceEventType,
   UrlTemplateImageryProvider,
   Viewer,
@@ -519,6 +520,13 @@ function snapshotViewerCamera(viewer: CesiumViewerInstance): SavedCameraState | 
   };
 }
 
+function isE2eEnabled(): boolean {
+  const raw = import.meta.env.VITE_E2E;
+  if (!raw) return false;
+  const normalized = raw.trim().toLowerCase();
+  return normalized === 'true' || normalized === '1' || normalized === 'yes';
+}
+
 export function CesiumViewer() {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [viewer, setViewer] = useState<CesiumViewerInstance | null>(null);
@@ -619,6 +627,56 @@ export function CesiumViewer() {
     () => makeHourlyUtcIso(timeKey, cloudFrameIndex),
     [cloudFrameIndex, timeKey],
   );
+
+  useEffect(() => {
+    if (!viewer) return;
+    if (!isE2eEnabled()) return;
+
+    const api = {
+      getEventEntityIds: () => eventEntitiesRef.current.map((entity) => String(entity.id)),
+      getRiskPoiIds: () => Array.from(riskPoisByIdRef.current.keys()),
+      getRiskPoiCanvasPosition: (poiId: number) => {
+        const dataSource = riskDataSourceRef.current;
+        if (!dataSource) return null;
+        const entity = dataSource.entities.getById(`risk-poi:${poiId}`);
+        if (!entity) return null;
+
+        const position = entity.position?.getValue(viewer.clock.currentTime);
+        if (!position) return null;
+
+        const canvasCoords = SceneTransforms.worldToWindowCoordinates(viewer.scene, position);
+        if (!canvasCoords) return null;
+
+        const x = canvasCoords.x;
+        const y = canvasCoords.y;
+        if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+
+        const canvas = viewer.scene.canvas;
+        const width = canvas.clientWidth || canvas.width;
+        const height = canvas.clientHeight || canvas.height;
+        if (width && (x < 0 || x > width)) return null;
+        if (height && (y < 0 || y > height)) return null;
+
+        return { x, y };
+      },
+      isLayerGlobalShellActive: () => {
+        const provider = viewer.terrainProvider as unknown as {
+          tilingScheme?: { ellipsoid?: { radii?: { x?: number } } };
+        };
+        const radiiX = provider.tilingScheme?.ellipsoid?.radii?.x;
+        if (typeof radiiX !== 'number' || !Number.isFinite(radiiX)) return false;
+        const offsetMeters = radiiX - Ellipsoid.WGS84.radii.x;
+        return offsetMeters > 1;
+      },
+    } satisfies NonNullable<Window['__DIGITAL_EARTH_E2E__']>;
+
+    window.__DIGITAL_EARTH_E2E__ = api;
+    return () => {
+      if (window.__DIGITAL_EARTH_E2E__ === api) {
+        delete window.__DIGITAL_EARTH_E2E__;
+      }
+    };
+  }, [viewer]);
 
   const maybeApplyEventAutoLayerTemplate = useCallback(() => {
     if (useViewModeStore.getState().route.viewModeId !== 'event') return;
@@ -838,10 +896,19 @@ export function CesiumViewer() {
     }
     appliedBasemapIdRef.current = initialBasemapId;
 
+    const e2eMode = isE2eEnabled();
+    const imageryProvider = e2eMode
+      ? new UrlTemplateImageryProvider({
+          url: `${window.location.origin}/api/v1/tiles/e2e/{z}/{x}/{y}.png`,
+          tilingScheme: new WebMercatorTilingScheme(),
+          maximumLevel: 0,
+        })
+      : createImageryProviderForBasemap(initialBasemap);
+
     const newViewer = new Viewer(containerRef.current!, {
       baseLayer: new ImageryLayer(
         // Avoid Cesium ion default imagery (Bing) by always passing an explicit base layer.
-        createImageryProviderForBasemap(initialBasemap),
+        imageryProvider,
       ),
       baseLayerPicker: false,
       geocoder: false,
@@ -1849,22 +1916,19 @@ export function CesiumViewer() {
     if (viewer.scene.mode !== SceneMode.SCENE3D) return;
 
     const globe = viewer.scene.globe;
-    const baseEllipsoid = globe.ellipsoid;
     const baseTerrainProvider = viewer.terrainProvider;
 
-    const radii = baseEllipsoid.radii;
+    const radii = globe.ellipsoid.radii;
     const shellEllipsoid = new Ellipsoid(
       radii.x + layerGlobalShellHeightMeters,
       radii.y + layerGlobalShellHeightMeters,
       radii.z + layerGlobalShellHeightMeters,
     );
 
-    globe.ellipsoid = shellEllipsoid;
     viewer.terrainProvider = new EllipsoidTerrainProvider({ ellipsoid: shellEllipsoid });
     viewer.scene.requestRender();
 
     return () => {
-      globe.ellipsoid = baseEllipsoid;
       viewer.terrainProvider = baseTerrainProvider;
       viewer.scene.requestRender();
     };

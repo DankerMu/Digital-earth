@@ -52,6 +52,7 @@ export function RiskPoiPopup({
   return (
     <aside
       aria-label="Risk POI details"
+      data-testid="risk-poi-popup"
       className="w-96 max-w-[calc(100vw-24px)] rounded-xl border border-slate-400/20 bg-slate-900/70 p-4 text-slate-100 shadow-lg backdrop-blur-xl"
     >
       <header className="flex items-start justify-between gap-3">
@@ -77,6 +78,7 @@ export function RiskPoiPopup({
         <button
           type="button"
           aria-label="Close risk popup"
+          data-testid="risk-popup-close"
           className="rounded-lg border border-slate-400/20 bg-slate-800/40 px-2 py-1 text-xs text-slate-200 hover:bg-slate-800/60 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-400"
           onClick={onClose}
         >
@@ -88,6 +90,7 @@ export function RiskPoiPopup({
         <div className="text-xs text-slate-400">风险详情</div>
         <button
           type="button"
+          data-testid="risk-open-disaster-demo"
           className="rounded-lg border border-blue-500/30 bg-blue-500/10 px-3 py-1.5 text-xs text-blue-100 hover:bg-blue-500/20 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-400"
           onClick={onOpenDisasterDemo}
         >

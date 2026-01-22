@@ -47,7 +47,13 @@ export function InfoPanel({ collapsed, onToggleCollapsed }: InfoPanelProps) {
       <header className="flex items-center justify-between gap-2 border-b border-slate-400/10 px-3 py-2">
         <div className={collapsed ? 'sr-only' : 'min-w-0'}>
           <div className="truncate text-sm font-semibold text-white">信息面板</div>
-          <div className="text-xs text-slate-400">{routeSummary(route)}</div>
+          <div
+            className="text-xs text-slate-400"
+            data-testid="view-mode-indicator"
+            data-view-mode={route.viewModeId}
+          >
+            {routeSummary(route)}
+          </div>
         </div>
 
         <div className="flex items-center gap-2">
