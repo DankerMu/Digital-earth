@@ -8,6 +8,7 @@ import {
 } from 'cesium';
 
 import { buildCloudTileUrlTemplate } from './layersApi';
+import { attachTileCacheToProvider } from './tilePrefetch';
 import type { CloudLayerParams } from './types';
 
 const MAX_TILE_LEVEL = 22;
@@ -89,6 +90,7 @@ export class CloudLayer {
         tileHeight: 256,
         credit: 'Cloud tiles',
       });
+      attachTileCacheToProvider(provider, { frameKey: this.current.timeKey });
 
       this.imageryLayer = new ImageryLayer(provider, {
         alpha: clampOpacity(this.current.opacity),

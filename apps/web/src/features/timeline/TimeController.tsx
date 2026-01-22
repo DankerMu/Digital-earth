@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
+import { prefetchNextFrameTiles } from '../layers/tilePrefetch';
+
 export type PlaybackSpeed = 1 | 2 | 4;
 
 export type TimeControllerProps = {
@@ -31,6 +33,10 @@ function isAbortError(error: unknown): boolean {
     return (error as { name?: unknown }).name === 'AbortError';
   }
   return false;
+}
+
+function toTimeKey(date: Date): string {
+  return date.toISOString().replace(/\.\d{3}Z$/, 'Z');
 }
 
 export function TimeController({
@@ -208,6 +214,21 @@ export function TimeController({
       setCurrentIndex(clamped);
     }
   }, [frames.length]);
+
+  useEffect(() => {
+    if (!isPlaying) return;
+    if (frames.length <= 1) return;
+
+    const currentTime = frames[currentIndex];
+    const nextTime = frames[currentIndex + 1];
+    if (isLoadingRef.current) return;
+    if (currentTime && nextTime) {
+      prefetchNextFrameTiles({
+        currentTimeKey: toTimeKey(currentTime),
+        nextTimeKey: toTimeKey(nextTime),
+      });
+    }
+  }, [currentIndex, frames, isPlaying]);
 
   useEffect(() => {
     if (!isPlaying) return;

@@ -8,6 +8,7 @@ import {
 } from 'cesium';
 
 import { buildPrecipitationTileUrlTemplate } from './layersApi';
+import { attachTileCacheToProvider } from './tilePrefetch';
 import type { PrecipitationLayerParams } from './types';
 
 const MAX_TILE_LEVEL = 22;
@@ -89,6 +90,7 @@ export class PrecipitationLayer {
         tileHeight: 256,
         credit: 'Precipitation tiles',
       });
+      attachTileCacheToProvider(provider, { frameKey: this.current.timeKey });
 
       this.imageryLayer = new ImageryLayer(provider, {
         alpha: clampOpacity(this.current.opacity),
