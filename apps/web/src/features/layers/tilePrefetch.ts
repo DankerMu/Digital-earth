@@ -74,6 +74,7 @@ let prefetchRunnerScheduled = false;
 let prefetchInFlight = 0;
 let consecutivePrefetchErrors = 0;
 let prefetchCooldownUntil = 0;
+let performanceModeCacheCleared = false;
 
 function clampPositiveInt(value: number, fallback: number): number {
   if (!Number.isFinite(value)) return fallback;
@@ -100,7 +101,26 @@ function getNetworkInformation(): NetworkInformationLike | null {
   return connection;
 }
 
+function getLowBandwidthEffectiveType(connection: NetworkInformationLike | null): string | null {
+  const effectiveType = safeTrim(connection?.effectiveType).toLowerCase();
+  if (!effectiveType) return null;
+  if (effectiveType === 'slow-2g' || effectiveType === '2g' || effectiveType === '3g') return effectiveType;
+  return null;
+}
+
+function maybeClearCacheForPerformanceMode() {
+  const performanceModeEnabled = usePerformanceModeStore.getState().enabled;
+  if (!performanceModeEnabled) {
+    performanceModeCacheCleared = false;
+    return;
+  }
+
+  if (performanceModeCacheCleared) return;
+  clearTilePrefetchCache();
+}
+
 export function getTilePrefetchDisabledReason(): string | null {
+  maybeClearCacheForPerformanceMode();
   if (usePerformanceModeStore.getState().enabled) return 'performance-mode';
   if (typeof navigator !== 'undefined' && navigator.onLine === false) return 'offline';
   if (Date.now() < prefetchCooldownUntil) return 'cooldown';
@@ -108,8 +128,8 @@ export function getTilePrefetchDisabledReason(): string | null {
   const connection = getNetworkInformation();
   if (connection?.saveData) return 'save-data';
 
-  const effectiveType = safeTrim(connection?.effectiveType);
-  if (effectiveType && effectiveType !== '4g') return `low-bandwidth:${effectiveType}`;
+  const lowBandwidthType = getLowBandwidthEffectiveType(connection);
+  if (lowBandwidthType) return `low-bandwidth:${lowBandwidthType}`;
 
   return null;
 }
@@ -250,7 +270,7 @@ function runPrefetchQueue() {
   }
 
   while (prefetchInFlight < config.maxConcurrentPrefetch && prefetchQueue.length > 0) {
-    const url = prefetchQueue.shift();
+    const url = prefetchQueue.pop();
     if (!url) break;
     queuedUrls.delete(url);
 
@@ -328,7 +348,7 @@ export function prefetchNextFrameTiles(options: {
   let queued = 0;
 
   const urlList = Array.from(urls);
-  for (let index = urlList.length - 1; index >= 0; index -= 1) {
+  for (let index = 0; index < urlList.length; index += 1) {
     if (queued >= limit) break;
     const url = urlList[index];
     if (!url) continue;
@@ -348,8 +368,14 @@ export function prefetchNextFrameTiles(options: {
     }
 
     if (prefetchQueue.length >= config.maxQueueSize) {
-      stats.prefetchSkipped += 1;
-      break;
+      const dropped = prefetchQueue.shift();
+      if (dropped) {
+        queuedUrls.delete(dropped);
+        stats.prefetchSkipped += 1;
+      } else {
+        stats.prefetchSkipped += 1;
+        break;
+      }
     }
 
     stats.prefetchCacheMisses += 1;
@@ -373,13 +399,19 @@ export function attachTileCacheToProvider<TRequest, TImage>(
   const frameKey = safeTrim(options.frameKey);
   if (!frameKey) return;
   if (!provider || typeof provider !== 'object') return;
-  if ((provider as unknown as Record<PropertyKey, unknown>)[PROVIDER_PATCHED]) return;
-  (provider as unknown as Record<PropertyKey, unknown>)[PROVIDER_PATCHED] = true;
 
   const originalRequestImage = provider.requestImage?.bind(provider);
   if (!originalRequestImage) return;
 
+  if ((provider as unknown as Record<PropertyKey, unknown>)[PROVIDER_PATCHED]) return;
+  (provider as unknown as Record<PropertyKey, unknown>)[PROVIDER_PATCHED] = true;
+
   provider.requestImage = (x, y, level, request) => {
+    if (usePerformanceModeStore.getState().enabled) {
+      maybeClearCacheForPerformanceMode();
+      return originalRequestImage(x, y, level, request);
+    }
+
     const template = safeTrim(provider.url);
     const url = template
       ? buildTileUrlFromTemplate({
@@ -421,9 +453,9 @@ export function clearTilePrefetchCache() {
   urlPromiseCache.clear();
   prefetchQueue.length = 0;
   queuedUrls.clear();
-  prefetchInFlight = 0;
   consecutivePrefetchErrors = 0;
   prefetchCooldownUntil = 0;
+  performanceModeCacheCleared = usePerformanceModeStore.getState().enabled;
 }
 
 export function resetTilePrefetchStats() {

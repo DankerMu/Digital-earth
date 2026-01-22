@@ -95,6 +95,10 @@ describe('tilePrefetch', () => {
     expect(getTilePrefetchDisabledReason()).toBe('low-bandwidth:3g');
     expect(canPrefetchTiles()).toBe(false);
 
+    setNavigatorConnection({ effectiveType: '5g', saveData: false });
+    expect(getTilePrefetchDisabledReason()).toBeNull();
+    expect(canPrefetchTiles()).toBe(true);
+
     setNavigatorConnection({ effectiveType: '4g', saveData: true });
     expect(getTilePrefetchDisabledReason()).toBe('save-data');
 
@@ -157,6 +161,52 @@ describe('tilePrefetch', () => {
     });
   });
 
+  it('does not mark providers without requestImage as patched', async () => {
+    const timeKey = '2024-01-15T00:00:00Z';
+    const provider: { url: string; requestImage?: ReturnType<typeof makeOkRequestImage> } = {
+      url: `https://api.test/api/v1/tiles/cldas/${encodeURIComponent(timeKey)}/TMP/{z}/{x}/{y}.png`,
+    };
+
+    attachTileCacheToProvider(provider, { frameKey: timeKey });
+
+    const requestImage = makeOkRequestImage();
+    provider.requestImage = requestImage;
+
+    attachTileCacheToProvider(provider, { frameKey: timeKey });
+
+    await provider.requestImage!(0, 0, 0);
+    await provider.requestImage!(0, 0, 0);
+
+    expect(requestImage).toHaveBeenCalledTimes(1);
+  });
+
+  it('disables and clears request caching in performance mode', async () => {
+    const timeKey = '2024-01-15T00:00:00Z';
+    const requestImage = makeOkRequestImage();
+    const provider = {
+      url: `https://api.test/api/v1/tiles/cldas/${encodeURIComponent(timeKey)}/TMP/{z}/{x}/{y}.png`,
+      tilingScheme: {
+        getNumberOfXTilesAtLevel: (level: number) => 1 << level,
+        getNumberOfYTilesAtLevel: (level: number) => 1 << level,
+      },
+      requestImage,
+    };
+
+    attachTileCacheToProvider(provider, { frameKey: timeKey });
+
+    await provider.requestImage(0, 0, 0);
+    expect(getTilePrefetchStats()).toMatchObject({ urlsTracked: 1, framesTracked: 1 });
+
+    usePerformanceModeStore.setState({ enabled: true });
+    expect(getTilePrefetchDisabledReason()).toBe('performance-mode');
+    expect(getTilePrefetchStats()).toMatchObject({ urlsTracked: 0, framesTracked: 0 });
+
+    await provider.requestImage(0, 0, 0);
+    await provider.requestImage(0, 0, 0);
+    expect(requestImage).toHaveBeenCalledTimes(3);
+    expect(getTilePrefetchStats()).toMatchObject({ urlsTracked: 0, framesTracked: 0 });
+  });
+
   it('evicts old frames and urls based on maxFrames/maxUrlsPerFrame', async () => {
     setTilePrefetchConfig({ maxFrames: 1, maxUrlsPerFrame: 1 });
 
@@ -213,8 +263,29 @@ describe('tilePrefetch', () => {
     expect(requestImage).toHaveBeenCalledTimes(2);
   });
 
-  it('stops enqueuing prefetch when the queue is full', async () => {
+  it('drops the oldest queued prefetch when the queue is full', async () => {
     vi.useFakeTimers();
+
+    const prefetched: string[] = [];
+    class RecordingImageStub {
+      public decoding = 'async';
+      public crossOrigin: string | null = null;
+      public onload: (() => void) | null = null;
+      public onerror: (() => void) | null = null;
+      private _src = '';
+
+      set src(value: string) {
+        this._src = value;
+        prefetched.push(value);
+        this.onload?.();
+      }
+
+      get src() {
+        return this._src;
+      }
+    }
+
+    vi.stubGlobal('Image', RecordingImageStub);
 
     setTilePrefetchConfig({ maxQueueSize: 1, maxPrefetchPerFrame: 10 });
 
@@ -236,9 +307,121 @@ describe('tilePrefetch', () => {
 
     prefetchNextFrameTiles({ currentTimeKey, nextTimeKey });
 
-    expect(getTilePrefetchStats().prefetchQueued).toBe(1);
-    expect(getTilePrefetchStats().prefetchSkipped).toBeGreaterThan(0);
+    expect(getTilePrefetchStats().prefetchQueued).toBe(2);
+    expect(getTilePrefetchStats().prefetchSkipped).toBe(1);
 
+    await vi.runAllTimersAsync();
+    expect(prefetched[0]).toContain(`/${encodeURIComponent(nextTimeKey)}/`);
+    expect(prefetched[0]).toContain('/0/1/0.png');
+    vi.useRealTimers();
+  });
+
+  it('prioritizes the most recent frame tiles when the prefetch queue is saturated', async () => {
+    vi.useFakeTimers();
+
+    const prefetched: string[] = [];
+    class RecordingImageStub {
+      public decoding = 'async';
+      public crossOrigin: string | null = null;
+      public onload: (() => void) | null = null;
+      public onerror: (() => void) | null = null;
+      private _src = '';
+
+      set src(value: string) {
+        this._src = value;
+        prefetched.push(value);
+        this.onload?.();
+      }
+
+      get src() {
+        return this._src;
+      }
+    }
+
+    vi.stubGlobal('Image', RecordingImageStub);
+
+    setTilePrefetchConfig({ maxQueueSize: 2, maxPrefetchPerFrame: 2, maxConcurrentPrefetch: 1 });
+
+    const timeKey0 = '2024-01-15T00:00:00Z';
+    const timeKey1 = '2024-01-15T01:00:00Z';
+    const timeKey2 = '2024-01-15T02:00:00Z';
+
+    const provider = {
+      url: `https://api.test/api/v1/tiles/cldas/${encodeURIComponent(timeKey0)}/TMP/{z}/{x}/{y}.png`,
+      tilingScheme: {
+        getNumberOfXTilesAtLevel: (level: number) => 1 << level,
+        getNumberOfYTilesAtLevel: (level: number) => 1 << level,
+      },
+      requestImage: makeOkRequestImage(),
+    };
+
+    attachTileCacheToProvider(provider, { frameKey: timeKey0 });
+    await provider.requestImage(0, 0, 0);
+    await provider.requestImage(1, 0, 0);
+
+    prefetchNextFrameTiles({ currentTimeKey: timeKey0, nextTimeKey: timeKey1 });
+    prefetchNextFrameTiles({ currentTimeKey: timeKey1, nextTimeKey: timeKey2 });
+
+    await vi.runAllTimersAsync();
+
+    expect(prefetched[0]).toContain(`/${encodeURIComponent(timeKey2)}/`);
+    vi.useRealTimers();
+  });
+
+  it('keeps concurrent prefetch accounting stable when cleared mid-flight', async () => {
+    vi.useFakeTimers();
+
+    const pending: Array<{ onload: (() => void) | null; onerror: (() => void) | null }> = [];
+    class PendingImageStub {
+      public decoding = 'async';
+      public crossOrigin: string | null = null;
+      public onload: (() => void) | null = null;
+      public onerror: (() => void) | null = null;
+      private _src = '';
+
+      set src(value: string) {
+        this._src = value;
+        pending.push({ onload: this.onload, onerror: this.onerror });
+      }
+
+      get src() {
+        return this._src;
+      }
+    }
+
+    vi.stubGlobal('Image', PendingImageStub);
+    setTilePrefetchConfig({ maxConcurrentPrefetch: 1, maxPrefetchPerFrame: 1, maxQueueSize: 10 });
+
+    const currentTimeKey = '2024-01-15T00:00:00Z';
+    const nextTimeKey = '2024-01-15T01:00:00Z';
+
+    const provider = {
+      url: `https://api.test/api/v1/tiles/cldas/${encodeURIComponent(currentTimeKey)}/TMP/{z}/{x}/{y}.png`,
+      tilingScheme: {
+        getNumberOfXTilesAtLevel: (level: number) => 1 << level,
+        getNumberOfYTilesAtLevel: (level: number) => 1 << level,
+      },
+      requestImage: makeOkRequestImage(),
+    };
+
+    attachTileCacheToProvider(provider, { frameKey: currentTimeKey });
+    await provider.requestImage(0, 0, 0);
+
+    prefetchNextFrameTiles({ currentTimeKey, nextTimeKey });
+    await vi.runAllTimersAsync();
+
+    expect(pending).toHaveLength(1);
+
+    clearTilePrefetchCache();
+
+    await provider.requestImage(0, 0, 0);
+    prefetchNextFrameTiles({ currentTimeKey, nextTimeKey });
+    await vi.runAllTimersAsync();
+
+    expect(pending).toHaveLength(1);
+
+    clearTilePrefetchCache();
+    pending.forEach((entry) => entry.onload?.());
     await vi.runAllTimersAsync();
     vi.useRealTimers();
   });
