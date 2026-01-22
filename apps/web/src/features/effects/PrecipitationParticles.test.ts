@@ -101,7 +101,7 @@ describe('PrecipitationParticles', () => {
       enabled: true,
       intensity: 1,
       kind: 'rain',
-      performanceModeEnabled: false,
+      lowModeEnabled: false,
     });
 
     expect(vi.mocked(ParticleSystem)).toHaveBeenCalledTimes(1);
@@ -121,36 +121,38 @@ describe('PrecipitationParticles', () => {
     expect(instance.modelMatrix).toEqual(expect.objectContaining({ kind: 'enu' }));
   });
 
-  it('switches particle type and disables itself in performance mode (default)', () => {
+  it('reduces emission rate in low performance mode (default)', () => {
     const viewer = makeViewer();
-    const particles = new PrecipitationParticles(viewer as never, {
-      maxParticles: 2000,
-      maxParticlesPerformance: 0,
-    });
+    const particles = new PrecipitationParticles(viewer as never, { maxParticles: 2000 });
 
     particles.update({
       enabled: true,
-      intensity: 0.8,
-      kind: 'snow',
-      performanceModeEnabled: false,
+      intensity: 1,
+      kind: 'rain',
+      lowModeEnabled: false,
     });
 
     const instance = vi.mocked(ParticleSystem).mock.results[0]?.value as {
-      image?: unknown;
+      emissionRate?: number;
     };
-    expect(instance.image).toBeInstanceOf(HTMLCanvasElement);
+    const emissionRateHigh = instance.emissionRate ?? 0;
+    expect(emissionRateHigh).toBeGreaterThan(0);
 
     viewer.scene.primitives.remove.mockClear();
 
     particles.update({
       enabled: true,
-      intensity: 0.8,
-      kind: 'snow',
-      performanceModeEnabled: true,
+      intensity: 1,
+      kind: 'rain',
+      lowModeEnabled: true,
     });
 
-    expect(viewer.scene.primitives.remove).toHaveBeenCalledWith(instance);
-    expect(viewer.scene.requestRenderMode).toBe(true);
+    const emissionRateLow = instance.emissionRate ?? 0;
+    expect(emissionRateLow).toBeGreaterThan(0);
+    expect(emissionRateLow).toBeLessThan(emissionRateHigh);
+    expect(emissionRateLow).toBeCloseTo(emissionRateHigh / 2, 1);
+    expect(viewer.scene.primitives.remove).not.toHaveBeenCalled();
+    expect(viewer.scene.requestRenderMode).toBe(false);
   });
 
   it('deactivates when camera is above the configured height', () => {
@@ -166,7 +168,7 @@ describe('PrecipitationParticles', () => {
       enabled: true,
       intensity: 1,
       kind: 'rain',
-      performanceModeEnabled: false,
+      lowModeEnabled: false,
     });
 
     expect(vi.mocked(ParticleSystem)).not.toHaveBeenCalled();
@@ -184,7 +186,7 @@ describe('PrecipitationParticles', () => {
       enabled: true,
       intensity: 1,
       kind: 'rain',
-      performanceModeEnabled: false,
+      lowModeEnabled: false,
     });
 
     const instance = vi.mocked(ParticleSystem).mock.results[0]?.value as {
@@ -198,4 +200,3 @@ describe('PrecipitationParticles', () => {
     expect(instance.destroy).toHaveBeenCalledTimes(1);
   });
 });
-

@@ -33,6 +33,7 @@ import { useLayerManagerStore, type LayerConfig, type LayerType } from '../../st
 import { usePerformanceModeStore } from '../../state/performanceMode';
 import { useSceneModeStore } from '../../state/sceneMode';
 import { useTimeStore } from '../../state/time';
+import { useViewerStatsStore } from '../../state/viewerStats';
 import { useViewModeStore, type ViewModeRoute } from '../../state/viewMode';
 import { PrecipitationParticles } from '../effects/PrecipitationParticles';
 import { DisasterDemo } from '../effects/DisasterDemo';
@@ -58,6 +59,7 @@ import { BasemapSelector } from './BasemapSelector';
 import { CompassControl } from './CompassControl';
 import { EventLayersToggle } from './EventLayersToggle';
 import { SceneModeToggle } from './SceneModeToggle';
+import { createFpsMonitor, createLowFpsDetector } from './fpsMonitor';
 import { createImageryProviderForBasemap, setViewerBasemap, setViewerImageryProvider } from './cesiumBasemap';
 import { switchViewerSceneMode } from './cesiumSceneMode';
 import 'cesium/Build/Cesium/Widgets/widgets.css';
@@ -524,6 +526,7 @@ export function CesiumViewer() {
   const [apiBaseUrl, setApiBaseUrl] = useState<string | null>(null);
   const [terrainNotice, setTerrainNotice] = useState<string | null>(null);
   const [monitoringNotice, setMonitoringNotice] = useState<string | null>(null);
+  const [performanceNotice, setPerformanceNotice] = useState<{ fps: number } | null>(null);
   const basemapId = useBasemapStore((state) => state.basemapId);
   const sceneModeId = useSceneModeStore((state) => state.sceneModeId);
   const viewModeRoute = useViewModeStore((state) => state.route);
@@ -534,7 +537,9 @@ export function CesiumViewer() {
   const goBack = useViewModeStore((state) => state.goBack);
   const layers = useLayerManagerStore((state) => state.layers);
   const timeKey = useTimeStore((state) => state.timeKey);
-  const performanceModeEnabled = usePerformanceModeStore((state) => state.enabled);
+  const performanceMode = usePerformanceModeStore((state) => state.mode);
+  const lowModeEnabled = performanceMode === 'low';
+  const setPerformanceMode = usePerformanceModeStore((state) => state.setMode);
   const cameraPerspectiveId = useCameraPerspectiveStore((state) => state.cameraPerspectiveId);
   const appliedBasemapIdRef = useRef<BasemapId | null>(null);
   const didApplySceneModeRef = useRef(false);
@@ -892,6 +897,57 @@ export function CesiumViewer() {
 
   useEffect(() => {
     if (!viewer) return;
+
+    const monitor = createFpsMonitor({ sampleWindowMs: 1000, idleResetMs: 2500 });
+    const detector = createLowFpsDetector({
+      thresholdFps: 30,
+      consecutiveSamples: 2,
+      cooldownMs: 60_000,
+    });
+
+    let lastFps: number | null = null;
+
+    const onPostRender = () => {
+      const nowMs = performance.now();
+      const sampledFps = monitor.recordFrame(nowMs);
+      const snapshot = monitor.getSnapshot();
+
+      if (!Object.is(snapshot.fps, lastFps)) {
+        lastFps = snapshot.fps;
+        useViewerStatsStore.getState().setFps(snapshot.fps);
+      }
+
+      if (sampledFps == null) return;
+      const fps = sampledFps;
+      if (usePerformanceModeStore.getState().mode !== 'high') return;
+      if (!detector.recordSample({ fps, nowMs })) return;
+      if (typeof fps === 'number') {
+        setPerformanceNotice({ fps });
+      }
+    };
+
+    const scene = viewer.scene as unknown as {
+      postRender?: {
+        addEventListener?: (handler: () => void) => void;
+        removeEventListener?: (handler: () => void) => void;
+      };
+    };
+
+    scene.postRender?.addEventListener?.(onPostRender);
+
+    return () => {
+      scene.postRender?.removeEventListener?.(onPostRender);
+      useViewerStatsStore.getState().setFps(null);
+    };
+  }, [viewer]);
+
+  useEffect(() => {
+    if (!lowModeEnabled) return;
+    setPerformanceNotice(null);
+  }, [lowModeEnabled]);
+
+  useEffect(() => {
+    if (!viewer) return;
     if (!mapConfig) return;
 
     let cancelled = false;
@@ -1065,7 +1121,6 @@ export function CesiumViewer() {
 
     const windArrows = new WindArrows(viewer, {
       maxArrows: WIND_ARROWS_MAX_COUNT,
-      maxArrowsPerformance: 0,
     });
     windArrowsRef.current = windArrows;
 
@@ -1929,8 +1984,9 @@ export function CesiumViewer() {
     };
 
     const update = () => {
-      if (scene.skyBox) scene.skyBox.show = true;
-      if (scene.skyAtmosphere) scene.skyAtmosphere.show = true;
+      const volumetricEnabled = !lowModeEnabled;
+      if (scene.skyBox) scene.skyBox.show = volumetricEnabled;
+      if (scene.skyAtmosphere) scene.skyAtmosphere.show = volumetricEnabled;
 
       const heightMeters = getViewerCameraHeightMeters(viewer) ?? 0;
 
@@ -1941,10 +1997,12 @@ export function CesiumViewer() {
       }
 
       if (scene.fog) {
-        scene.fog.enabled = true;
-        scene.fog.density = localFogDensityForCameraHeight(heightMeters);
-        scene.fog.screenSpaceErrorFactor = 3.0;
-        scene.fog.minimumBrightness = 0.12;
+        scene.fog.enabled = volumetricEnabled;
+        if (volumetricEnabled) {
+          scene.fog.density = localFogDensityForCameraHeight(heightMeters);
+          scene.fog.screenSpaceErrorFactor = 3.0;
+          scene.fog.minimumBrightness = 0.12;
+        }
       }
 
       scene.requestRender();
@@ -1959,7 +2017,69 @@ export function CesiumViewer() {
       camera.moveEnd?.removeEventListener?.(update);
       restore();
     };
-  }, [viewModeRoute.viewModeId, viewer]);
+  }, [lowModeEnabled, viewModeRoute.viewModeId, viewer]);
+
+  useEffect(() => {
+    if (!viewer) return;
+    if (viewModeRoute.viewModeId === 'local') return;
+
+    const base = baseLocalEnvironmentRef.current;
+    if (!base) return;
+
+    const scene = viewer.scene as unknown as {
+      requestRender: () => void;
+      fog?: {
+        enabled?: boolean;
+        density?: number;
+        screenSpaceErrorFactor?: number;
+        minimumBrightness?: number;
+      };
+      skyBox?: { show?: boolean };
+      skyAtmosphere?: { show?: boolean };
+    };
+
+    const volumetricEnabled = !lowModeEnabled;
+    let didChange = false;
+
+    if (scene.skyBox && typeof base.skyBoxShow === 'boolean') {
+      const next = volumetricEnabled ? base.skyBoxShow : false;
+      if (!Object.is(scene.skyBox.show, next)) {
+        scene.skyBox.show = next;
+        didChange = true;
+      }
+    }
+    if (scene.skyAtmosphere && typeof base.skyAtmosphereShow === 'boolean') {
+      const next = volumetricEnabled ? base.skyAtmosphereShow : false;
+      if (!Object.is(scene.skyAtmosphere.show, next)) {
+        scene.skyAtmosphere.show = next;
+        didChange = true;
+      }
+    }
+
+    if (scene.fog && base.fog) {
+      const nextEnabled = volumetricEnabled ? base.fog.enabled : false;
+      if (!Object.is(scene.fog.enabled, nextEnabled)) {
+        scene.fog.enabled = nextEnabled;
+        didChange = true;
+      }
+      if (volumetricEnabled) {
+        if (!Object.is(scene.fog.density, base.fog.density)) {
+          scene.fog.density = base.fog.density;
+          didChange = true;
+        }
+        if (!Object.is(scene.fog.screenSpaceErrorFactor, base.fog.screenSpaceErrorFactor)) {
+          scene.fog.screenSpaceErrorFactor = base.fog.screenSpaceErrorFactor;
+          didChange = true;
+        }
+        if (!Object.is(scene.fog.minimumBrightness, base.fog.minimumBrightness)) {
+          scene.fog.minimumBrightness = base.fog.minimumBrightness;
+          didChange = true;
+        }
+      }
+    }
+
+    if (didChange) scene.requestRender();
+  }, [lowModeEnabled, viewModeRoute.viewModeId, viewer]);
 
   useEffect(() => {
     if (!viewer) return;
@@ -1992,7 +2112,7 @@ export function CesiumViewer() {
         enabled: false,
         opacity: windLayerConfig?.opacity ?? 1,
         vectors: [],
-        performanceModeEnabled,
+        lowModeEnabled,
       });
     };
 
@@ -2042,7 +2162,7 @@ export function CesiumViewer() {
       clearTimer();
 
       const windVisible = windLayerConfig?.visible === true;
-      if (!apiBaseUrl || !windLayerConfig || !windVisible || performanceModeEnabled) {
+      if (!apiBaseUrl || !windLayerConfig || !windVisible) {
         disableArrows();
         return;
       }
@@ -2074,12 +2194,12 @@ export function CesiumViewer() {
 
       const density = windArrowDensityForCameraHeight({
         cameraHeightMeters: getCameraHeightMeters(),
-        performanceModeEnabled,
+        lowModeEnabled,
       });
 
       const normalizedApiBaseUrl = apiBaseUrl.trim().replace(/\/+$/, '');
       const viewKey = `${normalizedApiBaseUrl}:${timeKey}:${density}:${bbox.west},${bbox.south},${bbox.east},${bbox.north}`;
-      const styleKey = `${windLayerConfig.opacity}:${windVisible}:${performanceModeEnabled}`;
+      const styleKey = `${windLayerConfig.opacity}:${windVisible}:${lowModeEnabled}`;
 
       if (windViewKeyRef.current !== viewKey) {
         cancelInFlight();
@@ -2095,7 +2215,7 @@ export function CesiumViewer() {
             enabled: true,
             opacity: windLayerConfig.opacity,
             vectors: windVectorsRef.current,
-            performanceModeEnabled,
+            lowModeEnabled,
           });
         }
         return;
@@ -2120,7 +2240,7 @@ export function CesiumViewer() {
           enabled: true,
           opacity: windLayerConfig.opacity,
           vectors: cachedVectors,
-          performanceModeEnabled,
+          lowModeEnabled,
         });
         return;
       }
@@ -2150,7 +2270,7 @@ export function CesiumViewer() {
           enabled: true,
           opacity: windLayerConfig.opacity,
           vectors,
-          performanceModeEnabled,
+          lowModeEnabled,
         });
       } catch (error) {
         if (controller.signal.aborted) return;
@@ -2198,7 +2318,7 @@ export function CesiumViewer() {
       clearTimer();
       cancelInFlight();
     };
-  }, [apiBaseUrl, performanceModeEnabled, timeKey, viewer, windLayerConfig]);
+  }, [apiBaseUrl, lowModeEnabled, timeKey, viewer, windLayerConfig]);
 
   useEffect(() => {
     if (!viewer) return;
@@ -2227,7 +2347,7 @@ export function CesiumViewer() {
         enabled: false,
         intensity: 0,
         kind: 'none',
-        performanceModeEnabled,
+        lowModeEnabled,
       });
     };
 
@@ -2236,7 +2356,7 @@ export function CesiumViewer() {
 
       const precipitationVisible = precipitationLayerConfig?.visible === true;
       const sampler = weatherSamplerRef.current;
-      if (!precipitationVisible || performanceModeEnabled || !sampler) {
+      if (!precipitationVisible || !sampler) {
         disableParticles();
         return;
       }
@@ -2262,7 +2382,7 @@ export function CesiumViewer() {
           enabled: true,
           intensity: sample.precipitationIntensity,
           kind: sample.precipitationKind,
-          performanceModeEnabled,
+          lowModeEnabled,
         });
       } catch {
         if (controller.signal.aborted) return;
@@ -2306,7 +2426,7 @@ export function CesiumViewer() {
       clearTimer();
       cancelInFlight();
     };
-  }, [apiBaseUrl, performanceModeEnabled, precipitationLayerConfig, temperatureLayerConfig, viewer]);
+  }, [apiBaseUrl, lowModeEnabled, precipitationLayerConfig, temperatureLayerConfig, viewer]);
 
   useEffect(() => {
     if (!viewer) return;
@@ -2507,6 +2627,30 @@ export function CesiumViewer() {
           <div className="terrainNoticePanel" role="alert" aria-label="monitoring-notice">
             <div className="terrainNoticeTitle">监测</div>
             <div className="terrainNoticeMessage">{monitoringNotice}</div>
+          </div>
+        ) : null}
+        {performanceNotice ? (
+          <div className="terrainNoticePanel" role="alert" aria-label="performance-notice">
+            <div className="terrainNoticeTitle">性能</div>
+            <div className="terrainNoticeMessage">
+              检测到帧率较低（{performanceNotice.fps} FPS），建议切换到 Low 模式以提升性能。
+            </div>
+            <div className="mt-2 flex gap-2">
+              <button
+                type="button"
+                className="rounded-lg border border-slate-400/20 bg-slate-700/30 px-2 py-1 text-xs text-slate-200 hover:bg-slate-700/50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-400"
+                onClick={() => setPerformanceMode('low')}
+              >
+                切换到 Low
+              </button>
+              <button
+                type="button"
+                className="rounded-lg border border-slate-400/20 bg-slate-700/30 px-2 py-1 text-xs text-slate-200 hover:bg-slate-700/50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-400"
+                onClick={() => setPerformanceNotice(null)}
+              >
+                忽略
+              </button>
+            </div>
           </div>
         ) : null}
       </div>

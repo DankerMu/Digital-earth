@@ -65,7 +65,7 @@ describe('WindArrows', () => {
     arrows.update({
       enabled: true,
       opacity: 0.5,
-      performanceModeEnabled: false,
+      lowModeEnabled: false,
       vectors: [
         { lon: 0, lat: 0, u: 5, v: 0 }, // east
         { lon: 0, lat: 0, u: 0, v: 5 }, // north
@@ -100,7 +100,7 @@ describe('WindArrows', () => {
     arrows.update({
       enabled: true,
       opacity: 1,
-      performanceModeEnabled: false,
+      lowModeEnabled: false,
       vectors: [{ lon: 0, lat: 0, u: 1, v: 0 }],
     });
 
@@ -111,7 +111,7 @@ describe('WindArrows', () => {
     arrows.update({
       enabled: false,
       opacity: 1,
-      performanceModeEnabled: false,
+      lowModeEnabled: false,
       vectors: [{ lon: 0, lat: 0, u: 1, v: 0 }],
     });
 
@@ -120,14 +120,14 @@ describe('WindArrows', () => {
       .toHaveLength(0);
   });
 
-  it('honors maxArrows and disables itself in performance mode (default)', () => {
+  it('honors maxArrows and reduces arrow count in performance mode (default)', () => {
     const viewer = makeViewer();
     const arrows = new WindArrows(viewer as never, { maxArrows: 2 });
 
     arrows.update({
       enabled: true,
       opacity: 1,
-      performanceModeEnabled: false,
+      lowModeEnabled: false,
       vectors: [
         { lon: 0, lat: 0, u: 1, v: 0 },
         { lon: 1, lat: 1, u: 1, v: 0 },
@@ -141,12 +141,19 @@ describe('WindArrows', () => {
     arrows.update({
       enabled: true,
       opacity: 1,
-      performanceModeEnabled: true,
-      vectors: [{ lon: 0, lat: 0, u: 1, v: 0 }],
+      lowModeEnabled: true,
+      vectors: [
+        { lon: 0, lat: 0, u: 1, v: 0 },
+        { lon: 1, lat: 1, u: 1, v: 0 },
+        { lon: 2, lat: 2, u: 1, v: 0 },
+        { lon: 3, lat: 3, u: 1, v: 0 },
+      ],
     });
 
     expect(viewer.entities.remove).toHaveBeenCalledTimes(2);
-    expect(viewer.entities.add).toHaveBeenCalledTimes(2);
+    expect(viewer.entities.add).toHaveBeenCalledTimes(3);
+    expect((viewer as unknown as { __mocks: { getEntities: () => unknown[] } }).__mocks.getEntities())
+      .toHaveLength(1);
   });
 });
 
@@ -155,21 +162,21 @@ describe('windArrowDensityForCameraHeight', () => {
     expect(
       windArrowDensityForCameraHeight({
         cameraHeightMeters: 50_000,
-        performanceModeEnabled: false,
+        lowModeEnabled: false,
       }),
     ).toBe(32);
 
     expect(
       windArrowDensityForCameraHeight({
         cameraHeightMeters: 600_000,
-        performanceModeEnabled: false,
+        lowModeEnabled: false,
       }),
     ).toBe(20);
 
     expect(
       windArrowDensityForCameraHeight({
         cameraHeightMeters: 30_000_000,
-        performanceModeEnabled: false,
+        lowModeEnabled: false,
       }),
     ).toBe(4);
   });
@@ -178,16 +185,15 @@ describe('windArrowDensityForCameraHeight', () => {
     expect(
       windArrowDensityForCameraHeight({
         cameraHeightMeters: 600_000,
-        performanceModeEnabled: true,
+        lowModeEnabled: true,
       }),
     ).toBe(10);
 
     expect(
       windArrowDensityForCameraHeight({
         cameraHeightMeters: null,
-        performanceModeEnabled: false,
+        lowModeEnabled: false,
       }),
     ).toBe(12);
   });
 });
-

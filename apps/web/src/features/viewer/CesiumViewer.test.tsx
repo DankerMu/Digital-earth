@@ -405,6 +405,7 @@ import { usePerformanceModeStore } from '../../state/performanceMode';
 import { DEFAULT_SCENE_MODE_ID, useSceneModeStore } from '../../state/sceneMode';
 import { DEFAULT_TIME_KEY, useTimeStore } from '../../state/time';
 import { useViewModeStore } from '../../state/viewMode';
+import { useViewerStatsStore } from '../../state/viewerStats';
 import { CesiumViewer } from './CesiumViewer';
 
 function jsonResponse(payload: unknown) {
@@ -439,8 +440,9 @@ describe('CesiumViewer', () => {
     useSceneModeStore.setState({ sceneModeId: DEFAULT_SCENE_MODE_ID });
     useTimeStore.setState({ timeKey: DEFAULT_TIME_KEY });
     useLayerManagerStore.setState({ layers: [] });
-    usePerformanceModeStore.setState({ enabled: false });
+    usePerformanceModeStore.setState({ mode: 'high' });
     useViewModeStore.setState({ route: { viewModeId: 'global' }, history: [], saved: {} });
+    useViewerStatsStore.setState({ fps: null });
     vi.stubGlobal(
       'fetch',
       vi.fn(async (input: RequestInfo | URL) => {
@@ -1081,13 +1083,20 @@ describe('CesiumViewer', () => {
         enabled: true,
         intensity: 0.8,
         kind: 'rain',
-        performanceModeEnabled: false,
+        lowModeEnabled: false,
       }),
     );
   });
 
-  it('skips sampling and disables precipitation particles in performance mode', async () => {
-    usePerformanceModeStore.setState({ enabled: true });
+  it('samples weather and updates precipitation particles in low performance mode', async () => {
+    weatherSamplerMocks.sample.mockResolvedValueOnce({
+      precipitationMm: 25,
+      precipitationIntensity: 0.8,
+      precipitationKind: 'rain',
+      temperatureC: 10,
+    });
+
+    usePerformanceModeStore.setState({ mode: 'low' });
 
     useLayerManagerStore.setState({
       layers: [
@@ -1114,17 +1123,17 @@ describe('CesiumViewer', () => {
 
     await waitFor(() => expect(vi.mocked(Viewer)).toHaveBeenCalledTimes(1));
 
-    await waitFor(() =>
-      expect(precipitationParticlesMocks.update).toHaveBeenCalledWith(
-        expect.objectContaining({
-          enabled: false,
-          kind: 'none',
-          performanceModeEnabled: true,
-        }),
-      ),
-    );
+    await waitFor(() => expect(weatherSamplerMocks.sample).toHaveBeenCalledTimes(1));
 
-    expect(weatherSamplerMocks.sample).not.toHaveBeenCalled();
+    await waitFor(() => expect(precipitationParticlesMocks.update).toHaveBeenCalled());
+    expect(precipitationParticlesMocks.update).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        enabled: true,
+        intensity: 0.8,
+        kind: 'rain',
+        lowModeEnabled: true,
+      }),
+    );
   });
 
   it('fetches wind vectors and updates wind arrows when wind layer is visible', async () => {
@@ -3122,6 +3131,74 @@ describe('CesiumViewer', () => {
     expect(await screen.findByRole('alert', { name: 'monitoring-notice' })).toHaveTextContent(
       '暂无雪深监测数据',
     );
+  });
+
+  it('updates viewer stats fps from scene postRender samples', async () => {
+    render(<CesiumViewer />);
+    await waitFor(() => expect(vi.mocked(Viewer)).toHaveBeenCalledTimes(1));
+
+    const viewer = vi.mocked(Viewer).mock.results[0].value;
+    const postRenderHandler = (
+      vi.mocked(viewer.scene.postRender.addEventListener).mock.calls as unknown[][]
+    )
+      .map((call) => call[0])
+      .find(
+        (handler): handler is () => void =>
+          typeof handler === 'function' && handler.toString().includes('performance.now'),
+      );
+    expect(typeof postRenderHandler).toBe('function');
+
+    let nowMs = 0;
+    const nowSpy = vi.spyOn(performance, 'now').mockImplementation(() => nowMs);
+    try {
+      act(() => {
+        nowMs = 0;
+        postRenderHandler?.();
+        nowMs = 1000;
+        postRenderHandler?.();
+      });
+    } finally {
+      nowSpy.mockRestore();
+    }
+
+    expect(useViewerStatsStore.getState().fps).toBe(1);
+  });
+
+  it('suggests switching to low mode after stable low fps samples', async () => {
+    render(<CesiumViewer />);
+    await waitFor(() => expect(vi.mocked(Viewer)).toHaveBeenCalledTimes(1));
+
+    const viewer = vi.mocked(Viewer).mock.results[0].value;
+    const postRenderHandler = (
+      vi.mocked(viewer.scene.postRender.addEventListener).mock.calls as unknown[][]
+    )
+      .map((call) => call[0])
+      .find(
+        (handler): handler is () => void =>
+          typeof handler === 'function' && handler.toString().includes('performance.now'),
+      );
+    expect(typeof postRenderHandler).toBe('function');
+
+    let nowMs = 0;
+    const nowSpy = vi.spyOn(performance, 'now').mockImplementation(() => nowMs);
+    try {
+      act(() => {
+        nowMs = 0;
+        postRenderHandler?.();
+        nowMs = 1000;
+        postRenderHandler?.(); // sample #1 -> fps: 1
+        nowMs = 2000;
+        postRenderHandler?.();
+        nowMs = 3000;
+        postRenderHandler?.(); // sample #2 -> fps: 1 (stable), triggers suggestion
+      });
+    } finally {
+      nowSpy.mockRestore();
+    }
+
+    const notice = await screen.findByRole('alert', { name: 'performance-notice' });
+    expect(notice).toHaveTextContent('建议切换到 Low 模式');
+    expect(notice).toHaveTextContent('1 FPS');
   });
 
   it('requests render after clearing event entities even when the next request fails', async () => {
