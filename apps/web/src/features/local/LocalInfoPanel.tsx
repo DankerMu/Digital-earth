@@ -85,6 +85,7 @@ export function LocalInfoPanel({
   return (
     <aside
       aria-label="Local info"
+      data-testid="local-info-panel"
       className="w-80 max-w-[calc(100vw-24px)] rounded-xl border border-slate-400/20 bg-slate-900/60 p-4 text-slate-100 shadow-lg backdrop-blur-xl"
     >
       <header className="flex items-start justify-between gap-3">
@@ -98,6 +99,7 @@ export function LocalInfoPanel({
         <button
           type="button"
           aria-label="Back to previous view"
+          data-testid="local-back"
           className="rounded-lg border border-slate-400/20 bg-slate-800/40 px-2 py-1 text-xs text-slate-200 hover:bg-slate-800/60 disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-400"
           disabled={!canGoBack}
           onClick={onBack}
@@ -112,11 +114,13 @@ export function LocalInfoPanel({
           className="flex divide-x divide-slate-400/20 overflow-hidden rounded-lg border border-slate-400/20 bg-slate-800/40"
           role="group"
           aria-label="Camera perspective"
+          data-testid="camera-perspective-group"
         >
           {(Object.keys(PERSPECTIVE_LABELS) as CameraPerspectiveId[]).map((id) => (
             <button
               key={id}
               type="button"
+              data-testid={`camera-perspective-${id}`}
               className="flex items-center gap-1 px-2 py-1 text-xs text-slate-200 hover:bg-slate-800/60 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-400 data-[active=true]:bg-slate-800/70 data-[active=true]:text-white"
               aria-pressed={id === cameraPerspectiveId}
               data-active={id === cameraPerspectiveId ? 'true' : 'false'}
@@ -148,6 +152,7 @@ export function LocalInfoPanel({
         <div className="mt-4 flex justify-end">
           <button
             type="button"
+            data-testid="local-lock-layer"
             className="rounded-lg border border-blue-500/30 bg-blue-500/10 px-3 py-1.5 text-xs text-blue-100 hover:bg-blue-500/20 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-400"
             onClick={onLockLayer}
           >

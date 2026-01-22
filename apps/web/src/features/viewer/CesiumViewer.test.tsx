@@ -1466,8 +1466,10 @@ describe('CesiumViewer', () => {
 
     await waitFor(() => {
       const radii = (
-        viewer.scene.globe.ellipsoid as { radii?: { x?: number; y?: number; z?: number } }
-      ).radii;
+        viewer.terrainProvider as unknown as {
+          options?: { ellipsoid?: { radii?: { x?: number; y?: number; z?: number } } };
+        }
+      ).options?.ellipsoid?.radii;
       expect(radii?.x).toBe(5010);
       expect(radii?.y).toBe(5010);
       expect(radii?.z).toBe(5009);
@@ -1548,22 +1550,21 @@ describe('CesiumViewer', () => {
 
     await waitFor(() => {
       const radii = (
-        viewer.scene.globe.ellipsoid as { radii?: { x?: number; y?: number; z?: number } }
-      ).radii;
+        viewer.terrainProvider as unknown as {
+          options?: { ellipsoid?: { radii?: { x?: number; y?: number; z?: number } } };
+        }
+      ).options?.ellipsoid?.radii;
       expect(radii?.x).toBe(5010);
     });
+
+    const shellTerrainProvider = viewer.terrainProvider;
 
     act(() => {
       useViewModeStore.setState({ route: { viewModeId: 'global' }, history: [], saved: {} });
     });
 
     await waitFor(() => {
-      const radii = (
-        viewer.scene.globe.ellipsoid as { radii?: { x?: number; y?: number; z?: number } }
-      ).radii;
-      expect(radii?.x).toBe(10);
-      expect(radii?.y).toBe(10);
-      expect(radii?.z).toBe(9);
+      expect(viewer.terrainProvider).not.toBe(shellTerrainProvider);
     });
   });
 

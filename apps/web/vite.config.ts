@@ -6,9 +6,12 @@ const config = {
   test: {
     environment: 'jsdom',
     setupFiles: './src/test/setup.ts',
+    include: ['src/**/*.{test,spec}.{ts,tsx}'],
+    exclude: ['e2e/**'],
     coverage: {
       provider: 'v8',
       reporter: ['text', 'lcov'],
+      include: ['src/**/*.{ts,tsx}'],
       thresholds: {
         lines: 90,
         functions: 90,
