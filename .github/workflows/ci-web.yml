@@ -3,6 +3,7 @@ name: CI - Web
 on:
   pull_request:
     paths:
+      - '.github/workflows/ci-web.yml'
       - 'apps/web/**'
       - 'pnpm-lock.yaml'
 

@@ -882,12 +882,12 @@ export function CesiumViewer() {
     };
   }, []);
 
-	  useEffect(() => {
-	    const defaultDestination = Cartesian3.fromDegrees(
-	      DEFAULT_CAMERA.longitude,
-	      DEFAULT_CAMERA.latitude,
-	      DEFAULT_CAMERA.heightMeters
-	    );
+  useEffect(() => {
+    const defaultDestination = Cartesian3.fromDegrees(
+      DEFAULT_CAMERA.longitude,
+      DEFAULT_CAMERA.latitude,
+      DEFAULT_CAMERA.heightMeters
+    );
 
     const initialBasemapId = useBasemapStore.getState().basemapId;
     const initialBasemap = getBasemapById(initialBasemapId);
@@ -936,14 +936,14 @@ export function CesiumViewer() {
       newViewer.camera.flyTo({ destination: defaultDestination, duration: 0.8 });
     });
 
-	    setViewer(newViewer);
+    setViewer(newViewer);
 
-	    return () => {
-	      riskClusterTeardownRef.current?.();
-	      riskClusterTeardownRef.current = null;
-	      newViewer.destroy();
-	    };
-	  }, []);
+    return () => {
+      riskClusterTeardownRef.current?.();
+      riskClusterTeardownRef.current = null;
+      newViewer.destroy();
+    };
+  }, []);
 
   useEffect(() => {
     if (!viewer) return;

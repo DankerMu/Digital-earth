@@ -75,7 +75,7 @@ test.describe('Core workflows', () => {
     await test.step('Verify polygon rendered', async () => {
       await expect
         .poll(() =>
-          page.evaluate(() => window.__DIGITAL_EARTH_E2E__?.getEventEntityIds?.().length ?? 0),
+          page.evaluate(() => window.__DIGITAL_EARTH_E2E__?.getEventEntityIds?.()?.length ?? 0),
         )
         .toBeGreaterThan(0);
     });
@@ -83,7 +83,7 @@ test.describe('Core workflows', () => {
     await test.step('Verify risk POIs loaded', async () => {
       await expect
         .poll(() =>
-          page.evaluate(() => window.__DIGITAL_EARTH_E2E__?.getRiskPoiIds?.().length ?? 0),
+          page.evaluate(() => window.__DIGITAL_EARTH_E2E__?.getRiskPoiIds?.()?.length ?? 0),
         )
         .toBeGreaterThan(0);
     });
