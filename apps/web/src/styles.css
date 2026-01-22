@@ -466,9 +466,9 @@ body {
   color: rgba(147, 197, 253, 1);
 }
 
-.disclaimerFab {
+.disclaimerFab,
+.helpFab {
   position: fixed;
-  right: calc(1rem + env(safe-area-inset-right) + var(--disclaimer-fab-offset-right, 0px));
   bottom: calc(1rem + env(safe-area-inset-bottom) + var(--disclaimer-fab-offset-bottom, 0px));
   z-index: 45;
   display: inline-flex;
@@ -488,16 +488,27 @@ body {
   transition: background 160ms ease, border-color 160ms ease, transform 160ms ease;
 }
 
-.disclaimerFab:hover {
+.disclaimerFab {
+  right: calc(1rem + env(safe-area-inset-right) + var(--disclaimer-fab-offset-right, 0px));
+}
+
+.helpFab {
+  right: calc(1rem + env(safe-area-inset-right) + var(--disclaimer-fab-offset-right, 0px) + 48px);
+}
+
+.disclaimerFab:hover,
+.helpFab:hover {
   background: rgba(30, 41, 59, 0.85);
   border-color: rgba(148, 163, 184, 0.3);
 }
 
-.disclaimerFab:active {
+.disclaimerFab:active,
+.helpFab:active {
   transform: translateY(1px);
 }
 
-.disclaimerFab:focus-visible {
+.disclaimerFab:focus-visible,
+.helpFab:focus-visible {
   outline: 2px solid rgba(96, 165, 250, 1);
   outline-offset: 2px;
 }
