@@ -8,6 +8,7 @@ import {
 } from 'cesium';
 
 import { buildCldasTileUrlTemplate } from './layersApi';
+import { attachTileCacheToProvider } from './tilePrefetch';
 import type { TemperatureLayerParams } from './types';
 
 const MAX_TILE_LEVEL = 22;
@@ -108,6 +109,7 @@ export class TemperatureLayer {
         tileHeight: 256,
         credit: 'Temperature tiles',
       });
+      attachTileCacheToProvider(provider, { frameKey: this.current.timeKey });
 
       this.imageryLayer = new ImageryLayer(provider, {
         alpha: clampOpacity(this.current.opacity),

@@ -10,6 +10,7 @@ import {
 
 import { alignToMostRecentHourTimeKey, normalizeSnowDepthVariable } from './cldasTime';
 import { buildCldasTileUrlTemplate } from './layersApi';
+import { attachTileCacheToProvider } from './tilePrefetch';
 import type { SnowDepthLayerParams } from './types';
 
 const CLDAS_SNOW_DEPTH_GLOBAL_MAX_TILE_LEVEL = 6;
@@ -71,13 +72,16 @@ export class SnowDepthLayer {
     this.viewer.scene.requestRender();
   }
 
-  private createUrlTemplate(params: SnowDepthLayerParams): string {
-    const timeKey = alignToMostRecentHourTimeKey(params.timeKey);
-    return buildCldasTileUrlTemplate({
-      apiBaseUrl: params.apiBaseUrl,
-      timeKey,
-      variable: normalizeSnowDepthVariable(params.variable),
-    });
+  private createUrlTemplate(params: SnowDepthLayerParams): { template: string; frameKey: string } {
+    const frameKey = alignToMostRecentHourTimeKey(params.timeKey);
+    return {
+      frameKey,
+      template: buildCldasTileUrlTemplate({
+        apiBaseUrl: params.apiBaseUrl,
+        timeKey: frameKey,
+        variable: normalizeSnowDepthVariable(params.variable),
+      }),
+    };
   }
 
   private nextCoverageKey(params: SnowDepthLayerParams): string {
@@ -88,7 +92,7 @@ export class SnowDepthLayer {
   }
 
   private sync(options: { forceRecreate?: boolean } = {}): void {
-    const nextTemplate = this.createUrlTemplate(this.current);
+    const { template: nextTemplate, frameKey } = this.createUrlTemplate(this.current);
     const nextCoverage = this.nextCoverageKey(this.current);
     const shouldRecreate =
       options.forceRecreate ||
@@ -119,6 +123,7 @@ export class SnowDepthLayer {
         rectangle,
         credit: 'Snow depth tiles',
       });
+      attachTileCacheToProvider(provider, { frameKey });
 
       this.imageryLayer = new ImageryLayer(provider, {
         alpha: clampOpacity(this.current.opacity),
