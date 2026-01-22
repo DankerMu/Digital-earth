@@ -37,7 +37,7 @@ export function createFpsMonitor(options: FpsMonitorOptions = {}): FpsMonitor {
   };
 
   const recordFrame = (nowMs: number) => {
-    if (typeof nowMs !== 'number' || !Number.isFinite(nowMs)) return fps;
+    if (typeof nowMs !== 'number' || !Number.isFinite(nowMs)) return null;
 
     if (lastFrameAtMs != null && nowMs - lastFrameAtMs > idleResetMs) {
       fps = null;
@@ -53,9 +53,13 @@ export function createFpsMonitor(options: FpsMonitorOptions = {}): FpsMonitor {
     frames += 1;
 
     const delta = nowMs - windowStartMs;
-    if (delta < sampleWindowMs) return fps;
+    if (delta < sampleWindowMs) return null;
 
-    const computed = delta > 0 ? Math.round((frames * 1000) / delta) : null;
+    // `delta` spans from the first frame timestamp to the last frame timestamp.
+    // For N frames, there are N-1 frame intervals inside that time span.
+    // Using `frames` here can overestimate (e.g. 60fps reading as 61).
+    const intervals = frames - 1;
+    const computed = delta > 0 && intervals > 0 ? Math.round((intervals * 1000) / delta) : null;
     fps = typeof computed === 'number' && Number.isFinite(computed) ? computed : null;
     frames = 0;
     windowStartMs = nowMs;
@@ -123,4 +127,3 @@ export function createLowFpsDetector(options: LowFpsDetectorOptions = {}): LowFp
 
   return { recordSample, reset };
 }
-

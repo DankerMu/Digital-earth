@@ -8,11 +8,23 @@ describe('createFpsMonitor', () => {
 
     expect(monitor.recordFrame(0)).toBeNull();
     expect(monitor.recordFrame(500)).toBeNull();
-    expect(monitor.recordFrame(1000)).toBe(3);
+    expect(monitor.recordFrame(1000)).toBe(2);
 
     const snapshot = monitor.getSnapshot();
-    expect(snapshot.fps).toBe(3);
+    expect(snapshot.fps).toBe(2);
     expect(snapshot.lastFrameAtMs).toBe(1000);
+  });
+
+  it('does not overestimate fps by counting the window start frame', () => {
+    const monitor = createFpsMonitor({ sampleWindowMs: 1000, idleResetMs: 5000 });
+
+    // Simulate 60fps over a 1s window: 61 frames at timestamps [0..1000].
+    for (let index = 0; index < 60; index += 1) {
+      expect(monitor.recordFrame((index * 1000) / 60)).toBeNull();
+    }
+
+    expect(monitor.recordFrame(1000)).toBe(60);
+    expect(monitor.getSnapshot().fps).toBe(60);
   });
 
   it('resets fps after an idle gap', () => {
@@ -21,7 +33,7 @@ describe('createFpsMonitor', () => {
     monitor.recordFrame(0);
     monitor.recordFrame(500);
     monitor.recordFrame(1000);
-    expect(monitor.getSnapshot().fps).toBe(3);
+    expect(monitor.getSnapshot().fps).toBe(2);
 
     // Next frame arrives after a long pause: treat as idle and reset.
     expect(monitor.recordFrame(4000)).toBeNull();
@@ -57,4 +69,3 @@ describe('createLowFpsDetector', () => {
     expect(detector.recordSample({ fps: 29, nowMs: 4 })).toBe(false);
   });
 });
-

@@ -538,7 +538,7 @@ export function CesiumViewer() {
   const layers = useLayerManagerStore((state) => state.layers);
   const timeKey = useTimeStore((state) => state.timeKey);
   const performanceMode = usePerformanceModeStore((state) => state.mode);
-  const performanceModeEnabled = performanceMode === 'low';
+  const lowModeEnabled = performanceMode === 'low';
   const setPerformanceMode = usePerformanceModeStore((state) => state.setMode);
   const cameraPerspectiveId = useCameraPerspectiveStore((state) => state.cameraPerspectiveId);
   const appliedBasemapIdRef = useRef<BasemapId | null>(null);
@@ -909,14 +909,16 @@ export function CesiumViewer() {
 
     const onPostRender = () => {
       const nowMs = performance.now();
-      monitor.recordFrame(nowMs);
+      const sampledFps = monitor.recordFrame(nowMs);
       const snapshot = monitor.getSnapshot();
 
-      if (Object.is(snapshot.fps, lastFps)) return;
-      lastFps = snapshot.fps;
-      useViewerStatsStore.getState().setFps(snapshot.fps);
+      if (!Object.is(snapshot.fps, lastFps)) {
+        lastFps = snapshot.fps;
+        useViewerStatsStore.getState().setFps(snapshot.fps);
+      }
 
-      const fps = snapshot.fps;
+      if (sampledFps == null) return;
+      const fps = sampledFps;
       if (usePerformanceModeStore.getState().mode !== 'high') return;
       if (!detector.recordSample({ fps, nowMs })) return;
       if (typeof fps === 'number') {
@@ -940,9 +942,9 @@ export function CesiumViewer() {
   }, [viewer]);
 
   useEffect(() => {
-    if (!performanceModeEnabled) return;
+    if (!lowModeEnabled) return;
     setPerformanceNotice(null);
-  }, [performanceModeEnabled]);
+  }, [lowModeEnabled]);
 
   useEffect(() => {
     if (!viewer) return;
@@ -1982,7 +1984,7 @@ export function CesiumViewer() {
     };
 
     const update = () => {
-      const volumetricEnabled = !performanceModeEnabled;
+      const volumetricEnabled = !lowModeEnabled;
       if (scene.skyBox) scene.skyBox.show = volumetricEnabled;
       if (scene.skyAtmosphere) scene.skyAtmosphere.show = volumetricEnabled;
 
@@ -2015,7 +2017,7 @@ export function CesiumViewer() {
       camera.moveEnd?.removeEventListener?.(update);
       restore();
     };
-  }, [performanceModeEnabled, viewModeRoute.viewModeId, viewer]);
+  }, [lowModeEnabled, viewModeRoute.viewModeId, viewer]);
 
   useEffect(() => {
     if (!viewer) return;
@@ -2036,7 +2038,7 @@ export function CesiumViewer() {
       skyAtmosphere?: { show?: boolean };
     };
 
-    const volumetricEnabled = !performanceModeEnabled;
+    const volumetricEnabled = !lowModeEnabled;
     let didChange = false;
 
     if (scene.skyBox && typeof base.skyBoxShow === 'boolean') {
@@ -2077,7 +2079,7 @@ export function CesiumViewer() {
     }
 
     if (didChange) scene.requestRender();
-  }, [performanceModeEnabled, viewModeRoute.viewModeId, viewer]);
+  }, [lowModeEnabled, viewModeRoute.viewModeId, viewer]);
 
   useEffect(() => {
     if (!viewer) return;
@@ -2110,7 +2112,7 @@ export function CesiumViewer() {
         enabled: false,
         opacity: windLayerConfig?.opacity ?? 1,
         vectors: [],
-        performanceModeEnabled,
+        lowModeEnabled,
       });
     };
 
@@ -2192,12 +2194,12 @@ export function CesiumViewer() {
 
       const density = windArrowDensityForCameraHeight({
         cameraHeightMeters: getCameraHeightMeters(),
-        performanceModeEnabled,
+        lowModeEnabled,
       });
 
       const normalizedApiBaseUrl = apiBaseUrl.trim().replace(/\/+$/, '');
       const viewKey = `${normalizedApiBaseUrl}:${timeKey}:${density}:${bbox.west},${bbox.south},${bbox.east},${bbox.north}`;
-      const styleKey = `${windLayerConfig.opacity}:${windVisible}:${performanceModeEnabled}`;
+      const styleKey = `${windLayerConfig.opacity}:${windVisible}:${lowModeEnabled}`;
 
       if (windViewKeyRef.current !== viewKey) {
         cancelInFlight();
@@ -2213,7 +2215,7 @@ export function CesiumViewer() {
             enabled: true,
             opacity: windLayerConfig.opacity,
             vectors: windVectorsRef.current,
-            performanceModeEnabled,
+            lowModeEnabled,
           });
         }
         return;
@@ -2238,7 +2240,7 @@ export function CesiumViewer() {
           enabled: true,
           opacity: windLayerConfig.opacity,
           vectors: cachedVectors,
-          performanceModeEnabled,
+          lowModeEnabled,
         });
         return;
       }
@@ -2268,7 +2270,7 @@ export function CesiumViewer() {
           enabled: true,
           opacity: windLayerConfig.opacity,
           vectors,
-          performanceModeEnabled,
+          lowModeEnabled,
         });
       } catch (error) {
         if (controller.signal.aborted) return;
@@ -2316,7 +2318,7 @@ export function CesiumViewer() {
       clearTimer();
       cancelInFlight();
     };
-  }, [apiBaseUrl, performanceModeEnabled, timeKey, viewer, windLayerConfig]);
+  }, [apiBaseUrl, lowModeEnabled, timeKey, viewer, windLayerConfig]);
 
   useEffect(() => {
     if (!viewer) return;
@@ -2345,7 +2347,7 @@ export function CesiumViewer() {
         enabled: false,
         intensity: 0,
         kind: 'none',
-        performanceModeEnabled,
+        lowModeEnabled,
       });
     };
 
@@ -2380,7 +2382,7 @@ export function CesiumViewer() {
           enabled: true,
           intensity: sample.precipitationIntensity,
           kind: sample.precipitationKind,
-          performanceModeEnabled,
+          lowModeEnabled,
         });
       } catch {
         if (controller.signal.aborted) return;
@@ -2424,7 +2426,7 @@ export function CesiumViewer() {
       clearTimer();
       cancelInFlight();
     };
-  }, [apiBaseUrl, performanceModeEnabled, precipitationLayerConfig, temperatureLayerConfig, viewer]);
+  }, [apiBaseUrl, lowModeEnabled, precipitationLayerConfig, temperatureLayerConfig, viewer]);
 
   useEffect(() => {
     if (!viewer) return;

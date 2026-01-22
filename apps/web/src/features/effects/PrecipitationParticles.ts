@@ -26,7 +26,7 @@ export type PrecipitationParticlesUpdate = {
   enabled: boolean;
   intensity: number;
   kind: PrecipitationKind;
-  performanceModeEnabled: boolean;
+  lowModeEnabled: boolean;
 };
 
 const DEFAULT_MAX_PARTICLES = 2500;
@@ -170,7 +170,7 @@ export class PrecipitationParticles {
     const intensity = clamp01(update.intensity);
     const requestedType = normalizeParticleType(update.kind);
 
-    const maxParticles = update.performanceModeEnabled
+    const maxParticles = update.lowModeEnabled
       ? this.options.maxParticlesPerformance
       : this.options.maxParticles;
 

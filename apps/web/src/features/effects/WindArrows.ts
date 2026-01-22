@@ -20,7 +20,7 @@ export type WindArrowsUpdate = {
   enabled: boolean;
   opacity: number;
   vectors: WindVector[];
-  performanceModeEnabled: boolean;
+  lowModeEnabled: boolean;
 };
 
 const DEFAULT_MAX_ARROWS = 600;
@@ -75,10 +75,10 @@ function clampLatitudeDegrees(lat: number): number {
 
 export function windArrowDensityForCameraHeight(options: {
   cameraHeightMeters: number | null;
-  performanceModeEnabled: boolean;
+  lowModeEnabled: boolean;
 }): number {
   const height = options.cameraHeightMeters ?? Number.NaN;
-  if (!Number.isFinite(height)) return options.performanceModeEnabled ? 6 : 12;
+  if (!Number.isFinite(height)) return options.lowModeEnabled ? 6 : 12;
 
   let density = 32;
   if (height > 20_000_000) density = 4;
@@ -90,7 +90,7 @@ export function windArrowDensityForCameraHeight(options: {
   else if (height > 200_000) density = 24;
   else if (height > 100_000) density = 28;
 
-  if (options.performanceModeEnabled) {
+  if (options.lowModeEnabled) {
     density = Math.max(1, Math.floor(density / 2));
   }
 
@@ -145,7 +145,7 @@ export class WindArrows {
     enabled: false,
     opacity: 1,
     vectors: [],
-    performanceModeEnabled: false,
+    lowModeEnabled: false,
   };
 
   constructor(viewer: Viewer, options: WindArrowsOptions = {}) {
@@ -165,7 +165,7 @@ export class WindArrows {
   update(update: WindArrowsUpdate): void {
     this.current = normalizeWindArrowsUpdate(update);
 
-    const maxArrows = this.current.performanceModeEnabled
+    const maxArrows = this.current.lowModeEnabled
       ? this.options.maxArrowsPerformance
       : this.options.maxArrows;
 

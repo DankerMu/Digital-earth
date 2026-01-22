@@ -101,7 +101,7 @@ describe('PrecipitationParticles', () => {
       enabled: true,
       intensity: 1,
       kind: 'rain',
-      performanceModeEnabled: false,
+      lowModeEnabled: false,
     });
 
     expect(vi.mocked(ParticleSystem)).toHaveBeenCalledTimes(1);
@@ -129,7 +129,7 @@ describe('PrecipitationParticles', () => {
       enabled: true,
       intensity: 1,
       kind: 'rain',
-      performanceModeEnabled: false,
+      lowModeEnabled: false,
     });
 
     const instance = vi.mocked(ParticleSystem).mock.results[0]?.value as {
@@ -144,7 +144,7 @@ describe('PrecipitationParticles', () => {
       enabled: true,
       intensity: 1,
       kind: 'rain',
-      performanceModeEnabled: true,
+      lowModeEnabled: true,
     });
 
     const emissionRateLow = instance.emissionRate ?? 0;
@@ -168,7 +168,7 @@ describe('PrecipitationParticles', () => {
       enabled: true,
       intensity: 1,
       kind: 'rain',
-      performanceModeEnabled: false,
+      lowModeEnabled: false,
     });
 
     expect(vi.mocked(ParticleSystem)).not.toHaveBeenCalled();
@@ -186,7 +186,7 @@ describe('PrecipitationParticles', () => {
       enabled: true,
       intensity: 1,
       kind: 'rain',
-      performanceModeEnabled: false,
+      lowModeEnabled: false,
     });
 
     const instance = vi.mocked(ParticleSystem).mock.results[0]?.value as {
