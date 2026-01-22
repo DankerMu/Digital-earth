@@ -16,10 +16,25 @@ async function importFreshEditor() {
 
 async function addValidHazard(user: ReturnType<typeof userEvent.setup>) {
   await user.click(screen.getByRole('button', { name: '新增区域' }));
-  // Add 3 vertices via the coordinate editor (defaults to 0/0 values).
+  // Add 3 vertices via the coordinate editor and make them non-degenerate.
   await user.click(screen.getByRole('button', { name: '添加顶点' }));
   await user.click(screen.getByRole('button', { name: '添加顶点' }));
   await user.click(screen.getByRole('button', { name: '添加顶点' }));
+
+  await user.clear(screen.getByLabelText('顶点 1 经度'));
+  await user.type(screen.getByLabelText('顶点 1 经度'), '0');
+  await user.clear(screen.getByLabelText('顶点 1 纬度'));
+  await user.type(screen.getByLabelText('顶点 1 纬度'), '0');
+
+  await user.clear(screen.getByLabelText('顶点 2 经度'));
+  await user.type(screen.getByLabelText('顶点 2 经度'), '0.002');
+  await user.clear(screen.getByLabelText('顶点 2 纬度'));
+  await user.type(screen.getByLabelText('顶点 2 纬度'), '0');
+
+  await user.clear(screen.getByLabelText('顶点 3 经度'));
+  await user.type(screen.getByLabelText('顶点 3 经度'), '0');
+  await user.clear(screen.getByLabelText('顶点 3 纬度'));
+  await user.type(screen.getByLabelText('顶点 3 纬度'), '0.002');
 }
 
 describe('ProductEditor', () => {
@@ -56,6 +71,20 @@ describe('ProductEditor', () => {
     expect(onSubmit).not.toHaveBeenCalled();
     expect(screen.getAllByText('此项为必填')).toHaveLength(6);
     expect(screen.getByText('请至少添加一个风险区域')).toBeInTheDocument();
+  });
+
+  it('adds a vertex at the map center by default', async () => {
+    localStorage.removeItem(NEW_STORAGE_KEY);
+    const { ProductEditor } = await importFreshEditor();
+
+    render(<ProductEditor open onClose={() => {}} onSubmit={() => {}} />);
+
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: '新增区域' }));
+    await user.click(screen.getByRole('button', { name: '添加顶点' }));
+
+    expect(screen.getByLabelText('顶点 1 经度')).toHaveValue(116.391);
+    expect(screen.getByLabelText('顶点 1 纬度')).toHaveValue(39.9075);
   });
 
   it('validates time ordering rules', async () => {
@@ -110,8 +139,15 @@ describe('ProductEditor', () => {
     await user.click(screen.getByRole('button', { name: '添加顶点' }));
     await user.click(screen.getByRole('button', { name: '添加顶点' }));
 
+    await user.clear(screen.getByLabelText('顶点 1 经度'));
+    await user.type(screen.getByLabelText('顶点 1 经度'), '0');
+    await user.clear(screen.getByLabelText('顶点 1 纬度'));
+    await user.type(screen.getByLabelText('顶点 1 纬度'), '0');
+
     await user.clear(screen.getByLabelText('顶点 2 经度'));
     await user.type(screen.getByLabelText('顶点 2 经度'), '1');
+    await user.clear(screen.getByLabelText('顶点 2 纬度'));
+    await user.type(screen.getByLabelText('顶点 2 纬度'), '0');
     await user.clear(screen.getByLabelText('顶点 3 经度'));
     await user.type(screen.getByLabelText('顶点 3 经度'), '1');
     await user.clear(screen.getByLabelText('顶点 3 纬度'));

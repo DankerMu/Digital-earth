@@ -728,7 +728,9 @@ export function ProductEditor({
                             type="button"
                             className="rounded-lg border border-slate-400/20 bg-slate-700/30 px-2 py-1 text-xs text-slate-200 hover:bg-slate-700/50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-400"
                             onClick={() => {
-                              const nextVertices = [...activeHazard.vertices, { lon: 0, lat: 0 }];
+                              const lastVertex = activeHazard.vertices[activeHazard.vertices.length - 1];
+                              const nextVertex = lastVertex ? { ...lastVertex } : { lon: 116.391, lat: 39.9075 };
+                              const nextVertices = [...activeHazard.vertices, nextVertex];
                               updateValues({
                                 hazards: values.hazards.map((hazard) =>
                                   hazard.id === activeHazard.id

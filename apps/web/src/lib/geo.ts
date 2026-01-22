@@ -7,6 +7,22 @@ export type BBox = {
   max_y: number;
 };
 
+function isSameLonLat(a: LonLat, b: LonLat): boolean {
+  return Object.is(a.lon, b.lon) && Object.is(a.lat, b.lat);
+}
+
+function stripClosingVertex(vertices: LonLat[]): LonLat[] {
+  if (vertices.length < 2) return vertices;
+  const first = vertices[0]!;
+  const last = vertices[vertices.length - 1]!;
+  if (isSameLonLat(first, last)) return vertices.slice(0, -1);
+  return vertices;
+}
+
+function lonLatKey(vertex: LonLat): string {
+  return `${vertex.lon},${vertex.lat}`;
+}
+
 function toRadians(degrees: number): number {
   return (degrees * Math.PI) / 180;
 }
@@ -51,17 +67,23 @@ export function geoJsonPolygonFromLonLat(
 /**
  * Returns the approximate spherical polygon area in square kilometers.
  * Uses the same algorithm as mapbox/geojson-area (spherical excess approximation).
+ *
+ * Limitations:
+ * - Does not normalize coordinates for antimeridian crossings (±180° longitude wrap).
+ * - Not designed for polygons near the poles or spanning very large extents.
+ * Prefer pre-normalizing/splitting geometries that cross the antimeridian.
  */
 export function polygonAreaKm2(vertices: LonLat[]): number | null {
-  if (vertices.length < 3) return null;
+  const normalized = stripClosingVertex(vertices);
+  if (normalized.length < 3) return null;
 
   // WGS84 semi-major axis; aligns well with Cesium's default ellipsoid.
   const earthRadiusMeters = 6_378_137;
 
   let sum = 0;
-  for (let index = 0; index < vertices.length; index += 1) {
-    const current = vertices[index]!;
-    const next = vertices[(index + 1) % vertices.length]!;
+  for (let index = 0; index < normalized.length; index += 1) {
+    const current = normalized[index]!;
+    const next = normalized[(index + 1) % normalized.length]!;
 
     const lon1 = toRadians(current.lon);
     const lon2 = toRadians(next.lon);
@@ -73,6 +95,52 @@ export function polygonAreaKm2(vertices: LonLat[]): number | null {
 
   const areaMeters2 = (sum * earthRadiusMeters * earthRadiusMeters) / 2;
   return Math.abs(areaMeters2) / 1_000_000;
+}
+
+export function polygonHasDuplicateVertices(vertices: LonLat[]): boolean {
+  const normalized = stripClosingVertex(vertices);
+  const seen = new Set<string>();
+  for (const vertex of normalized) {
+    const key = lonLatKey(vertex);
+    if (seen.has(key)) return true;
+    seen.add(key);
+  }
+  return false;
+}
+
+export function polygonHasDistinctNonCollinearVertices(vertices: LonLat[], epsilon = 1e-12): boolean {
+  const normalized = stripClosingVertex(vertices);
+  const unique: LonLat[] = [];
+  const seen = new Set<string>();
+  for (const vertex of normalized) {
+    const key = lonLatKey(vertex);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    unique.push(vertex);
+  }
+
+  if (unique.length < 3) return false;
+
+  const a = unique[0]!;
+  const b = unique[1]!;
+  const dx1 = b.lon - a.lon;
+  const dy1 = b.lat - a.lat;
+
+  for (let index = 2; index < unique.length; index += 1) {
+    const c = unique[index]!;
+    const dx2 = c.lon - a.lon;
+    const dy2 = c.lat - a.lat;
+    const cross = dx1 * dy2 - dy1 * dx2;
+    if (Math.abs(cross) > epsilon) return true;
+  }
+
+  return false;
+}
+
+export function polygonMeetsMinimumAreaKm2(vertices: LonLat[], minAreaKm2: number): boolean {
+  const area = polygonAreaKm2(vertices);
+  if (area == null) return false;
+  return area >= minAreaKm2;
 }
 
 type Point2 = { x: number; y: number };
@@ -114,7 +182,7 @@ function isAdjacentEdge(a: number, b: number, vertexCount: number): boolean {
 export function polygonHasSelfIntersections(vertices: LonLat[]): boolean {
   if (vertices.length < 4) return false;
 
-  const points = vertices.map((vertex) => ({ x: vertex.lon, y: vertex.lat }));
+  const points = stripClosingVertex(vertices).map((vertex) => ({ x: vertex.lon, y: vertex.lat }));
 
   for (let edgeA = 0; edgeA < points.length; edgeA += 1) {
     const a1 = points[edgeA]!;
@@ -132,4 +200,3 @@ export function polygonHasSelfIntersections(vertices: LonLat[]): boolean {
 
   return false;
 }
-

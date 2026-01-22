@@ -1,10 +1,17 @@
 import {
+  Cartesian2,
   Cartesian3,
   Cartographic,
   Color,
+  ColorMaterialProperty,
+  ConstantPositionProperty,
+  ConstantProperty,
   EllipsoidTerrainProvider,
+  Entity,
+  ImageryLayer,
   Math as CesiumMath,
   PolygonHierarchy,
+  PropertyBag,
   ScreenSpaceEventType,
   UrlTemplateImageryProvider,
   Viewer,
@@ -16,31 +23,64 @@ import type { LonLat } from '../../lib/geo';
 
 type Hazard = { id: string; vertices: LonLat[] };
 
-type Movement = { position?: unknown; endPosition?: unknown };
+type Movement = { position?: Cartesian2; endPosition?: Cartesian2 };
 
-type PickResult = { id?: unknown };
-
-type HazardPolygonEntity = { __hazardPolygon?: { hazardId: string } };
-type HazardVertexEntity = { __hazardVertex?: { hazardId: string; index: number } };
-
-function pickEntity(picked: unknown): (HazardPolygonEntity & HazardVertexEntity) | null {
-  if (!picked || typeof picked !== 'object') return null;
-  const id = (picked as PickResult).id;
-  if (!id || typeof id !== 'object') return null;
-  return id as HazardPolygonEntity & HazardVertexEntity;
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object';
 }
 
-function pickLonLat(viewer: Viewer, position: unknown): LonLat | null {
-  const cartesian =
-    (viewer.scene as unknown as { pickPosition?: (pos: unknown) => unknown }).pickPosition?.(position) ??
-    (viewer.camera as unknown as { pickEllipsoid?: (pos: unknown, ellipsoid?: unknown) => unknown }).pickEllipsoid?.(
-      position,
-      (viewer.scene as unknown as { globe?: { ellipsoid?: unknown } }).globe?.ellipsoid,
-    );
+type HazardEntityMetadata =
+  | { kind: 'hazardPolygon'; hazardId: string }
+  | { kind: 'hazardVertex'; hazardId: string; index: number };
 
+function createEntityProperties(metadata: HazardEntityMetadata): PropertyBag {
+  return new PropertyBag(metadata);
+}
+
+function readHazardEntityMetadata(entity: Entity): HazardEntityMetadata | null {
+  const raw = entity.properties?.getValue?.();
+  if (!isRecord(raw)) return null;
+  const kind = raw.kind;
+  const hazardId = raw.hazardId;
+
+  if (kind === 'hazardPolygon') {
+    if (typeof hazardId !== 'string' || hazardId.trim().length === 0) return null;
+    return { kind, hazardId };
+  }
+
+  if (kind === 'hazardVertex') {
+    if (typeof hazardId !== 'string' || hazardId.trim().length === 0) return null;
+    const index = raw.index;
+    if (typeof index !== 'number' || !Number.isInteger(index) || index < 0) return null;
+    return { kind, hazardId, index };
+  }
+
+  return null;
+}
+
+function getPickedEntity(picked: unknown): Entity | null {
+  if (!isRecord(picked)) return null;
+  const id = picked.id;
+  if (!isRecord(id)) return null;
+  return id as unknown as Entity;
+}
+
+function pickLonLat(viewer: Viewer, position: Cartesian2): LonLat | null {
+  let cartesian: Cartesian3 | undefined;
+  if (viewer.scene.pickPositionSupported) {
+    try {
+      cartesian = viewer.scene.pickPosition(position);
+    } catch {
+      cartesian = undefined;
+    }
+  }
+
+  if (!cartesian) {
+    cartesian = viewer.camera.pickEllipsoid(position, viewer.scene.globe.ellipsoid);
+  }
   if (!cartesian) return null;
 
-  const cartographic = Cartographic.fromCartesian(cartesian as never) as Cartographic;
+  const cartographic = Cartographic.fromCartesian(cartesian);
   const lon = CesiumMath.toDegrees(cartographic.longitude);
   const lat = CesiumMath.toDegrees(cartographic.latitude);
   if (!Number.isFinite(lon) || !Number.isFinite(lat)) return null;
@@ -48,21 +88,32 @@ function pickLonLat(viewer: Viewer, position: unknown): LonLat | null {
 }
 
 function setCameraInteractionEnabled(viewer: Viewer, enabled: boolean) {
-  const controller = viewer.scene.screenSpaceCameraController as unknown as {
-    enableRotate?: boolean;
-    enableTranslate?: boolean;
-  };
-  if (typeof controller.enableRotate === 'boolean') controller.enableRotate = enabled;
-  if (typeof controller.enableTranslate === 'boolean') controller.enableTranslate = enabled;
+  const controller = viewer.scene.screenSpaceCameraController;
+  controller.enableRotate = enabled;
+  controller.enableTranslate = enabled;
 }
 
-type EntitiesByHazardId = Map<
-  string,
-  {
-    polygon: unknown;
-    vertices: unknown[];
+type EntitiesByHazardId = Map<string, { polygon: Entity; vertices: Entity[] }>;
+
+function setConstantPropertyValue<T>(existing: unknown, value: T): ConstantProperty {
+  if (existing instanceof ConstantProperty) {
+    existing.setValue(value);
+    return existing;
   }
->;
+  return new ConstantProperty(value);
+}
+
+function setConstantPositionValue(existing: unknown, value: Cartesian3): ConstantPositionProperty {
+  if (existing instanceof ConstantPositionProperty) {
+    existing.setValue(value);
+    return existing;
+  }
+  return new ConstantPositionProperty(value);
+}
+
+function requestRender(viewer: Viewer) {
+  viewer.scene.requestRender();
+}
 
 function syncHazardEntities(options: {
   viewer: Viewer;
@@ -80,10 +131,8 @@ function syncHazardEntities(options: {
   const nextIds = new Set(hazards.map((hazard) => hazard.id));
   for (const [hazardId, entry] of entitiesByHazardId.entries()) {
     if (nextIds.has(hazardId)) continue;
-    (viewer.entities as unknown as { remove?: (entity: unknown) => void }).remove?.(entry.polygon);
-    for (const entity of entry.vertices) {
-      (viewer.entities as unknown as { remove?: (entity: unknown) => void }).remove?.(entity);
-    }
+    viewer.entities.remove(entry.polygon);
+    for (const entity of entry.vertices) viewer.entities.remove(entity);
     entitiesByHazardId.delete(hazardId);
   }
 
@@ -99,42 +148,35 @@ function syncHazardEntities(options: {
       const polygon = viewer.entities.add({
         id: `hazard-polygon:${hazard.id}`,
         polygon: {
-          hierarchy: new PolygonHierarchy([]),
-          material: style.fill,
-          outline: true,
-          outlineColor: style.outline,
+          hierarchy: new ConstantProperty(new PolygonHierarchy([])),
+          material: new ColorMaterialProperty(style.fill),
+          outline: new ConstantProperty(true),
+          outlineColor: new ConstantProperty(style.outline),
+          show: new ConstantProperty(false),
         },
+        properties: createEntityProperties({ kind: 'hazardPolygon', hazardId: hazard.id }),
       });
-      (polygon as unknown as HazardPolygonEntity).__hazardPolygon = { hazardId: hazard.id };
       entry = { polygon, vertices: [] };
       entitiesByHazardId.set(hazard.id, entry);
     }
 
-    const polygonGraphics = (entry.polygon as { polygon?: unknown }).polygon as
-      | {
-          hierarchy?: unknown;
-          material?: unknown;
-          outline?: unknown;
-          outlineColor?: unknown;
-          show?: unknown;
-        }
-      | undefined;
+    const polygonGraphics = entry.polygon.polygon;
 
     const positions = hazard.vertices.map((vertex) => Cartesian3.fromDegrees(vertex.lon, vertex.lat));
     if (polygonGraphics) {
-      polygonGraphics.hierarchy = new PolygonHierarchy(positions);
-      polygonGraphics.material = style.fill;
-      polygonGraphics.outline = true;
-      polygonGraphics.outlineColor = style.outline;
-      polygonGraphics.show = hazard.vertices.length >= 3;
+      polygonGraphics.hierarchy = setConstantPropertyValue(polygonGraphics.hierarchy, new PolygonHierarchy(positions));
+      polygonGraphics.material = new ColorMaterialProperty(style.fill);
+      polygonGraphics.outline = setConstantPropertyValue(polygonGraphics.outline, true);
+      polygonGraphics.outlineColor = setConstantPropertyValue(polygonGraphics.outlineColor, style.outline);
+      polygonGraphics.show = setConstantPropertyValue(polygonGraphics.show, hazard.vertices.length >= 3);
     }
 
     while (entry.vertices.length < hazard.vertices.length) {
       const index = entry.vertices.length;
-      const vertex = hazard.vertices[index] ?? { lon: 0, lat: 0 };
+      const vertex = hazard.vertices[index]!;
       const entity = viewer.entities.add({
         id: `hazard-vertex:${hazard.id}:${index}`,
-        position: Cartesian3.fromDegrees(vertex.lon, vertex.lat),
+        position: new ConstantPositionProperty(Cartesian3.fromDegrees(vertex.lon, vertex.lat)),
         point: {
           pixelSize: 10,
           color: Color.WHITE.withAlpha(0.95),
@@ -142,31 +184,25 @@ function syncHazardEntities(options: {
           outlineWidth: 2,
         },
         show: isActive,
+        properties: createEntityProperties({ kind: 'hazardVertex', hazardId: hazard.id, index }),
       });
-      (entity as unknown as HazardVertexEntity).__hazardVertex = { hazardId: hazard.id, index };
       entry.vertices.push(entity);
     }
 
     while (entry.vertices.length > hazard.vertices.length) {
       const removed = entry.vertices.pop();
-      if (removed) (viewer.entities as unknown as { remove?: (entity: unknown) => void }).remove?.(removed);
+      if (removed) viewer.entities.remove(removed);
     }
 
     for (let index = 0; index < entry.vertices.length; index += 1) {
-      const vertexEntity = entry.vertices[index] as {
-        position?: unknown;
-        show?: unknown;
-        __hazardVertex?: { hazardId: string; index: number };
-      };
+      const vertexEntity = entry.vertices[index]!;
       const vertex = hazard.vertices[index]!;
-      vertexEntity.position = Cartesian3.fromDegrees(vertex.lon, vertex.lat);
+      vertexEntity.position = setConstantPositionValue(
+        vertexEntity.position,
+        Cartesian3.fromDegrees(vertex.lon, vertex.lat),
+      );
       vertexEntity.show = isActive;
-      if (vertexEntity.__hazardVertex) {
-        vertexEntity.__hazardVertex.hazardId = hazard.id;
-        vertexEntity.__hazardVertex.index = index;
-      } else {
-        vertexEntity.__hazardVertex = { hazardId: hazard.id, index };
-      }
+      vertexEntity.properties = createEntityProperties({ kind: 'hazardVertex', hazardId: hazard.id, index });
     }
   }
 }
@@ -227,6 +263,18 @@ export function HazardPolygonMap({
 
     const entitiesByHazardId = entitiesByHazardIdRef.current;
 
+    let baseLayer: ImageryLayer | false = false;
+    try {
+      baseLayer = new ImageryLayer(
+        new UrlTemplateImageryProvider({
+          url: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+          tilingScheme: new WebMercatorTilingScheme(),
+        }),
+      );
+    } catch {
+      // ignore imagery failures
+    }
+
     const viewer = new Viewer(container, {
       animation: false,
       baseLayerPicker: false,
@@ -238,42 +286,37 @@ export function HazardPolygonMap({
       sceneModePicker: false,
       selectionIndicator: false,
       timeline: false,
+      baseLayer,
       terrainProvider: new EllipsoidTerrainProvider(),
+      requestRenderMode: true,
+      maximumRenderTimeChange: 0,
     });
     viewerRef.current = viewer;
-
-    try {
-      viewer.imageryLayers.addImageryProvider(
-        new UrlTemplateImageryProvider({
-          url: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-          tilingScheme: new WebMercatorTilingScheme(),
-        }),
-      );
-    } catch {
-      // ignore imagery failures
-    }
 
     viewer.camera.setView({
       destination: Cartesian3.fromDegrees(116.391, 39.9075, 20_000_000),
     });
+    requestRender(viewer);
 
-    const handler = viewer.screenSpaceEventHandler as unknown as {
-      setInputAction?: (cb: (movement: Movement) => void, type: unknown) => void;
-      removeInputAction?: (type: unknown) => void;
-    };
+    const preventContextMenu = (event: MouseEvent) => event.preventDefault();
+    viewer.canvas.addEventListener('contextmenu', preventContextMenu);
 
-    const pickHazardVertex = (position: unknown): { hazardId: string; index: number } | null => {
-      const pickedObject = (viewer.scene as unknown as { pick?: (pos: unknown) => unknown }).pick?.(position);
-      const entity = pickEntity(pickedObject);
-      const metadata = entity?.__hazardVertex;
-      if (!metadata) return null;
+    const pickHazardVertex = (position: Cartesian2): { hazardId: string; index: number } | null => {
+      const pickedObject = viewer.scene.pick(position) as unknown;
+      const entity = getPickedEntity(pickedObject);
+      if (!entity) return null;
+      const metadata = readHazardEntityMetadata(entity);
+      if (!metadata || metadata.kind !== 'hazardVertex') return null;
       return { hazardId: metadata.hazardId, index: metadata.index };
     };
 
-    const pickHazardPolygon = (position: unknown): string | null => {
-      const pickedObject = (viewer.scene as unknown as { pick?: (pos: unknown) => unknown }).pick?.(position);
-      const entity = pickEntity(pickedObject);
-      return entity?.__hazardPolygon?.hazardId ?? entity?.__hazardVertex?.hazardId ?? null;
+    const pickHazardPolygon = (position: Cartesian2): string | null => {
+      const pickedObject = viewer.scene.pick(position) as unknown;
+      const entity = getPickedEntity(pickedObject);
+      if (!entity) return null;
+      const metadata = readHazardEntityMetadata(entity);
+      if (!metadata) return null;
+      return metadata.hazardId;
     };
 
     const onLeftDown = (movement: Movement) => {
@@ -356,24 +399,28 @@ export function HazardPolygonMap({
       callbacksRef.current.onFinishDrawing();
     };
 
-    handler.setInputAction?.(onLeftDown, ScreenSpaceEventType.LEFT_DOWN);
-    handler.setInputAction?.(onLeftUp, ScreenSpaceEventType.LEFT_UP);
-    handler.setInputAction?.(onMouseMove, ScreenSpaceEventType.MOUSE_MOVE);
-    handler.setInputAction?.(onLeftClick, ScreenSpaceEventType.LEFT_CLICK);
-    handler.setInputAction?.(onDoubleClick, ScreenSpaceEventType.LEFT_DOUBLE_CLICK);
-    handler.setInputAction?.(onRightClick, ScreenSpaceEventType.RIGHT_CLICK);
+    viewer.screenSpaceEventHandler.setInputAction(onLeftDown, ScreenSpaceEventType.LEFT_DOWN);
+    viewer.screenSpaceEventHandler.setInputAction(onLeftUp, ScreenSpaceEventType.LEFT_UP);
+    viewer.screenSpaceEventHandler.setInputAction(onMouseMove, ScreenSpaceEventType.MOUSE_MOVE);
+    viewer.screenSpaceEventHandler.setInputAction(onLeftClick, ScreenSpaceEventType.LEFT_CLICK);
+    viewer.screenSpaceEventHandler.setInputAction(onDoubleClick, ScreenSpaceEventType.LEFT_DOUBLE_CLICK);
+    viewer.screenSpaceEventHandler.setInputAction(onRightClick, ScreenSpaceEventType.RIGHT_CLICK);
 
-    const observer = new ResizeObserver(() => viewer.resize());
+    const observer = new ResizeObserver(() => {
+      viewer.resize();
+      requestRender(viewer);
+    });
     observer.observe(container);
 
     return () => {
       observer.disconnect();
-      handler.removeInputAction?.(ScreenSpaceEventType.LEFT_DOWN);
-      handler.removeInputAction?.(ScreenSpaceEventType.LEFT_UP);
-      handler.removeInputAction?.(ScreenSpaceEventType.MOUSE_MOVE);
-      handler.removeInputAction?.(ScreenSpaceEventType.LEFT_CLICK);
-      handler.removeInputAction?.(ScreenSpaceEventType.LEFT_DOUBLE_CLICK);
-      handler.removeInputAction?.(ScreenSpaceEventType.RIGHT_CLICK);
+      viewer.canvas.removeEventListener('contextmenu', preventContextMenu);
+      viewer.screenSpaceEventHandler.removeInputAction(ScreenSpaceEventType.LEFT_DOWN);
+      viewer.screenSpaceEventHandler.removeInputAction(ScreenSpaceEventType.LEFT_UP);
+      viewer.screenSpaceEventHandler.removeInputAction(ScreenSpaceEventType.MOUSE_MOVE);
+      viewer.screenSpaceEventHandler.removeInputAction(ScreenSpaceEventType.LEFT_CLICK);
+      viewer.screenSpaceEventHandler.removeInputAction(ScreenSpaceEventType.LEFT_DOUBLE_CLICK);
+      viewer.screenSpaceEventHandler.removeInputAction(ScreenSpaceEventType.RIGHT_CLICK);
       viewerRef.current = null;
       entitiesByHazardId.clear();
       viewer.destroy();
@@ -389,6 +436,7 @@ export function HazardPolygonMap({
       activeHazardId,
       entitiesByHazardId: entitiesByHazardIdRef.current,
     });
+    requestRender(viewer);
   }, [activeHazardId, hazards]);
 
   return (

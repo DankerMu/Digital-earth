@@ -5,7 +5,10 @@ import {
   geoJsonPolygonFromLonLat,
   geoJsonRingFromLonLat,
   polygonAreaKm2,
+  polygonHasDistinctNonCollinearVertices,
+  polygonHasDuplicateVertices,
   polygonHasSelfIntersections,
+  polygonMeetsMinimumAreaKm2,
 } from './geo';
 
 describe('geo', () => {
@@ -110,6 +113,79 @@ describe('geo', () => {
     expect(area!).toBeLessThan(14_000);
   });
 
+  it('polygonHasDuplicateVertices ignores closed-ring duplication but detects repeated vertices', () => {
+    expect(
+      polygonHasDuplicateVertices([
+        { lon: 0, lat: 0 },
+        { lon: 1, lat: 0 },
+        { lon: 1, lat: 1 },
+      ]),
+    ).toBe(false);
+
+    // Closed ring (last equals first) should not be treated as a duplicate vertex for validation.
+    expect(
+      polygonHasDuplicateVertices([
+        { lon: 0, lat: 0 },
+        { lon: 1, lat: 0 },
+        { lon: 1, lat: 1 },
+        { lon: 0, lat: 0 },
+      ]),
+    ).toBe(false);
+
+    expect(
+      polygonHasDuplicateVertices([
+        { lon: 0, lat: 0 },
+        { lon: 1, lat: 0 },
+        { lon: 1, lat: 0 },
+      ]),
+    ).toBe(true);
+  });
+
+  it('polygonHasDistinctNonCollinearVertices detects collinear input', () => {
+    expect(
+      polygonHasDistinctNonCollinearVertices([
+        { lon: 0, lat: 0 },
+        { lon: 1, lat: 0 },
+        { lon: 2, lat: 0 },
+      ]),
+    ).toBe(false);
+
+    expect(
+      polygonHasDistinctNonCollinearVertices([
+        { lon: 0, lat: 0 },
+        { lon: 1, lat: 0 },
+        { lon: 1, lat: 1 },
+      ]),
+    ).toBe(true);
+  });
+
+  it('polygonMeetsMinimumAreaKm2 enforces a lower bound', () => {
+    expect(
+      polygonMeetsMinimumAreaKm2(
+        [
+          { lon: 0, lat: 0 },
+          { lon: 1, lat: 0 },
+          { lon: 1, lat: 1 },
+          { lon: 0, lat: 1 },
+        ],
+        0.01,
+      ),
+    ).toBe(true);
+
+    // A ~0.0001-degree square is well below 0.01 km^2.
+    expect(
+      polygonMeetsMinimumAreaKm2(
+        [
+          { lon: 0, lat: 0 },
+          { lon: 0.0001, lat: 0 },
+          { lon: 0.0001, lat: 0.0001 },
+          { lon: 0, lat: 0.0001 },
+        ],
+        0.01,
+      ),
+    ).toBe(false);
+  });
+
   it('polygonHasSelfIntersections detects self-crossing polygons', () => {
     expect(
       polygonHasSelfIntersections([
@@ -131,4 +207,3 @@ describe('geo', () => {
     ).toBe(true);
   });
 });
-

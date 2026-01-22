@@ -69,6 +69,35 @@ describe('productEditorValidation', () => {
     expect(normalized.hazards[0]!.area_km2).toBeGreaterThan(0);
   });
 
+  it('drops degenerate hazard polygons during normalization', () => {
+    const normalized = normalizeProductEditorValues({
+      title: 'Title',
+      type: 'snow',
+      severity: '',
+      text: 'Body',
+      issued_at: '2026-01-01T00:00',
+      valid_from: '2026-01-01T00:00',
+      valid_to: '2026-01-02T00:00',
+      hazards: [
+        // Duplicate vertices.
+        { id: 'dup', vertices: [{ lon: 0, lat: 0 }, { lon: 0, lat: 0 }, { lon: 1, lat: 1 }] },
+        // Collinear vertices.
+        { id: 'line', vertices: [{ lon: 0, lat: 0 }, { lon: 1, lat: 0 }, { lon: 2, lat: 0 }] },
+        // Too small.
+        {
+          id: 'tiny',
+          vertices: [
+            { lon: 0, lat: 0 },
+            { lon: 0.0001, lat: 0 },
+            { lon: 0.0001, lat: 0.0001 },
+          ],
+        },
+      ],
+    });
+
+    expect(normalized.hazards).toEqual([]);
+  });
+
   it('validates severity values', () => {
     const errors = validateProductEditor({
       title: 'Title',
@@ -142,5 +171,71 @@ describe('productEditorValidation', () => {
         ],
       }).hazards,
     ).toContain('多边形存在自交');
+
+    expect(
+      validateProductEditor({
+        title: 'Title',
+        type: 'snow',
+        severity: '',
+        text: 'Body',
+        issued_at: '2026-01-01T00:00',
+        valid_from: '2026-01-01T00:00',
+        valid_to: '2026-01-02T00:00',
+        hazards: [
+          {
+            id: 'h1',
+            vertices: [
+              { lon: 0, lat: 0 },
+              { lon: 0, lat: 0 },
+              { lon: 1, lat: 1 },
+            ],
+          },
+        ],
+      }).hazards,
+    ).toContain('顶点存在重复');
+
+    expect(
+      validateProductEditor({
+        title: 'Title',
+        type: 'snow',
+        severity: '',
+        text: 'Body',
+        issued_at: '2026-01-01T00:00',
+        valid_from: '2026-01-01T00:00',
+        valid_to: '2026-01-02T00:00',
+        hazards: [
+          {
+            id: 'h1',
+            vertices: [
+              { lon: 0, lat: 0 },
+              { lon: 1, lat: 0 },
+              { lon: 2, lat: 0 },
+            ],
+          },
+        ],
+      }).hazards,
+    ).toContain('不共线');
+
+    expect(
+      validateProductEditor({
+        title: 'Title',
+        type: 'snow',
+        severity: '',
+        text: 'Body',
+        issued_at: '2026-01-01T00:00',
+        valid_from: '2026-01-01T00:00',
+        valid_to: '2026-01-02T00:00',
+        hazards: [
+          {
+            id: 'h1',
+            vertices: [
+              { lon: 0, lat: 0 },
+              { lon: 0.0001, lat: 0 },
+              { lon: 0.0001, lat: 0.0001 },
+            ],
+          },
+        ],
+      }).hazards,
+    ).toContain('0.01');
   });
 });

@@ -5,9 +5,16 @@ type ScreenSpaceEventTypeMap = Record<string, string>;
 type Action = (movement: unknown) => void;
 
 type ViewerTestInstance = {
+  __options: unknown;
+  canvas: {
+    addEventListener: ReturnType<typeof vi.fn>;
+    removeEventListener: ReturnType<typeof vi.fn>;
+  };
   scene: {
+    pickPositionSupported: boolean;
     pickPosition: ReturnType<typeof vi.fn>;
     pick: ReturnType<typeof vi.fn>;
+    requestRender: ReturnType<typeof vi.fn>;
   };
   entities: { _entities: unknown[] };
   __getAction: (type: string) => Action;
@@ -29,6 +36,16 @@ vi.mock('cesium', () => {
   const viewerInstances: unknown[] = [];
   let imageryThrows = false;
 
+  class Cartesian2 {
+    x: number;
+    y: number;
+
+    constructor(x: number, y: number) {
+      this.x = x;
+      this.y = y;
+    }
+  }
+
   class Color {
     private name: string;
 
@@ -47,6 +64,52 @@ vi.mock('cesium', () => {
   }
 
   class EllipsoidTerrainProvider {}
+
+  class PropertyBag {
+    private readonly value: unknown;
+
+    constructor(value?: unknown) {
+      this.value = value ?? {};
+    }
+
+    getValue() {
+      return this.value;
+    }
+  }
+
+  class ConstantProperty {
+    private value: unknown;
+
+    constructor(value?: unknown) {
+      this.value = value;
+    }
+
+    setValue(value: unknown) {
+      this.value = value;
+    }
+
+    getValue() {
+      return this.value;
+    }
+  }
+
+  class ConstantPositionProperty extends ConstantProperty {}
+
+  class ColorMaterialProperty {
+    color: unknown;
+
+    constructor(color?: unknown) {
+      this.color = color;
+    }
+  }
+
+  class Entity {
+    id: string;
+
+    constructor(options?: { id?: string }) {
+      this.id = options?.id ?? '';
+    }
+  }
 
   class PolygonHierarchy {
     positions: unknown[];
@@ -86,6 +149,15 @@ vi.mock('cesium', () => {
     }
   }
 
+  class ImageryLayer {
+    provider: unknown;
+
+    constructor(provider: unknown) {
+      if (imageryThrows) throw new Error('imagery blocked');
+      this.provider = provider;
+    }
+  }
+
   class WebMercatorTilingScheme {
     constructor(...args: unknown[]) {
       void args;
@@ -93,11 +165,10 @@ vi.mock('cesium', () => {
   }
 
   class Viewer {
-    canvas = {};
-    imageryLayers = {
-      addImageryProvider: vi.fn(() => {
-        if (imageryThrows) throw new Error('imagery blocked');
-      }),
+    __options: unknown;
+    canvas = {
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
     };
     camera = {
       setView: vi.fn(),
@@ -114,8 +185,10 @@ vi.mock('cesium', () => {
       }),
     };
     scene = {
+      pickPositionSupported: true,
       pickPosition: vi.fn(() => null),
       pick: vi.fn(() => null),
+      requestRender: vi.fn(),
       globe: { ellipsoid: {} },
       screenSpaceCameraController: {
         enableRotate: true,
@@ -135,8 +208,9 @@ vi.mock('cesium', () => {
     resize = vi.fn();
     destroy = vi.fn();
 
-    constructor(...args: unknown[]) {
-      void args;
+    constructor(container: unknown, options?: unknown) {
+      void container;
+      this.__options = options ?? null;
       viewerInstances.push(this);
     }
 
@@ -148,12 +222,19 @@ vi.mock('cesium', () => {
   }
 
   return {
+    Cartesian2,
     Cartesian3,
     Cartographic,
     Color,
+    ColorMaterialProperty,
+    ConstantPositionProperty,
+    ConstantProperty,
     EllipsoidTerrainProvider,
+    Entity,
+    ImageryLayer,
     Math: CesiumMath,
     PolygonHierarchy,
+    PropertyBag,
     ScreenSpaceEventType,
     UrlTemplateImageryProvider,
     Viewer,
@@ -193,6 +274,11 @@ async function getViewerInstance(): Promise<ViewerTestInstance> {
   });
 }
 
+function getEntityProperties(entity: unknown): unknown {
+  const props = (entity as { properties?: { getValue?: () => unknown } }).properties;
+  return props?.getValue?.() ?? null;
+}
+
 describe('HazardPolygonMap', () => {
   it('adds vertices on click while drawing', async () => {
     const { __testing, ScreenSpaceEventType } = getCesiumModule();
@@ -212,6 +298,13 @@ describe('HazardPolygonMap', () => {
     );
 
     const viewer = await getViewerInstance();
+    expect(viewer.__options).toMatchObject({
+      requestRenderMode: true,
+    });
+    expect((viewer.__options as { baseLayer?: unknown }).baseLayer).not.toBe(false);
+    expect(viewer.scene.requestRender).toHaveBeenCalled();
+    expect(viewer.canvas.addEventListener).toHaveBeenCalledWith('contextmenu', expect.any(Function));
+
     viewer.scene.pickPosition.mockReturnValue({
       longitude: degreesToRadians(10),
       latitude: degreesToRadians(20),
@@ -252,8 +345,11 @@ describe('HazardPolygonMap', () => {
     expect(viewer.entities._entities.length).toBeGreaterThan(0);
 
     const polygonEntity = viewer.entities._entities.find((entity) => {
+      const props = getEntityProperties(entity);
       return (
-        (entity as { __hazardPolygon?: { hazardId?: string } }).__hazardPolygon?.hazardId === 'h1'
+        Boolean(props) &&
+        (props as { kind?: unknown }).kind === 'hazardPolygon' &&
+        (props as { hazardId?: unknown }).hazardId === 'h1'
       );
     });
     expect(polygonEntity).toBeTruthy();
@@ -285,8 +381,11 @@ describe('HazardPolygonMap', () => {
     const viewer = await getViewerInstance();
 
     const vertexEntity = viewer.entities._entities.find((entity) => {
+      const props = getEntityProperties(entity);
       return (
-        (entity as { __hazardVertex?: { hazardId?: string } }).__hazardVertex?.hazardId === 'h1'
+        Boolean(props) &&
+        (props as { kind?: unknown }).kind === 'hazardVertex' &&
+        (props as { hazardId?: unknown }).hazardId === 'h1'
       );
     });
     expect(vertexEntity).toBeTruthy();
@@ -351,6 +450,7 @@ describe('HazardPolygonMap', () => {
     );
 
     const viewer = await getViewerInstance();
+    expect(viewer.__options).toMatchObject({ baseLayer: false });
     unmount();
     expect(viewer.destroy).toHaveBeenCalledTimes(1);
   });
