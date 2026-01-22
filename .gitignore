@@ -37,6 +37,9 @@ npm-debug.log*
 .parcel-cache/
 .pytest_cache/
 
+# Local tooling configs
+.claude/*.local.*
+
 # Test coverage
 coverage/
 .nyc_output/
