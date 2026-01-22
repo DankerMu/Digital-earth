@@ -111,4 +111,30 @@ describe('AppLayout', () => {
     fireEvent.click(screen.getByRole('button', { name: '返回上一视图' }));
     expect(await screen.findByText('全局')).toBeInTheDocument();
   });
+
+  it('adds a bottom offset for the disclaimer FAB when Cesium credits are present', async () => {
+    vi.resetModules();
+    localStorage.removeItem('digital-earth.layers');
+    localStorage.removeItem('digital-earth.viewMode');
+    localStorage.removeItem('digital-earth.layoutPanels');
+
+    const fetchMock = vi.fn();
+    stubLegendApi(fetchMock);
+    vi.stubGlobal('fetch', fetchMock);
+
+    const credits = document.createElement('div');
+    credits.className = 'cesium-widget-credits';
+    document.body.appendChild(credits);
+
+    const { AppLayout } = await import('./AppLayout');
+    const { container } = render(<AppLayout />);
+
+    const appRoot = container.firstElementChild as HTMLElement;
+    await waitFor(() => {
+      expect(appRoot.style.getPropertyValue('--disclaimer-fab-offset-bottom')).not.toBe('');
+    });
+    expect(appRoot.style.getPropertyValue('--disclaimer-fab-offset-bottom')).toBe('368px');
+
+    credits.remove();
+  });
 });
