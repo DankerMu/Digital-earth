@@ -23,6 +23,16 @@ function formatUtc(date: Date): string {
   return date.toISOString().slice(0, 16).replace('T', ' ');
 }
 
+function isAbortError(error: unknown): boolean {
+  if (!error) return false;
+  if (error instanceof DOMException) return error.name === 'AbortError';
+  if (error instanceof Error) return error.name === 'AbortError';
+  if (typeof error === 'object' && error !== null && 'name' in error) {
+    return (error as { name?: unknown }).name === 'AbortError';
+  }
+  return false;
+}
+
 export function TimeController({
   frames,
   initialIndex = 0,
@@ -32,6 +42,14 @@ export function TimeController({
   onRefreshLayers,
   loadFrame
 }: TimeControllerProps) {
+  const framesSignature = useMemo(() => {
+    let hash = 0;
+    for (let i = 0; i < frames.length; i += 1) {
+      hash = (hash * 31 + frames[i]!.getTime()) >>> 0;
+    }
+    return `${frames.length}:${hash}`;
+  }, [frames]);
+
   const normalizedInitialIndex = useMemo(
     () => clampIndex(initialIndex, frames.length),
     [frames.length, initialIndex],
@@ -47,6 +65,8 @@ export function TimeController({
   const requestIdRef = useRef(0);
   const dragTimerRef = useRef<number | null>(null);
   const loadAbortRef = useRef<AbortController | null>(null);
+  const isPointerDownRef = useRef(false);
+  const didPointerMoveRef = useRef(false);
 
   useEffect(() => {
     currentIndexRef.current = currentIndex;
@@ -73,6 +93,21 @@ export function TimeController({
       abortLoad();
     };
   }, [abortLoad, cancelDragTimer]);
+
+  useEffect(() => {
+    const hasPendingDrag = dragTimerRef.current != null;
+    const hasInFlightLoad = loadAbortRef.current != null;
+    if (!hasPendingDrag && !hasInFlightLoad) return;
+
+    cancelDragTimer();
+    abortLoad();
+    requestIdRef.current += 1;
+
+    if (isLoadingRef.current) {
+      isLoadingRef.current = false;
+      setIsLoading(false);
+    }
+  }, [abortLoad, cancelDragTimer, framesSignature]);
 
   const goToIndex = useCallback(
     async (nextIndex: number, options?: { debounced?: boolean }): Promise<boolean> => {
@@ -110,7 +145,10 @@ export function TimeController({
           loadAbortRef.current = controller;
 
           void loadFrame(nextTime, clamped, { signal: controller.signal })
-            .catch(() => null)
+            .catch((error) => {
+              if (isAbortError(error)) return;
+              console.error('[TimeController] loadFrame failed', error);
+            })
             .finally(() => {
               if (controller.signal.aborted) return;
               if (requestIdRef.current !== requestId) return;
@@ -140,7 +178,10 @@ export function TimeController({
       try {
         await loadFrame(nextTime, clamped, { signal: controller.signal });
         return true;
-      } catch {
+      } catch (error) {
+        if (!isAbortError(error)) {
+          console.error('[TimeController] loadFrame failed', error);
+        }
         return false;
       } finally {
         if (loadAbortRef.current === controller) loadAbortRef.current = null;
@@ -283,9 +324,27 @@ export function TimeController({
           min={0}
           max={Math.max(frames.length - 1, 0)}
           value={currentIndex}
+          onPointerDown={(event) => {
+            isPointerDownRef.current = true;
+            didPointerMoveRef.current = false;
+            event.currentTarget.setPointerCapture?.(event.pointerId);
+          }}
+          onPointerMove={() => {
+            if (!isPointerDownRef.current) return;
+            didPointerMoveRef.current = true;
+          }}
+          onPointerUp={() => {
+            isPointerDownRef.current = false;
+            didPointerMoveRef.current = false;
+          }}
+          onPointerCancel={() => {
+            isPointerDownRef.current = false;
+            didPointerMoveRef.current = false;
+          }}
           onChange={(e) => {
             const next = Number(e.target.value);
-            void goToIndex(next, { debounced: true });
+            const debounced = isPointerDownRef.current && didPointerMoveRef.current;
+            void goToIndex(next, { debounced });
           }}
           disabled={frames.length <= 1}
           style={{ width: '100%' }}

@@ -83,6 +83,62 @@ describe('useLegendConfig', () => {
     vi.useRealTimers();
   });
 
+  it('uses cached legend config without refetching', async () => {
+    vi.useFakeTimers();
+
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      if (url === '/config.json') {
+        return jsonResponse({ apiBaseUrl: 'http://api.test' });
+      }
+      if (url === 'http://api.test/api/v1/legends?layer_type=temperature') {
+        return jsonResponse({
+          colors: ['#0000ff'],
+          thresholds: [0],
+          labels: ['0'],
+        });
+      }
+      return new Response('Not Found', { status: 404 });
+    });
+
+    vi.stubGlobal('fetch', fetchMock);
+
+    const { unmount } = render(<Harness layerType="temperature" />);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(200);
+    });
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const temperatureLegendUrl = 'http://api.test/api/v1/legends?layer_type=temperature';
+    const urlsAfterFirstLoad = fetchMock.mock.calls.map(([value]) =>
+      typeof value === 'string' ? value : value.toString(),
+    );
+    expect(urlsAfterFirstLoad).toContain(temperatureLegendUrl);
+
+    unmount();
+
+    render(<Harness layerType="temperature" />);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(200);
+    });
+
+    const urlsAfterSecondLoad = fetchMock.mock.calls.map(([value]) =>
+      typeof value === 'string' ? value : value.toString(),
+    );
+
+    const temperatureLegendCalls = urlsAfterSecondLoad.filter(
+      (url) => url === temperatureLegendUrl,
+    );
+    expect(temperatureLegendCalls).toHaveLength(1);
+
+    vi.useRealTimers();
+  });
+
   it('aborts an in-flight request when switching layers', async () => {
     vi.useFakeTimers();
 

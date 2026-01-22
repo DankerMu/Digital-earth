@@ -39,14 +39,15 @@ export function useLegendConfig(layerType: LayerType | null): LegendLoadState {
       return;
     }
 
-    const controller = new AbortController();
-
     const existing = legendCache.get(layerType);
     if (existing) {
       setState({ status: 'loaded', config: existing });
-    } else {
-      setState({ status: 'loading' });
+      return;
     }
+
+    setState({ status: 'loading' });
+
+    const controller = new AbortController();
 
     const timeoutId = window.setTimeout(() => {
       void (async () => {
