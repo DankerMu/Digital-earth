@@ -52,6 +52,7 @@ describe('productDraft store', () => {
         valid_to: '2026-01-01T02:00',
         type: 'snow',
         severity: 'low',
+        hazards: [],
       },
       updatedAt: 123,
     });
@@ -65,6 +66,7 @@ describe('productDraft store', () => {
       valid_to: '2026-01-01T02:00',
       type: 'snow',
       severity: 'low',
+      hazards: [],
     });
     expect(useProductDraftStore.getState(NEW_STORAGE_KEY).updatedAt).toBe(123);
   });
@@ -79,6 +81,7 @@ describe('productDraft store', () => {
         valid_to: '2026-01-01T02:00',
         type: 'snow',
         severity: '',
+        hazards: [],
       },
       updatedAt: null,
     });
@@ -117,6 +120,7 @@ describe('productDraft store', () => {
       valid_to: '2026-01-01T02:00',
       type: 'snow',
       severity: '',
+      hazards: [],
     });
 
     useProductDraftStore.setState(NEW_STORAGE_KEY, { draft: null });
@@ -136,6 +140,7 @@ describe('productDraft store', () => {
         valid_to: '2026-01-01T02:00',
         type: 'snow',
         severity: '',
+        hazards: [],
       },
     });
 
@@ -154,6 +159,7 @@ describe('productDraft store', () => {
       valid_to: '2026-01-01T02:00',
       type: 'snow',
       severity: '',
+      hazards: [],
     });
 
     useProductDraftStore.setState(NEW_STORAGE_KEY, { updatedAt: 999 });
@@ -174,6 +180,7 @@ describe('productDraft store', () => {
       valid_to: '2026-01-01T02:00',
       type: 'snow',
       severity: '',
+      hazards: [],
     });
 
     expect(useProductDraftStore.getState(NEW_STORAGE_KEY).draft?.title).toBe('T');
@@ -188,6 +195,7 @@ describe('productDraft store', () => {
         valid_to: '2026-01-01T02:00',
         type: 'snow',
         severity: '',
+        hazards: [],
       },
       updatedAt: new Date('2026-01-01T00:00:00Z').getTime(),
     });
@@ -226,6 +234,7 @@ describe('productDraft store', () => {
         valid_to: '2026-01-01T02:00',
         type: 'snow',
         severity: '',
+        hazards: [],
       });
     }).not.toThrow();
 
@@ -245,6 +254,7 @@ describe('productDraft store', () => {
       valid_to: '',
       type: '',
       severity: 'high',
+      hazards: [],
     });
 
     const persisted = JSON.parse(localStorage.getItem(NEW_STORAGE_KEY) ?? 'null') as unknown;
@@ -264,6 +274,7 @@ describe('productDraft store', () => {
       valid_to: '2026-01-01T02:00',
       type: 'snow',
       severity: '',
+      hazards: [],
     });
 
     useProductDraftStore.getState(NEW_STORAGE_KEY).clearDraft();
@@ -282,6 +293,7 @@ describe('productDraft store', () => {
       valid_to: '2026-01-01T02:00',
       type: 'snow',
       severity: '',
+      hazards: [],
     });
 
     useProductDraftStore.getState(PRODUCT_STORAGE_KEY).setDraft({
@@ -292,6 +304,7 @@ describe('productDraft store', () => {
       valid_to: '2026-01-02T02:00',
       type: 'rain',
       severity: 'high',
+      hazards: [],
     });
 
     expect(useProductDraftStore.getState(NEW_STORAGE_KEY).draft?.title).toBe('New Draft');

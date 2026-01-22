@@ -2,12 +2,24 @@ import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 
+vi.mock('./HazardPolygonMap', () => ({
+  HazardPolygonMap: () => <div data-testid="hazard-polygon-map-mock" />,
+}));
+
 const NEW_STORAGE_KEY = 'digital-earth.productDraft.new';
 const PRODUCT_STORAGE_KEY = 'digital-earth.productDraft.1';
 
 async function importFreshEditor() {
   vi.resetModules();
   return await import('./ProductEditor');
+}
+
+async function addValidHazard(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(screen.getByRole('button', { name: '新增区域' }));
+  // Add 3 vertices via the coordinate editor (defaults to 0/0 values).
+  await user.click(screen.getByRole('button', { name: '添加顶点' }));
+  await user.click(screen.getByRole('button', { name: '添加顶点' }));
+  await user.click(screen.getByRole('button', { name: '添加顶点' }));
 }
 
 describe('ProductEditor', () => {
@@ -22,6 +34,7 @@ describe('ProductEditor', () => {
       issued_at: 'not-a-date',
       valid_from: 'still-not-a-date',
       valid_to: 'nope',
+      hazards: [],
     });
 
     expect(errors.issued_at).toBe('请输入合法的时间');
@@ -42,6 +55,7 @@ describe('ProductEditor', () => {
 
     expect(onSubmit).not.toHaveBeenCalled();
     expect(screen.getAllByText('此项为必填')).toHaveLength(6);
+    expect(screen.getByText('请至少添加一个风险区域')).toBeInTheDocument();
   });
 
   it('validates time ordering rules', async () => {
@@ -57,6 +71,8 @@ describe('ProductEditor', () => {
     await user.type(screen.getByLabelText(/标题/), '测试产品');
     await user.type(screen.getByLabelText(/类型/), '降雪');
     await user.type(screen.getByLabelText(/正文/), '这里是正文');
+
+    await addValidHazard(user);
 
     await user.type(screen.getByLabelText(/发布时间/), '2026-01-01T03:00');
     await user.type(screen.getByLabelText(/有效开始时间/), '2026-01-01T02:00');
@@ -89,6 +105,18 @@ describe('ProductEditor', () => {
     await user.type(screen.getByLabelText(/有效开始时间/), '2026-01-01T00:00');
     await user.type(screen.getByLabelText(/有效结束时间/), '2026-01-02T00:00');
 
+    await user.click(screen.getByRole('button', { name: '新增区域' }));
+    await user.click(screen.getByRole('button', { name: '添加顶点' }));
+    await user.click(screen.getByRole('button', { name: '添加顶点' }));
+    await user.click(screen.getByRole('button', { name: '添加顶点' }));
+
+    await user.clear(screen.getByLabelText('顶点 2 经度'));
+    await user.type(screen.getByLabelText('顶点 2 经度'), '1');
+    await user.clear(screen.getByLabelText('顶点 3 经度'));
+    await user.type(screen.getByLabelText('顶点 3 经度'), '1');
+    await user.clear(screen.getByLabelText('顶点 3 纬度'));
+    await user.type(screen.getByLabelText('顶点 3 纬度'), '1');
+
     await user.click(screen.getByRole('button', { name: '保存草稿' }));
     expect(screen.getByText('草稿已保存')).toBeInTheDocument();
     expect(localStorage.getItem(NEW_STORAGE_KEY)).not.toBeNull();
@@ -107,6 +135,13 @@ describe('ProductEditor', () => {
       issued_at: '2026-01-01T00:00:00.000Z',
       valid_from: '2026-01-01T00:00:00.000Z',
       valid_to: '2026-01-02T00:00:00.000Z',
+      hazards: [
+        expect.objectContaining({
+          geometry: expect.any(Object),
+          bbox: { min_x: 0, min_y: 0, max_x: 1, max_y: 1 },
+          area_km2: expect.any(Number),
+        }),
+      ],
     });
 
     await waitFor(() => {
@@ -181,6 +216,7 @@ describe('ProductEditor', () => {
           issued_at: '2026-01-01T00:00',
           valid_from: '2026-01-01T01:00',
           valid_to: '2026-01-01T02:00',
+          hazards: [],
         },
         updatedAt: 123,
       }),
@@ -200,6 +236,7 @@ describe('ProductEditor', () => {
           issued_at: '2026-01-01T00:00:00Z',
           valid_from: '2026-01-01T01:00:00Z',
           valid_to: '2026-01-01T02:00:00Z',
+          hazards: [],
         }}
         onClose={() => {}}
         onSubmit={() => {}}
@@ -235,6 +272,8 @@ describe('ProductEditor', () => {
     await user.type(screen.getByLabelText(/发布时间/), '2026-01-01T00:00');
     await user.type(screen.getByLabelText(/有效开始时间/), '2026-01-01T00:00');
     await user.type(screen.getByLabelText(/有效结束时间/), '2026-01-02T00:00');
+
+    await addValidHazard(user);
 
     await user.click(screen.getByRole('button', { name: '提交' }));
 
