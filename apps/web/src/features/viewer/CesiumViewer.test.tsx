@@ -3199,12 +3199,14 @@ describe('CesiumViewer', () => {
     });
 
     await waitFor(() => {
-      const layersAdded = viewer.imageryLayers.add.mock.calls.map(([layer]: [unknown]) => layer as {
-        provider?: { options?: { url?: string; rectangle?: unknown } };
-      });
-      const snow = layersAdded.find((layer) => (layer.provider?.options?.url ?? '').includes('/SNOD/'));
-      expect(snow).toBeTruthy();
-    });
+	      const layersAdded = viewer.imageryLayers.add.mock.calls.map(([layer]: [unknown]) => layer as {
+	        provider?: { options?: { url?: string; rectangle?: unknown } };
+	      });
+	      const snow = layersAdded.find((layer: {
+	        provider?: { options?: { url?: string; rectangle?: unknown } };
+	      }) => (layer.provider?.options?.url ?? '').includes('/SNOD/'));
+	      expect(snow).toBeTruthy();
+	    });
 
     viewer.imageryLayers.add.mockClear();
 
@@ -3213,14 +3215,14 @@ describe('CesiumViewer', () => {
     });
 
     await waitFor(() => {
-      const layersAdded = viewer.imageryLayers.add.mock.calls.map(([layer]: [unknown]) => layer as {
-        provider?: { options?: { url?: string } };
-      });
-      const history = layersAdded.find((layer) =>
-        (layer.provider?.options?.url ?? '').includes('/api/v1/tiles/statistics/'),
-      );
-      expect(history?.provider?.options?.url).toContain('/snowfall/');
-    });
+	      const layersAdded = viewer.imageryLayers.add.mock.calls.map(([layer]: [unknown]) => layer as {
+	        provider?: { options?: { url?: string } };
+	      });
+	      const history = layersAdded.find((layer: { provider?: { options?: { url?: string } } }) =>
+	        (layer.provider?.options?.url ?? '').includes('/api/v1/tiles/statistics/'),
+	      );
+	      expect(history?.provider?.options?.url).toContain('/snowfall/');
+	    });
   });
 
   it('switches to the bias layer in event mode', async () => {
@@ -3318,12 +3320,14 @@ describe('CesiumViewer', () => {
     });
 
     await waitFor(() => {
-      const layersAdded = viewer.imageryLayers.add.mock.calls.map(([layer]: [unknown]) => layer as {
-        provider?: { options?: { url?: string } };
-      });
-      const snow = layersAdded.find((layer) => (layer.provider?.options?.url ?? '').includes('/SNOD/'));
-      expect(snow).toBeTruthy();
-    });
+	      const layersAdded = viewer.imageryLayers.add.mock.calls.map(([layer]: [unknown]) => layer as {
+	        provider?: { options?: { url?: string } };
+	      });
+	      const snow = layersAdded.find((layer: { provider?: { options?: { url?: string } } }) =>
+	        (layer.provider?.options?.url ?? '').includes('/SNOD/'),
+	      );
+	      expect(snow).toBeTruthy();
+	    });
 
     viewer.imageryLayers.add.mockClear();
 
@@ -3332,14 +3336,14 @@ describe('CesiumViewer', () => {
     });
 
     await waitFor(() => {
-      const layersAdded = viewer.imageryLayers.add.mock.calls.map(([layer]: [unknown]) => layer as {
-        provider?: { options?: { url?: string } };
-      });
-      const bias = layersAdded.find((layer) =>
-        (layer.provider?.options?.url ?? '').includes('/api/v1/tiles/bias/temp/'),
-      );
-      expect(bias?.provider?.options?.url).toContain('/20260101T000000Z/sfc/');
-    });
+	      const layersAdded = viewer.imageryLayers.add.mock.calls.map(([layer]: [unknown]) => layer as {
+	        provider?: { options?: { url?: string } };
+	      });
+	      const bias = layersAdded.find((layer: { provider?: { options?: { url?: string } } }) =>
+	        (layer.provider?.options?.url ?? '').includes('/api/v1/tiles/bias/temp/'),
+	      );
+	      expect(bias?.provider?.options?.url).toContain('/20260101T000000Z/sfc/');
+	    });
   });
 
   it('shows a monitoring notice when snow depth tiles are missing', async () => {
