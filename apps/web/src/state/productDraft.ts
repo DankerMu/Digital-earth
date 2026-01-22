@@ -27,15 +27,23 @@ type ProductDraftState = {
   clearDraft: () => void;
 };
 
-const STORAGE_KEY = 'digital-earth.productDraft';
+const LEGACY_STORAGE_KEY = 'digital-earth.productDraft';
+const STORAGE_KEY_PREFIX = 'digital-earth.productDraft.';
+const NEW_PRODUCT_DRAFT_KEY = `${STORAGE_KEY_PREFIX}new`;
+
+export function getProductDraftStorageKey(productId?: string | number | null): string {
+  const normalized =
+    typeof productId === 'number'
+      ? String(productId)
+      : typeof productId === 'string'
+        ? productId.trim()
+        : '';
+
+  if (!normalized) return NEW_PRODUCT_DRAFT_KEY;
+  return `${STORAGE_KEY_PREFIX}${normalized}`;
+}
 
 type Listener = () => void;
-
-const listeners = new Set<Listener>();
-
-function notify() {
-  for (const listener of listeners) listener();
-}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object';
@@ -89,9 +97,9 @@ function parsePersistedProductDraft(value: unknown): PersistedProductDraft | nul
   return { draft, updatedAt: updatedAtNumber };
 }
 
-function safeReadPersistedDraft(): PersistedProductDraft | null {
+function safeReadPersistedDraft(storageKey: string): PersistedProductDraft | null {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
+    const raw = localStorage.getItem(storageKey);
     if (!raw) return null;
     const parsed = JSON.parse(raw) as unknown;
     return parsePersistedProductDraft(parsed);
@@ -100,99 +108,160 @@ function safeReadPersistedDraft(): PersistedProductDraft | null {
   }
 }
 
-function safeWritePersistedDraft(value: PersistedProductDraft | null) {
+function safeWritePersistedDraft(storageKey: string, value: PersistedProductDraft | null) {
   try {
     if (!value) {
-      localStorage.removeItem(STORAGE_KEY);
+      localStorage.removeItem(storageKey);
       return;
     }
 
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(value));
+    localStorage.setItem(storageKey, JSON.stringify(value));
   } catch {
     // ignore write failures (e.g., disabled storage)
   }
 }
 
-const persisted = safeReadPersistedDraft();
-let draft: ProductDraft | null = persisted?.draft ?? null;
-let updatedAt: number | null = persisted?.updatedAt ?? null;
+type StoreEntry = {
+  storageKey: string;
+  draft: ProductDraft | null;
+  updatedAt: number | null;
+  listeners: Set<Listener>;
+  setDraft: ProductDraftState['setDraft'];
+  patchDraft: ProductDraftState['patchDraft'];
+  clearDraft: ProductDraftState['clearDraft'];
+};
 
-function persist() {
-  if (!draft || updatedAt == null) {
-    safeWritePersistedDraft(null);
+const stores = new Map<string, StoreEntry>();
+
+function notify(store: StoreEntry) {
+  for (const listener of store.listeners) listener();
+}
+
+function persist(store: StoreEntry) {
+  if (!store.draft || store.updatedAt == null) {
+    safeWritePersistedDraft(store.storageKey, null);
+    if (store.storageKey === NEW_PRODUCT_DRAFT_KEY) {
+      safeWritePersistedDraft(LEGACY_STORAGE_KEY, null);
+    }
     return;
   }
 
-  safeWritePersistedDraft({ draft, updatedAt });
+  safeWritePersistedDraft(store.storageKey, { draft: store.draft, updatedAt: store.updatedAt });
+  if (store.storageKey === NEW_PRODUCT_DRAFT_KEY) {
+    safeWritePersistedDraft(LEGACY_STORAGE_KEY, null);
+  }
 }
 
-const setDraft: ProductDraftState['setDraft'] = (next) => {
-  const parsed = parseProductDraft(next);
-  if (!parsed) return;
-  draft = parsed;
-  updatedAt = Date.now();
-  persist();
-  notify();
-};
+function createStoreEntry(storageKey: string): StoreEntry {
+  let persisted = safeReadPersistedDraft(storageKey);
+  if (!persisted && storageKey === NEW_PRODUCT_DRAFT_KEY) {
+    persisted = safeReadPersistedDraft(LEGACY_STORAGE_KEY);
+    if (persisted) {
+      safeWritePersistedDraft(storageKey, persisted);
+      safeWritePersistedDraft(LEGACY_STORAGE_KEY, null);
+    }
+  }
 
-const patchDraft: ProductDraftState['patchDraft'] = (patch) => {
-  const current = draft ?? createEmptyProductDraft();
-  draft = { ...current, ...patch };
-  updatedAt = Date.now();
-  persist();
-  notify();
-};
+  const store: StoreEntry = {
+    storageKey,
+    draft: persisted?.draft ?? null,
+    updatedAt: persisted?.updatedAt ?? null,
+    listeners: new Set<Listener>(),
+    setDraft: () => {},
+    patchDraft: () => {},
+    clearDraft: () => {},
+  };
 
-const clearDraft: ProductDraftState['clearDraft'] = () => {
-  if (draft == null && updatedAt == null) return;
-  draft = null;
-  updatedAt = null;
-  persist();
-  notify();
-};
+  store.setDraft = (next) => {
+    const parsed = parseProductDraft(next);
+    if (!parsed) return;
+    store.draft = parsed;
+    store.updatedAt = Date.now();
+    persist(store);
+    notify(store);
+  };
 
-function getState(): ProductDraftState {
-  return { draft, updatedAt, setDraft, patchDraft, clearDraft };
+  store.patchDraft = (patch) => {
+    const current = store.draft ?? createEmptyProductDraft();
+    store.draft = { ...current, ...patch };
+    store.updatedAt = Date.now();
+    persist(store);
+    notify(store);
+  };
+
+  store.clearDraft = () => {
+    if (store.draft == null && store.updatedAt == null) return;
+    store.draft = null;
+    store.updatedAt = null;
+    persist(store);
+    notify(store);
+  };
+
+  return store;
 }
 
-function setState(partial: Partial<Pick<ProductDraftState, 'draft' | 'updatedAt'>>) {
+function getStoreEntry(storageKey: string): StoreEntry {
+  const normalizedKey = storageKey.trim();
+  const key = normalizedKey.length > 0 ? normalizedKey : NEW_PRODUCT_DRAFT_KEY;
+  const existing = stores.get(key);
+  if (existing) return existing;
+  const created = createStoreEntry(key);
+  stores.set(key, created);
+  return created;
+}
+
+function getState(storageKey: string): ProductDraftState {
+  const store = getStoreEntry(storageKey);
+  return {
+    draft: store.draft,
+    updatedAt: store.updatedAt,
+    setDraft: store.setDraft,
+    patchDraft: store.patchDraft,
+    clearDraft: store.clearDraft,
+  };
+}
+
+function setState(storageKey: string, partial: Partial<Pick<ProductDraftState, 'draft' | 'updatedAt'>>) {
+  const store = getStoreEntry(storageKey);
+
   if ('draft' in partial) {
     const nextDraft = partial.draft;
     if (nextDraft == null) {
-      clearDraft();
+      store.clearDraft();
       return;
     }
-    setDraft(nextDraft);
+    store.setDraft(nextDraft);
     return;
   }
 
   if (typeof partial.updatedAt === 'number' && Number.isFinite(partial.updatedAt) && partial.updatedAt >= 0) {
-    updatedAt = partial.updatedAt;
-    persist();
-    notify();
+    store.updatedAt = partial.updatedAt;
+    persist(store);
+    notify(store);
   }
 }
 
-function subscribe(listener: Listener) {
-  listeners.add(listener);
+function subscribe(storageKey: string, listener: Listener) {
+  const store = getStoreEntry(storageKey);
+  store.listeners.add(listener);
   return () => {
-    listeners.delete(listener);
+    store.listeners.delete(listener);
   };
 }
 
 type Selector<T> = (state: ProductDraftState) => T;
 
 type StoreHook = {
-  <T>(selector: Selector<T>): T;
-  getState: typeof getState;
-  setState: typeof setState;
+  <T>(storageKey: string, selector: Selector<T>): T;
+  getState: (storageKey: string) => ProductDraftState;
+  setState: (storageKey: string, partial: Partial<Pick<ProductDraftState, 'draft' | 'updatedAt'>>) => void;
 };
 
-const useProductDraftStoreImpl = <T>(selector: Selector<T>): T =>
+const useProductDraftStoreImpl = <T>(storageKey: string, selector: Selector<T>): T =>
   useSyncExternalStore(
-    subscribe,
-    () => selector(getState()),
-    () => selector(getState()),
+    (listener) => subscribe(storageKey, listener),
+    () => selector(getState(storageKey)),
+    () => selector(getState(storageKey)),
   );
 
 export const useProductDraftStore: StoreHook = Object.assign(useProductDraftStoreImpl, {

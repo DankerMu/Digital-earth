@@ -2,7 +2,8 @@ import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 
-const STORAGE_KEY = 'digital-earth.productDraft';
+const NEW_STORAGE_KEY = 'digital-earth.productDraft.new';
+const PRODUCT_STORAGE_KEY = 'digital-earth.productDraft.1';
 
 async function importFreshEditor() {
   vi.resetModules();
@@ -29,7 +30,7 @@ describe('ProductEditor', () => {
   });
 
   it('shows required field errors and blocks submit', async () => {
-    localStorage.removeItem(STORAGE_KEY);
+    localStorage.removeItem(NEW_STORAGE_KEY);
     const { ProductEditor } = await importFreshEditor();
     const onSubmit = vi.fn();
     const onClose = vi.fn();
@@ -44,7 +45,7 @@ describe('ProductEditor', () => {
   });
 
   it('validates time ordering rules', async () => {
-    localStorage.removeItem(STORAGE_KEY);
+    localStorage.removeItem(NEW_STORAGE_KEY);
     const { ProductEditor } = await importFreshEditor();
     const onSubmit = vi.fn();
     const onClose = vi.fn();
@@ -70,7 +71,7 @@ describe('ProductEditor', () => {
   });
 
   it('submits normalized values, clears draft, and closes', async () => {
-    localStorage.removeItem(STORAGE_KEY);
+    localStorage.removeItem(NEW_STORAGE_KEY);
     const { ProductEditor } = await importFreshEditor();
     const onSubmit = vi.fn();
     const onClose = vi.fn();
@@ -90,7 +91,7 @@ describe('ProductEditor', () => {
 
     await user.click(screen.getByRole('button', { name: '保存草稿' }));
     expect(screen.getByText('草稿已保存')).toBeInTheDocument();
-    expect(localStorage.getItem(STORAGE_KEY)).not.toBeNull();
+    expect(localStorage.getItem(NEW_STORAGE_KEY)).not.toBeNull();
 
     await user.click(screen.getByRole('button', { name: '提交' }));
 
@@ -103,20 +104,20 @@ describe('ProductEditor', () => {
       type: '降雪',
       severity: 'high',
       text: '这里是正文',
-      issued_at: '2026-01-01T00:00',
-      valid_from: '2026-01-01T00:00',
-      valid_to: '2026-01-02T00:00',
+      issued_at: '2026-01-01T00:00:00.000Z',
+      valid_from: '2026-01-01T00:00:00.000Z',
+      valid_to: '2026-01-02T00:00:00.000Z',
     });
 
     await waitFor(() => {
       expect(onClose).toHaveBeenCalledTimes(1);
     });
 
-    expect(localStorage.getItem(STORAGE_KEY)).toBeNull();
+    expect(localStorage.getItem(NEW_STORAGE_KEY)).toBeNull();
   });
 
   it('restores a saved draft after module reload', async () => {
-    localStorage.removeItem(STORAGE_KEY);
+    localStorage.removeItem(NEW_STORAGE_KEY);
     const { ProductEditor: ProductEditor1 } = await importFreshEditor();
 
     const first = render(<ProductEditor1 open onClose={() => {}} onSubmit={() => {}} />);
@@ -130,7 +131,7 @@ describe('ProductEditor', () => {
     await user.type(screen.getByLabelText(/有效结束时间/), '2026-01-01T02:00');
     await user.click(screen.getByRole('button', { name: '保存草稿' }));
 
-    expect(localStorage.getItem(STORAGE_KEY)).not.toBeNull();
+    expect(localStorage.getItem(NEW_STORAGE_KEY)).not.toBeNull();
 
     first.unmount();
 
@@ -144,8 +145,81 @@ describe('ProductEditor', () => {
     expect(screen.getByLabelText(/正文/)).toHaveValue('draft body');
   });
 
+  it('adds dialog labeling and required attributes', async () => {
+    const { ProductEditor } = await importFreshEditor();
+
+    render(<ProductEditor open onClose={() => {}} onSubmit={() => {}} />);
+
+    const dialog = screen.getByRole('dialog');
+    const titleId = dialog.getAttribute('aria-labelledby');
+    const descriptionId = dialog.getAttribute('aria-describedby');
+
+    expect(titleId).toBeTruthy();
+    expect(descriptionId).toBeTruthy();
+    expect(document.getElementById(titleId ?? '')).toHaveTextContent('产品编辑器');
+    expect(document.getElementById(descriptionId ?? '')).toBeInTheDocument();
+
+    expect(screen.getByLabelText(/标题/)).toBeRequired();
+    expect(screen.getByLabelText(/标题/)).toHaveAttribute('aria-required', 'true');
+    expect(screen.getByLabelText(/类型/)).toBeRequired();
+    expect(screen.getByLabelText(/正文/)).toBeRequired();
+    expect(screen.getByLabelText(/发布时间/)).toBeRequired();
+    expect(screen.getByLabelText(/有效开始时间/)).toBeRequired();
+    expect(screen.getByLabelText(/有效结束时间/)).toBeRequired();
+  });
+
+  it('prefers initialValues when editing and allows restoring draft', async () => {
+    localStorage.removeItem(PRODUCT_STORAGE_KEY);
+    localStorage.setItem(
+      PRODUCT_STORAGE_KEY,
+      JSON.stringify({
+        draft: {
+          title: 'Draft title',
+          type: 'storm',
+          severity: '',
+          text: 'draft body',
+          issued_at: '2026-01-01T00:00',
+          valid_from: '2026-01-01T01:00',
+          valid_to: '2026-01-01T02:00',
+        },
+        updatedAt: 123,
+      }),
+    );
+
+    const { ProductEditor } = await importFreshEditor();
+
+    render(
+      <ProductEditor
+        open
+        productId="1"
+        initialValues={{
+          title: 'Initial title',
+          type: 'snow',
+          severity: '',
+          text: 'initial body',
+          issued_at: '2026-01-01T00:00:00Z',
+          valid_from: '2026-01-01T01:00:00Z',
+          valid_to: '2026-01-01T02:00:00Z',
+        }}
+        onClose={() => {}}
+        onSubmit={() => {}}
+      />,
+    );
+
+    expect(screen.getByLabelText(/标题/)).toHaveValue('Initial title');
+    expect(screen.getByLabelText(/类型/)).toHaveValue('snow');
+    expect(screen.getByLabelText(/发布时间/)).toHaveValue('2026-01-01T00:00');
+
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: '恢复草稿' }));
+
+    expect(screen.getByLabelText(/标题/)).toHaveValue('Draft title');
+    expect(screen.getByLabelText(/类型/)).toHaveValue('storm');
+    expect(screen.getByLabelText(/正文/)).toHaveValue('draft body');
+  });
+
   it('shows a submit error when onSubmit throws', async () => {
-    localStorage.removeItem(STORAGE_KEY);
+    localStorage.removeItem(NEW_STORAGE_KEY);
     const { ProductEditor } = await importFreshEditor();
     const onSubmit = vi.fn(() => {
       throw new Error('boom');

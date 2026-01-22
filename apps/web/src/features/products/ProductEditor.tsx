@@ -2,12 +2,15 @@ import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 
 import { useModal } from '../../lib/useModal';
-import { createEmptyProductDraft, useProductDraftStore } from '../../state/productDraft';
+import { createEmptyProductDraft, getProductDraftStorageKey, useProductDraftStore } from '../../state/productDraft';
 
 import {
+  datetimeLocalToIso,
+  isoToDatetimeLocal,
   normalizeProductEditorValues,
   validateProductEditor,
   type ProductEditorErrors,
+  type ProductEditorSubmitValues,
   type ProductEditorValues,
 } from './productEditorValidation';
 
@@ -27,14 +30,16 @@ function fieldClasses(hasError: boolean): string {
 
 type Props = {
   open: boolean;
+  productId?: string | number | null;
   initialValues?: Partial<ProductEditorValues>;
   title?: string;
   onClose: () => void;
-  onSubmit: (values: ProductEditorValues) => void | Promise<void>;
+  onSubmit: (values: ProductEditorSubmitValues) => void | Promise<void>;
 };
 
 export function ProductEditor({
   open,
+  productId,
   initialValues,
   title = '产品编辑器',
   onClose,
@@ -43,17 +48,43 @@ export function ProductEditor({
   const closeButtonRef = useRef<HTMLButtonElement | null>(null);
   const modalRef = useRef<HTMLDivElement | null>(null);
   const baseId = useId();
+  const isEditing = typeof productId === 'number' || (typeof productId === 'string' && productId.trim().length > 0);
+  const storageKey = useMemo(() => getProductDraftStorageKey(productId), [productId]);
+  const storedDraft = useProductDraftStore(storageKey, (state) => state.draft);
+  const baseValues = useMemo(() => {
+    const merged = initialValues ? { ...createEmptyProductDraft(), ...initialValues } : createEmptyProductDraft();
+
+    const normalizeDateTimeLocal = (value: unknown) => {
+      if (typeof value !== 'string') return '';
+      const trimmed = value.trim();
+      if (!trimmed) return '';
+      const parsedAsDateTimeLocal = datetimeLocalToIso(trimmed);
+      if (parsedAsDateTimeLocal) {
+        return isoToDatetimeLocal(parsedAsDateTimeLocal) ?? trimmed;
+      }
+      return isoToDatetimeLocal(trimmed) ?? trimmed;
+    };
+
+    return {
+      ...merged,
+      issued_at: normalizeDateTimeLocal(merged.issued_at),
+      valid_from: normalizeDateTimeLocal(merged.valid_from),
+      valid_to: normalizeDateTimeLocal(merged.valid_to),
+    };
+  }, [initialValues]);
   const [values, setValues] = useState<ProductEditorValues>(() => {
-    const stored = useProductDraftStore.getState().draft;
-    const base = stored ?? (initialValues ? { ...createEmptyProductDraft(), ...initialValues } : createEmptyProductDraft());
-    return base;
+    if (isEditing) return baseValues;
+    return useProductDraftStore.getState(storageKey).draft ?? baseValues;
   });
   const [errors, setErrors] = useState<ProductEditorErrors>({});
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saved'>('idle');
   const [validatedOnce, setValidatedOnce] = useState(false);
-  const savedDraftUpdatedAt = useProductDraftStore((state) => state.updatedAt);
+  const [restoredDraft, setRestoredDraft] = useState(false);
+  const savedDraftUpdatedAt = useProductDraftStore(storageKey, (state) => state.updatedAt);
+  const titleId = `product-editor-dialog-title-${baseId}`;
+  const descriptionId = `product-editor-dialog-description-${baseId}`;
 
   const fieldIds = useMemo(() => {
     return {
@@ -76,15 +107,16 @@ export function ProductEditor({
 
   useEffect(() => {
     if (!open) return;
-    const stored = useProductDraftStore.getState().draft;
-    const base = stored ?? (initialValues ? { ...createEmptyProductDraft(), ...initialValues } : createEmptyProductDraft());
-    setValues(base);
+    const stored = useProductDraftStore.getState(storageKey).draft;
+    const nextValues = !isEditing && stored ? stored : baseValues;
+    setValues(nextValues);
     setErrors({});
     setSubmitError(null);
     setIsSubmitting(false);
     setSaveStatus('idle');
     setValidatedOnce(false);
-  }, [initialValues, open]);
+    setRestoredDraft(false);
+  }, [baseValues, isEditing, open, storageKey]);
 
   useEffect(() => {
     if (saveStatus !== 'saved') return;
@@ -120,7 +152,7 @@ export function ProductEditor({
     try {
       const normalized = normalizeProductEditorValues(values);
       await onSubmit(normalized);
-      useProductDraftStore.getState().clearDraft();
+      useProductDraftStore.getState(storageKey).clearDraft();
       onClose();
     } catch (error: unknown) {
       setSubmitError(error instanceof Error ? error.message : String(error));
@@ -130,8 +162,18 @@ export function ProductEditor({
   }
 
   function handleSaveDraft() {
-    useProductDraftStore.getState().setDraft(values);
+    useProductDraftStore.getState(storageKey).setDraft(values);
     setSaveStatus('saved');
+  }
+
+  function handleRestoreDraft() {
+    const draft = useProductDraftStore.getState(storageKey).draft;
+    if (!draft) return;
+    setValues(draft);
+    setErrors({});
+    setSubmitError(null);
+    setValidatedOnce(false);
+    setRestoredDraft(true);
   }
 
   if (!open) return null;
@@ -143,24 +185,50 @@ export function ProductEditor({
       data-testid="product-editor-overlay"
       onMouseDown={onOverlayMouseDown}
     >
-      <div className="modal" role="dialog" aria-modal="true" aria-label={title} ref={modalRef}>
+      <div
+        className="modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        aria-describedby={descriptionId}
+        ref={modalRef}
+      >
         <div className="modalHeader">
           <div className="min-w-0">
-            <h2 className="modalTitle">{title}</h2>
-            <div className="modalMeta">
-              {saveStatus === 'saved' ? '草稿已保存' : updatedAtLabel ? `草稿更新时间: ${updatedAtLabel}` : '填写产品基础信息并保存草稿'}
+            <h2 id={titleId} className="modalTitle">
+              {title}
+            </h2>
+            <div id={descriptionId} className="modalMeta">
+              {saveStatus === 'saved'
+                ? '草稿已保存'
+                : isEditing && updatedAtLabel && !restoredDraft
+                  ? `发现旧草稿（更新时间: ${updatedAtLabel}），可选择恢复`
+                  : updatedAtLabel
+                    ? `草稿更新时间: ${updatedAtLabel}`
+                    : '填写产品基础信息并保存草稿'}
             </div>
           </div>
           <div className="modalHeaderActions">
+            {isEditing && storedDraft ? (
+              <button
+                type="button"
+                className="modalButton"
+                onClick={handleRestoreDraft}
+                aria-label="恢复草稿"
+              >
+                恢复草稿
+              </button>
+            ) : null}
             <button
               type="button"
               className="modalButton"
               onClick={() => {
-                useProductDraftStore.getState().clearDraft();
-                setValues(initialValues ? { ...createEmptyProductDraft(), ...initialValues } : createEmptyProductDraft());
+                useProductDraftStore.getState(storageKey).clearDraft();
+                setValues(baseValues);
                 setErrors({});
                 setSubmitError(null);
                 setValidatedOnce(false);
+                setRestoredDraft(false);
               }}
               aria-label="清除草稿"
             >
@@ -181,6 +249,7 @@ export function ProductEditor({
         <div className="modalBody">
           <form
             className="grid gap-4"
+            noValidate
             onSubmit={(event) => {
               event.preventDefault();
               void handleSubmit();
@@ -209,6 +278,8 @@ export function ProductEditor({
                   className={fieldClasses(Boolean(errors.title))}
                   value={values.title}
                   onChange={(event) => updateField('title', event.target.value)}
+                  required
+                  aria-required="true"
                   aria-invalid={Boolean(errors.title)}
                   aria-describedby={errors.title ? `${fieldIds.title}-error` : undefined}
                   placeholder="请输入标题"
@@ -231,6 +302,8 @@ export function ProductEditor({
                   className={fieldClasses(Boolean(errors.type))}
                   value={values.type}
                   onChange={(event) => updateField('type', event.target.value)}
+                  required
+                  aria-required="true"
                   aria-invalid={Boolean(errors.type)}
                   aria-describedby={errors.type ? `${fieldIds.type}-error` : undefined}
                   placeholder="如：降雪、雷暴、洪水…"
@@ -256,6 +329,8 @@ export function ProductEditor({
                   className={fieldClasses(Boolean(errors.issued_at))}
                   value={values.issued_at}
                   onChange={(event) => updateField('issued_at', event.target.value)}
+                  required
+                  aria-required="true"
                   aria-invalid={Boolean(errors.issued_at)}
                   aria-describedby={errors.issued_at ? `${fieldIds.issued_at}-error` : undefined}
                 />
@@ -277,6 +352,8 @@ export function ProductEditor({
                   className={fieldClasses(Boolean(errors.valid_from))}
                   value={values.valid_from}
                   onChange={(event) => updateField('valid_from', event.target.value)}
+                  required
+                  aria-required="true"
                   aria-invalid={Boolean(errors.valid_from)}
                   aria-describedby={errors.valid_from ? `${fieldIds.valid_from}-error` : undefined}
                 />
@@ -298,6 +375,8 @@ export function ProductEditor({
                   className={fieldClasses(Boolean(errors.valid_to))}
                   value={values.valid_to}
                   onChange={(event) => updateField('valid_to', event.target.value)}
+                  required
+                  aria-required="true"
                   aria-invalid={Boolean(errors.valid_to)}
                   aria-describedby={errors.valid_to ? `${fieldIds.valid_to}-error` : undefined}
                 />
@@ -321,6 +400,7 @@ export function ProductEditor({
                   value={values.severity}
                   onChange={(event) => updateField('severity', event.target.value)}
                   aria-invalid={Boolean(errors.severity)}
+                  aria-describedby={errors.severity ? `${fieldIds.severity}-error` : undefined}
                 >
                   <option value="">未设置</option>
                   <option value="low">低</option>
@@ -328,7 +408,7 @@ export function ProductEditor({
                   <option value="high">高</option>
                 </select>
                 {errors.severity ? (
-                  <div className="mt-1 text-xs text-rose-200" role="alert">
+                  <div id={`${fieldIds.severity}-error`} className="mt-1 text-xs text-rose-200" role="alert">
                     {errors.severity}
                   </div>
                 ) : null}
@@ -354,6 +434,8 @@ export function ProductEditor({
                 className={[fieldClasses(Boolean(errors.text)), 'min-h-32 resize-y'].join(' ')}
                 value={values.text}
                 onChange={(event) => updateField('text', event.target.value)}
+                required
+                aria-required="true"
                 aria-invalid={Boolean(errors.text)}
                 aria-describedby={errors.text ? `${fieldIds.text}-error` : undefined}
                 placeholder="请输入正文内容"
