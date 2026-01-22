@@ -87,7 +87,7 @@ describe('useLegendConfig', () => {
     vi.useFakeTimers();
 
     const temperatureDeferred = createDeferred<Response>();
-    let temperatureSignal: AbortSignal | null = null;
+    let temperatureSignal: AbortSignal | undefined;
 
     const fetchMock = vi.fn(
       async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -131,11 +131,14 @@ describe('useLegendConfig', () => {
       'http://api.test/api/v1/legends?layer_type=temperature',
       expect.any(Object),
     );
-    expect(temperatureSignal?.aborted).toBe(false);
+    if (!temperatureSignal) {
+      throw new Error('Expected legend request to include an AbortSignal');
+    }
+    expect(temperatureSignal.aborted).toBe(false);
 
     rerender(<Harness layerType="wind" />);
 
-    expect(temperatureSignal?.aborted).toBe(true);
+    expect(temperatureSignal.aborted).toBe(true);
 
     await act(async () => {
       await vi.advanceTimersByTimeAsync(200);
