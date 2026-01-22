@@ -5,6 +5,7 @@ import type { LayerConfig } from '../../state/layerManager';
 import { useLayerManagerStore } from '../../state/layerManager';
 import { CesiumViewer } from '../viewer/CesiumViewer';
 import { DisclaimerLauncher } from '../disclaimer/DisclaimerLauncher';
+import { HelpLauncher } from '../help/HelpLauncher';
 import { InfoPanel } from './InfoPanel';
 import { LayerTree } from './LayerTree';
 import { LegendPanel } from './LegendPanel';
@@ -159,6 +160,7 @@ export function AppLayout() {
         />
       </div>
 
+      <HelpLauncher />
       <DisclaimerLauncher />
     </div>
   );
