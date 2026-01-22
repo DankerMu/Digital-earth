@@ -29,7 +29,12 @@ import { loadConfig, type MapConfig } from '../../config';
 import { getBasemapById, type BasemapId } from '../../config/basemaps';
 import { useBasemapStore } from '../../state/basemap';
 import { useCameraPerspectiveStore, type CameraPerspectiveId } from '../../state/cameraPerspective';
-import { resolveEventLayerTemplateSpec, useEventAutoLayersStore } from '../../state/eventAutoLayers';
+import {
+  canonicalizeEventType,
+  resolveEventLayerTemplateSpec,
+  useEventAutoLayersStore,
+} from '../../state/eventAutoLayers';
+import { useEventLayersStore } from '../../state/eventLayers';
 import { useLayerManagerStore, type LayerConfig, type LayerType } from '../../state/layerManager';
 import { usePerformanceModeStore } from '../../state/performanceMode';
 import { useSceneModeStore } from '../../state/sceneMode';
@@ -40,6 +45,8 @@ import { PrecipitationParticles } from '../effects/PrecipitationParticles';
 import { DisasterDemo } from '../effects/DisasterDemo';
 import { WindArrows, windArrowDensityForCameraHeight } from '../effects/WindArrows';
 import { createCloudSampler, createWeatherSampler } from '../effects/weatherSampler';
+import { fetchBiasTileSets, fetchHistoricalStatistics } from '../analytics/analyticsApi';
+import { AnalyticsTileLayer } from '../layers/AnalyticsTileLayer';
 import { CloudLayer } from '../layers/CloudLayer';
 import { PrecipitationLayer } from '../layers/PrecipitationLayer';
 import { SnowDepthLayer } from '../layers/SnowDepthLayer';
@@ -545,6 +552,8 @@ export function CesiumViewer() {
   const goBack = useViewModeStore((state) => state.goBack);
   const layers = useLayerManagerStore((state) => state.layers);
   const timeKey = useTimeStore((state) => state.timeKey);
+  const eventLayersEnabled = useEventLayersStore((state) => state.enabled);
+  const eventLayersMode = useEventLayersStore((state) => state.mode);
   const performanceMode = usePerformanceModeStore((state) => state.mode);
   const lowModeEnabled = performanceMode === 'low';
   const setPerformanceMode = usePerformanceModeStore((state) => state.setMode);
@@ -582,6 +591,8 @@ export function CesiumViewer() {
   const cloudLayersRef = useRef<Map<string, CloudLayer>>(new Map());
   const precipitationLayersRef = useRef<Map<string, PrecipitationLayer>>(new Map());
   const snowDepthLayersRef = useRef<Map<string, SnowDepthLayer>>(new Map());
+  const eventHistoricalLayerRef = useRef<AnalyticsTileLayer | null>(null);
+  const eventBiasLayerRef = useRef<AnalyticsTileLayer | null>(null);
   const precipitationParticlesRef = useRef<PrecipitationParticles | null>(null);
   const windArrowsRef = useRef<WindArrows | null>(null);
   const windAbortRef = useRef<AbortController | null>(null);
@@ -602,6 +613,7 @@ export function CesiumViewer() {
     east: number;
     north: number;
   } | null>(null);
+  const [eventTitle, setEventTitle] = useState<string | null>(null);
   const [riskPopup, setRiskPopup] = useState<{
     poi: RiskPOI;
     evaluation: POIRiskResult | null;
@@ -1230,6 +1242,209 @@ export function CesiumViewer() {
   }, [layers]);
 
   useEffect(() => {
+    const existing = eventHistoricalLayerRef.current;
+
+    if (!viewer || !apiBaseUrl || viewModeRoute.viewModeId !== 'event') {
+      existing?.destroy();
+      eventHistoricalLayerRef.current = null;
+      return;
+    }
+
+    if (!(eventLayersEnabled && eventLayersMode === 'history')) {
+      existing?.destroy();
+      eventHistoricalLayerRef.current = null;
+      return;
+    }
+
+    const controller = new AbortController();
+
+    const desiredWindowEnd = eventMonitoringTimeKey
+      ? alignToMostRecentHourTimeKey(eventMonitoringTimeKey)
+      : '';
+    const eventType = canonicalizeEventType(eventTitle ?? '');
+
+    void (async () => {
+      try {
+        const response = await fetchHistoricalStatistics({
+          apiBaseUrl,
+          fmt: 'png',
+          signal: controller.signal,
+        });
+        if (controller.signal.aborted) return;
+
+        const candidates =
+          eventType === 'snow'
+            ? response.items.filter((item) => item.variable.toLowerCase().includes('snow'))
+            : response.items;
+
+        const matchWindowEnd =
+          desiredWindowEnd.trim() === ''
+            ? null
+            : candidates.find((item) => item.window_key.startsWith(desiredWindowEnd.trim()));
+
+        const selected = matchWindowEnd ?? candidates[0] ?? null;
+        const template =
+          selected?.tiles.mean?.template ??
+          selected?.tiles.sum?.template ??
+          Object.values(selected?.tiles ?? {})[0]?.template ??
+          null;
+
+        if (!selected || !template) {
+          eventHistoricalLayerRef.current?.destroy();
+          eventHistoricalLayerRef.current = null;
+          return;
+        }
+
+        const urlTemplate = new URL(template, apiBaseUrl).toString();
+        const frameKey = `historical:${selected.source}:${selected.variable}:${selected.window_key}:${selected.version}`;
+        const rectangle = eventMonitoringRectangle ?? undefined;
+        const [minimumLevel, maximumLevel] = rectangle ? [8, 10] : [0, 6];
+        const opacity = snowDepthLayerConfig?.opacity ?? 0.75;
+
+        const params = {
+          id: 'event-historical',
+          urlTemplate,
+          frameKey,
+          opacity,
+          visible: true,
+          zIndex: 60,
+          rectangle,
+          minimumLevel,
+          maximumLevel,
+          credit: 'Historical statistics tiles',
+        };
+
+        const current = eventHistoricalLayerRef.current;
+        if (current) {
+          current.update(params);
+        } else {
+          eventHistoricalLayerRef.current = new AnalyticsTileLayer(viewer, params);
+        }
+
+        const layer = eventHistoricalLayerRef.current?.layer;
+        if (layer) viewer.imageryLayers.raiseToTop(layer);
+      } catch (error) {
+        if (controller.signal.aborted) return;
+        console.warn('[Digital Earth] failed to load historical statistics layer', error);
+        eventHistoricalLayerRef.current?.destroy();
+        eventHistoricalLayerRef.current = null;
+      }
+    })();
+
+    return () => controller.abort();
+  }, [
+    apiBaseUrl,
+    eventLayersEnabled,
+    eventLayersMode,
+    eventMonitoringRectangle,
+    eventMonitoringTimeKey,
+    eventTitle,
+    snowDepthLayerConfig?.opacity,
+    viewModeRoute.viewModeId,
+    viewer,
+  ]);
+
+  useEffect(() => {
+    const existing = eventBiasLayerRef.current;
+
+    if (!viewer || !apiBaseUrl || viewModeRoute.viewModeId !== 'event') {
+      existing?.destroy();
+      eventBiasLayerRef.current = null;
+      return;
+    }
+
+    if (!(eventLayersEnabled && eventLayersMode === 'difference')) {
+      existing?.destroy();
+      eventBiasLayerRef.current = null;
+      return;
+    }
+
+    const controller = new AbortController();
+
+    const desiredTimeKey = eventMonitoringTimeKey
+      ? alignToMostRecentHourTimeKey(eventMonitoringTimeKey)
+      : '';
+
+    void (async () => {
+      try {
+        const response = await fetchBiasTileSets({
+          apiBaseUrl,
+          layer: 'bias/temp',
+          fmt: 'png',
+          signal: controller.signal,
+        });
+        if (controller.signal.aborted) return;
+
+        const items = response.items;
+        if (items.length === 0) {
+          eventBiasLayerRef.current?.destroy();
+          eventBiasLayerRef.current = null;
+          return;
+        }
+
+        const byTime = desiredTimeKey
+          ? items.filter((item) => item.time_key === desiredTimeKey)
+          : items;
+        const candidates = byTime.length > 0 ? byTime : items;
+        const selected =
+          candidates.find((item) => item.level_key.trim().toLowerCase() === 'sfc') ??
+          candidates[0] ??
+          null;
+
+        const template = selected?.tile.template ?? '';
+        if (!selected || !template) {
+          eventBiasLayerRef.current?.destroy();
+          eventBiasLayerRef.current = null;
+          return;
+        }
+
+        const urlTemplate = new URL(template, apiBaseUrl).toString();
+        const frameKey = `bias:${selected.layer}:${selected.time_key}:${selected.level_key}`;
+        const opacity = snowDepthLayerConfig?.opacity ?? 0.75;
+
+        const params = {
+          id: 'event-bias',
+          urlTemplate,
+          frameKey,
+          opacity,
+          visible: true,
+          zIndex: 60,
+          rectangle: eventMonitoringRectangle ?? undefined,
+          minimumLevel: selected.min_zoom,
+          maximumLevel: selected.max_zoom,
+          credit: 'Bias tiles',
+        };
+
+        const current = eventBiasLayerRef.current;
+        if (current) {
+          current.update(params);
+        } else {
+          eventBiasLayerRef.current = new AnalyticsTileLayer(viewer, params);
+        }
+
+        const layer = eventBiasLayerRef.current?.layer;
+        if (layer) viewer.imageryLayers.raiseToTop(layer);
+      } catch (error) {
+        if (controller.signal.aborted) return;
+        console.warn('[Digital Earth] failed to load bias layer', error);
+        eventBiasLayerRef.current?.destroy();
+        eventBiasLayerRef.current = null;
+      }
+    })();
+
+    return () => controller.abort();
+  }, [
+    apiBaseUrl,
+    eventLayersEnabled,
+    eventLayersMode,
+    eventMonitoringRectangle,
+    eventMonitoringTimeKey,
+    snowDepthLayerConfig?.opacity,
+    viewModeRoute.viewModeId,
+    viewer,
+  ]);
+
+  useEffect(() => {
     if (!apiBaseUrl) return;
     if (!precipitationLayerConfig) {
       weatherSamplerRef.current = null;
@@ -1576,6 +1791,7 @@ export function CesiumViewer() {
 
       setEventMonitoringTimeKey(null);
       setEventMonitoringRectangle(null);
+      setEventTitle(null);
       return;
     }
 
@@ -1617,6 +1833,7 @@ export function CesiumViewer() {
         if (eventEntryKeyRef.current !== key) return;
 
         eventAutoLayerTypeRef.current = product.title;
+        setEventTitle(product.title);
         maybeApplyEventAutoLayerTemplate();
 
         const hazards = product.hazards;
@@ -2679,7 +2896,7 @@ export function CesiumViewer() {
       <div className="viewerOverlay">
         {viewer ? <CompassControl viewer={viewer} /> : null}
         <SceneModeToggle />
-        <EventLayersToggle />
+        {viewModeRoute.viewModeId === 'event' ? <EventLayersToggle /> : null}
         {basemapProvider === 'open' ? <BasemapSelector /> : null}
         {terrainNotice ? (
           <div className="terrainNoticePanel" role="alert" aria-label="terrain-notice">

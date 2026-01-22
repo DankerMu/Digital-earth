@@ -43,9 +43,8 @@ export function EventLayersToggle() {
           ))}
         </div>
       ) : (
-        <div className="eventLayersHelp">默认隐藏，避免信息过载。</div>
+        <div className="eventLayersHelp">关闭后隐藏，避免信息过载。</div>
       )}
     </div>
   );
 }
-

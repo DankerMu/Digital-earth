@@ -436,7 +436,7 @@ describe('CesiumViewer', () => {
     useBasemapStore.setState({ basemapId: DEFAULT_BASEMAP_ID });
     useCameraPerspectiveStore.setState({ cameraPerspectiveId: DEFAULT_CAMERA_PERSPECTIVE_ID });
     useEventAutoLayersStore.setState({ restoreOnExit: true, overrides: {} });
-    useEventLayersStore.setState({ enabled: false, mode: DEFAULT_EVENT_LAYER_MODE });
+    useEventLayersStore.setState({ enabled: true, mode: DEFAULT_EVENT_LAYER_MODE });
     useSceneModeStore.setState({ sceneModeId: DEFAULT_SCENE_MODE_ID });
     useTimeStore.setState({ timeKey: DEFAULT_TIME_KEY });
     useLayerManagerStore.setState({ layers: [] });
@@ -3094,6 +3094,251 @@ describe('CesiumViewer', () => {
         east: 127,
         north: 46,
       });
+    });
+  });
+
+  it('switches to the historical statistics layer in event mode', async () => {
+    useLayerManagerStore.setState({
+      layers: [
+        {
+          id: 'snow-depth',
+          type: 'snow-depth',
+          variable: 'SNOD',
+          opacity: 0.8,
+          visible: false,
+          zIndex: 50,
+        },
+      ],
+    });
+
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+        if (url.endsWith('/config.json')) {
+          return jsonResponse({ apiBaseUrl: 'http://api.test' });
+        }
+        if (url === 'http://api.test/api/v1/products/1') {
+          return jsonResponse({
+            id: 1,
+            title: '降雪',
+            text: '降雪预警',
+            issued_at: '2026-01-01T00:00:00Z',
+            valid_from: '2026-01-01T00:45:00Z',
+            valid_to: '2026-01-02T00:00:00Z',
+            version: 1,
+            status: 'published',
+            hazards: [
+              {
+                id: 11,
+                severity: 'high',
+                geometry: null,
+                bbox: { min_x: 126, min_y: 45, max_x: 127, max_y: 46 },
+                valid_from: '2026-01-01T00:45:00Z',
+                valid_to: '2026-01-02T00:00:00Z',
+              },
+            ],
+          });
+        }
+        if (url.startsWith('http://api.test/api/v1/analytics/historical/statistics')) {
+          return jsonResponse({
+            schema_version: 1,
+            generated_at: '2026-01-01T01:00:00Z',
+            items: [
+              {
+                source: 'cldas',
+                variable: 'SNOWFALL',
+                window_kind: 'rolling_days',
+                window_key: '20260101T000000Z-P7D',
+                version: 'v1',
+                window_start: '2025-12-25T00:00:00Z',
+                window_end: '2026-01-01T00:00:00Z',
+                samples: 168,
+                dataset_path: 'x.nc',
+                metadata_path: 'x.meta.json',
+                tiles: {
+                  mean: {
+                    template:
+                      '/api/v1/tiles/statistics/cldas/snowfall/mean/v1/20260101T000000Z-P7D/{z}/{x}/{y}.png',
+                    legend: '/api/v1/tiles/statistics/cldas/snowfall/legend.json',
+                  },
+                },
+              },
+            ],
+          });
+        }
+        if (url.startsWith('http://api.test/api/v1/risk/pois')) {
+          return jsonResponse({ page: 1, page_size: 1000, total: 0, items: [] });
+        }
+        if (url === 'http://api.test/api/v1/risk/evaluate') {
+          return jsonResponse({
+            summary: {
+              total: 0,
+              duration_ms: 0,
+              level_counts: {},
+              reasons: {},
+              max_level: null,
+              avg_score: null,
+            },
+            results: [],
+          });
+        }
+        return jsonResponse({});
+      }),
+    );
+
+    render(<CesiumViewer />);
+    await waitFor(() => expect(vi.mocked(Viewer)).toHaveBeenCalledTimes(1));
+
+    const viewer = vi.mocked(Viewer).mock.results[0].value;
+    await waitFor(() => expect(viewer.imageryLayers.add).toHaveBeenCalledTimes(1));
+    viewer.imageryLayers.add.mockClear();
+
+    act(() => {
+      useViewModeStore.getState().enterEvent({ productId: '1' });
+    });
+
+    await waitFor(() => {
+      const layersAdded = viewer.imageryLayers.add.mock.calls.map(([layer]: [unknown]) => layer as {
+        provider?: { options?: { url?: string; rectangle?: unknown } };
+      });
+      const snow = layersAdded.find((layer) => (layer.provider?.options?.url ?? '').includes('/SNOD/'));
+      expect(snow).toBeTruthy();
+    });
+
+    viewer.imageryLayers.add.mockClear();
+
+    act(() => {
+      useEventLayersStore.getState().setMode('history');
+    });
+
+    await waitFor(() => {
+      const layersAdded = viewer.imageryLayers.add.mock.calls.map(([layer]: [unknown]) => layer as {
+        provider?: { options?: { url?: string } };
+      });
+      const history = layersAdded.find((layer) =>
+        (layer.provider?.options?.url ?? '').includes('/api/v1/tiles/statistics/'),
+      );
+      expect(history?.provider?.options?.url).toContain('/snowfall/');
+    });
+  });
+
+  it('switches to the bias layer in event mode', async () => {
+    useLayerManagerStore.setState({
+      layers: [
+        {
+          id: 'snow-depth',
+          type: 'snow-depth',
+          variable: 'SNOD',
+          opacity: 0.8,
+          visible: false,
+          zIndex: 50,
+        },
+      ],
+    });
+
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+        if (url.endsWith('/config.json')) {
+          return jsonResponse({ apiBaseUrl: 'http://api.test' });
+        }
+        if (url === 'http://api.test/api/v1/products/1') {
+          return jsonResponse({
+            id: 1,
+            title: '降雪',
+            text: '降雪预警',
+            issued_at: '2026-01-01T00:00:00Z',
+            valid_from: '2026-01-01T00:45:00Z',
+            valid_to: '2026-01-02T00:00:00Z',
+            version: 1,
+            status: 'published',
+            hazards: [
+              {
+                id: 11,
+                severity: 'high',
+                geometry: null,
+                bbox: { min_x: 126, min_y: 45, max_x: 127, max_y: 46 },
+                valid_from: '2026-01-01T00:45:00Z',
+                valid_to: '2026-01-02T00:00:00Z',
+              },
+            ],
+          });
+        }
+        if (url.startsWith('http://api.test/api/v1/analytics/bias/tile-sets')) {
+          return jsonResponse({
+            schema_version: 1,
+            generated_at: '2026-01-01T01:00:00Z',
+            items: [
+              {
+                layer: 'bias/temp',
+                time_key: '20260101T000000Z',
+                level_key: 'sfc',
+                min_zoom: 0,
+                max_zoom: 6,
+                formats: ['png'],
+                tile: {
+                  template: '/api/v1/tiles/bias/temp/20260101T000000Z/sfc/{z}/{x}/{y}.png',
+                  legend: '/api/v1/tiles/bias/temp/legend.json',
+                },
+              },
+            ],
+          });
+        }
+        if (url.startsWith('http://api.test/api/v1/risk/pois')) {
+          return jsonResponse({ page: 1, page_size: 1000, total: 0, items: [] });
+        }
+        if (url === 'http://api.test/api/v1/risk/evaluate') {
+          return jsonResponse({
+            summary: {
+              total: 0,
+              duration_ms: 0,
+              level_counts: {},
+              reasons: {},
+              max_level: null,
+              avg_score: null,
+            },
+            results: [],
+          });
+        }
+        return jsonResponse({});
+      }),
+    );
+
+    render(<CesiumViewer />);
+    await waitFor(() => expect(vi.mocked(Viewer)).toHaveBeenCalledTimes(1));
+
+    const viewer = vi.mocked(Viewer).mock.results[0].value;
+    await waitFor(() => expect(viewer.imageryLayers.add).toHaveBeenCalledTimes(1));
+    viewer.imageryLayers.add.mockClear();
+
+    act(() => {
+      useViewModeStore.getState().enterEvent({ productId: '1' });
+    });
+
+    await waitFor(() => {
+      const layersAdded = viewer.imageryLayers.add.mock.calls.map(([layer]: [unknown]) => layer as {
+        provider?: { options?: { url?: string } };
+      });
+      const snow = layersAdded.find((layer) => (layer.provider?.options?.url ?? '').includes('/SNOD/'));
+      expect(snow).toBeTruthy();
+    });
+
+    viewer.imageryLayers.add.mockClear();
+
+    act(() => {
+      useEventLayersStore.getState().setMode('difference');
+    });
+
+    await waitFor(() => {
+      const layersAdded = viewer.imageryLayers.add.mock.calls.map(([layer]: [unknown]) => layer as {
+        provider?: { options?: { url?: string } };
+      });
+      const bias = layersAdded.find((layer) =>
+        (layer.provider?.options?.url ?? '').includes('/api/v1/tiles/bias/temp/'),
+      );
+      expect(bias?.provider?.options?.url).toContain('/20260101T000000Z/sfc/');
     });
   });
 
