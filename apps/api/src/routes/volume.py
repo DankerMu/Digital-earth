@@ -38,6 +38,7 @@ VOLUME_STATS_MAX_LIMIT: Final[int] = 100
 MAX_BBOX_AREA_DEG2: Final[float] = 100.0
 MIN_RES_METERS: Final[float] = 100.0
 MAX_OUTPUT_BYTES: Final[int] = 64 * 1024 * 1024
+MAX_CACHEABLE_BYTES: Final[int] = 4 * 1024 * 1024
 
 METERS_PER_DEG_LAT: Final[float] = 111_320.0
 
@@ -75,8 +76,18 @@ class RedisVolumeLike(Protocol):
     ) -> object: ...
 
 
-def _cache_key(bbox: str, levels: str, valid_time: str | None, res: float) -> str:
-    raw = f"{bbox}|{levels}|{valid_time or 'latest'}|{res}"
+def _cache_key(
+    *,
+    bbox: BBox,
+    levels: tuple[str, ...],
+    time_key: str,
+    res_m: float,
+) -> str:
+    bbox_str = (
+        f"{bbox.west},{bbox.south},{bbox.east},{bbox.north},{bbox.bottom},{bbox.top}"
+    )
+    levels_str = ",".join(levels)
+    raw = f"{bbox_str}|{levels_str}|{time_key}|{res_m}"
     digest = hashlib.sha256(raw.encode()).hexdigest()[:32]
     return f"{VOLUME_CACHE_KEY_PREFIX}{digest}"
 
@@ -716,8 +727,19 @@ async def get_volume(
     cache_hit = False
 
     cache_key: str | None = None
-    if redis is not None and cache_ttl_seconds > 0:
-        cache_key = _cache_key(bbox_raw, levels_raw, valid_time_raw, res_m)
+    resolved_dt: datetime | None = None
+    cache_enabled = redis is not None and cache_ttl_seconds > 0
+    if cache_enabled:
+        base_dir = _resolve_volume_base_dir()
+        time_key, resolved_dt, _ = _resolve_time_dir(
+            base_dir, layer=DEFAULT_CLOUD_DENSITY_LAYER, valid_time=dt
+        )
+        cache_key = _cache_key(
+            bbox=bbox_parsed,
+            levels=levels_keys,
+            time_key=time_key,
+            res_m=res_m,
+        )
         try:
             payload = await redis.get(cache_key)
             cache_hit = payload is not None
@@ -732,9 +754,14 @@ async def get_volume(
             bbox=bbox_parsed,
             levels_keys=levels_keys,
             res_m=res_m,
-            valid_time=dt,
+            valid_time=resolved_dt if resolved_dt is not None else dt,
         )
-        if redis is not None and cache_key is not None and cache_ttl_seconds > 0:
+        if (
+            redis is not None
+            and cache_key is not None
+            and cache_ttl_seconds > 0
+            and len(payload) <= MAX_CACHEABLE_BYTES
+        ):
             try:
                 await redis.set(cache_key, payload, ex=cache_ttl_seconds)
             except Exception as exc:  # noqa: BLE001

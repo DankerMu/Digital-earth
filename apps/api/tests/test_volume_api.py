@@ -231,11 +231,15 @@ def test_volume_caches_volume_pack_payload_in_redis(
     response = client.get("/api/v1/volume", params=params)
     assert response.status_code == 200
 
+    bbox_parsed = volume_routes._parse_bbox(params["bbox"])
+    levels_keys = volume_routes._parse_levels(params["levels"])
+    dt = volume_routes._parse_valid_time(params["valid_time"])
+    time_key = volume_routes._time_key(dt)
     cache_key = volume_routes._cache_key(
-        params["bbox"],
-        params["levels"],
-        params["valid_time"],
-        float(params["res"]),
+        bbox=bbox_parsed,
+        levels=levels_keys,
+        time_key=time_key,
+        res_m=float(params["res"]),
     )
     assert cache_key in redis.values
     assert int(redis.expires_at[cache_key] - redis.now()) == 3600
@@ -247,6 +251,151 @@ def test_volume_caches_volume_pack_payload_in_redis(
     cached = client.get("/api/v1/volume", params=params)
     assert cached.status_code == 200
     assert cached.content == response.content
+
+
+def test_volume_cache_key_is_canonicalized(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    redis = FakeRedis()
+    base_dir = tmp_path / "volume-data"
+    time_key = "20260101T000000Z"
+    valid_time = "2026-01-01T00:00:00"
+
+    time_dir = base_dir / DEFAULT_CLOUD_DENSITY_LAYER / time_key
+    lat = [0.0, 0.1, 0.2]
+    lon = [0.0, 0.1, 0.2]
+    values = np.ones((3, 3), dtype=np.float32)
+    _write_cloud_density_slice(
+        time_dir / "300.nc",
+        valid_time=valid_time,
+        level=300,
+        lat=lat,
+        lon=lon,
+        values=values,
+    )
+
+    client = _make_client(monkeypatch, tmp_path, volume_data_dir=base_dir, redis=redis)
+
+    noisy = {
+        "bbox": " 0, 0, 0.2,0.2, 0, 12000 ",
+        "levels": " 300 ",
+        "res": "11132.000",
+        "valid_time": "2026-01-01T00:00:00+00:00",
+    }
+    response = client.get("/api/v1/volume", params=noisy)
+    assert response.status_code == 200
+
+    def _unexpected(*args: object, **kwargs: object) -> object:
+        raise AssertionError("expected cache hit for canonicalized params")
+
+    monkeypatch.setattr(volume_routes, "_read_cloud_density_grid", _unexpected)
+    canonical = {
+        "bbox": "0,0,0.2,0.2,0,12000",
+        "levels": "300",
+        "res": "11132",
+        "valid_time": "2026-01-01T00:00:00Z",
+    }
+    cached = client.get("/api/v1/volume", params=canonical)
+    assert cached.status_code == 200
+    assert cached.content == response.content
+
+
+def test_volume_latest_cache_key_updates_when_new_time_arrives(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    redis = FakeRedis(use_real_time=False)
+    base_dir = tmp_path / "volume-data"
+    bbox = "0,0,0.2,0.2,0,12000"
+    params = {"bbox": bbox, "levels": "300", "res": "11132"}
+
+    time_key_a = "20260101T000000Z"
+    time_dir_a = base_dir / DEFAULT_CLOUD_DENSITY_LAYER / time_key_a
+    values_a = np.zeros((3, 3), dtype=np.float32)
+    _write_cloud_density_slice(
+        time_dir_a / "300.nc",
+        valid_time="2026-01-01T00:00:00",
+        level=300,
+        lat=[0.0, 0.1, 0.2],
+        lon=[0.0, 0.1, 0.2],
+        values=values_a,
+    )
+
+    client = _make_client(monkeypatch, tmp_path, volume_data_dir=base_dir, redis=redis)
+    first = client.get("/api/v1/volume", params=params)
+    assert first.status_code == 200
+    first_header, _ = decode_volume_pack(first.content)
+    assert first_header["valid_time"] == "2026-01-01T00:00:00Z"
+
+    time_key_b = "20260201T000000Z"
+    time_dir_b = base_dir / DEFAULT_CLOUD_DENSITY_LAYER / time_key_b
+    values_b = np.ones((3, 3), dtype=np.float32)
+    _write_cloud_density_slice(
+        time_dir_b / "300.nc",
+        valid_time="2026-02-01T00:00:00",
+        level=300,
+        lat=[0.0, 0.1, 0.2],
+        lon=[0.0, 0.1, 0.2],
+        values=values_b,
+    )
+
+    second = client.get("/api/v1/volume", params=params)
+    assert second.status_code == 200
+    second_header, _ = decode_volume_pack(second.content)
+    assert second_header["valid_time"] == "2026-02-01T00:00:00Z"
+
+    bbox_parsed = volume_routes._parse_bbox(bbox)
+    levels_keys = volume_routes._parse_levels(params["levels"])
+    expected_a = volume_routes._cache_key(
+        bbox=bbox_parsed,
+        levels=levels_keys,
+        time_key=time_key_a,
+        res_m=float(params["res"]),
+    )
+    expected_b = volume_routes._cache_key(
+        bbox=bbox_parsed,
+        levels=levels_keys,
+        time_key=time_key_b,
+        res_m=float(params["res"]),
+    )
+    assert expected_a in redis.values
+    assert expected_b in redis.values
+
+
+def test_volume_skips_caching_when_payload_too_large(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    redis = FakeRedis(use_real_time=False)
+    base_dir = tmp_path / "volume-data"
+    time_key = "20260101T000000Z"
+    (base_dir / DEFAULT_CLOUD_DENSITY_LAYER / time_key).mkdir(parents=True)
+
+    def _fake_payload(*args: object, **kwargs: object) -> bytes:
+        return b"x" * (volume_routes.MAX_CACHEABLE_BYTES + 1)
+
+    monkeypatch.setattr(volume_routes, "_compute_volume_payload", _fake_payload)
+
+    client = _make_client(monkeypatch, tmp_path, volume_data_dir=base_dir, redis=redis)
+    params = {
+        "bbox": "0,0,0.2,0.2,0,12000",
+        "levels": "300",
+        "res": "11132",
+        "valid_time": "2026-01-01T00:00:00Z",
+    }
+
+    response = client.get("/api/v1/volume", params=params)
+    assert response.status_code == 200
+    assert len(response.content) == volume_routes.MAX_CACHEABLE_BYTES + 1
+
+    bbox_parsed = volume_routes._parse_bbox(params["bbox"])
+    levels_keys = volume_routes._parse_levels(params["levels"])
+    dt = volume_routes._parse_valid_time(params["valid_time"])
+    expected_cache_key = volume_routes._cache_key(
+        bbox=bbox_parsed,
+        levels=levels_keys,
+        time_key=volume_routes._time_key(dt),
+        res_m=float(params["res"]),
+    )
+    assert expected_cache_key not in redis.values
 
 
 def test_volume_audit_log_includes_cache_hit(
