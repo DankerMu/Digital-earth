@@ -184,6 +184,11 @@ export class VoxelCloudRenderer {
     this.viewer.scene.requestRender();
   }
 
+  setRaySteps(raySteps: number): void {
+    const normalized = Math.round(clamp(raySteps, 1, 512));
+    this.updateSettings({ maxSteps: normalized });
+  }
+
   updateSettings(partial: Partial<Omit<VoxelCloudSettings, 'enabled'>>): void {
     this.settings = { ...this.settings, ...partial };
     this.viewer.scene.requestRender();
