@@ -4,6 +4,7 @@ import {
   CustomDataSource,
   CesiumTerrainProvider,
   Color,
+  createOsmBuildingsAsync,
   createWorldImageryAsync,
   createWorldTerrainAsync,
   Ellipsoid,
@@ -22,6 +23,9 @@ import {
   UrlTemplateImageryProvider,
   Viewer,
   WebMercatorTilingScheme,
+  type Cesium3DTileset,
+  type PrimitiveCollection,
+  type Scene,
   type Viewer as CesiumViewerInstance
 } from 'cesium';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
@@ -36,6 +40,7 @@ import {
 } from '../../state/eventAutoLayers';
 import { useEventLayersStore } from '../../state/eventLayers';
 import { useLayerManagerStore, type LayerConfig, type LayerType } from '../../state/layerManager';
+import { useOsmBuildingsStore } from '../../state/osmBuildings';
 import { usePerformanceModeStore } from '../../state/performanceMode';
 import { useSceneModeStore } from '../../state/sceneMode';
 import { useTimeStore } from '../../state/time';
@@ -667,6 +672,7 @@ export function CesiumViewer() {
   const performanceMode = usePerformanceModeStore((state) => state.mode);
   const lowModeEnabled = performanceMode === 'low';
   const setPerformanceMode = usePerformanceModeStore((state) => state.setMode);
+  const osmBuildingsEnabled = useOsmBuildingsStore((state) => state.enabled);
   const cameraPerspectiveId = useCameraPerspectiveStore((state) => state.cameraPerspectiveId);
   const appliedBasemapIdRef = useRef<BasemapId | null>(null);
   const didApplySceneModeRef = useRef(false);
@@ -715,6 +721,9 @@ export function CesiumViewer() {
   const weatherAbortRef = useRef<AbortController | null>(null);
   const cloudSamplerRef = useRef<ReturnType<typeof createCloudSampler> | null>(null);
   const samplingAbortRef = useRef<AbortController | null>(null);
+  const osmBuildingsTilesetRef = useRef<Cesium3DTileset | null>(null);
+  const osmBuildingsLoadingRef = useRef<Promise<Cesium3DTileset> | null>(null);
+  const osmBuildingsTilesetCleanupRef = useRef<(() => void) | null>(null);
   const [cloudFrameIndex, setCloudFrameIndex] = useState(0);
   const [eventMonitoringTimeKey, setEventMonitoringTimeKey] = useState<string | null>(null);
   const [eventMonitoringRectangle, setEventMonitoringRectangle] = useState<{
@@ -1121,6 +1130,119 @@ export function CesiumViewer() {
     if (!token) return;
     Ion.defaultAccessToken = token;
   }, [mapConfig?.cesiumIonAccessToken]);
+
+  useEffect(() => {
+    if (!viewer) return;
+    return () => {
+      osmBuildingsLoadingRef.current = null;
+      osmBuildingsTilesetCleanupRef.current?.();
+      osmBuildingsTilesetCleanupRef.current = null;
+      const existing = osmBuildingsTilesetRef.current;
+      if (!existing) return;
+      osmBuildingsTilesetRef.current = null;
+      try {
+        viewer.scene.primitives.remove(existing);
+      } catch {
+        // ignore teardown errors
+      }
+      try {
+        existing.destroy();
+      } catch {
+        // ignore teardown errors
+      }
+    };
+  }, [viewer]);
+
+  useEffect(() => {
+    if (!viewer) return;
+
+    const active =
+      osmBuildingsEnabled &&
+      !lowModeEnabled &&
+      viewModeRoute.viewModeId !== 'layerGlobal' &&
+      sceneModeId === '3d';
+
+    const scene: Scene = viewer.scene;
+    const primitives: PrimitiveCollection = scene.primitives;
+
+    if (!active) {
+      osmBuildingsLoadingRef.current = null;
+      osmBuildingsTilesetCleanupRef.current?.();
+      osmBuildingsTilesetCleanupRef.current = null;
+      const existing = osmBuildingsTilesetRef.current;
+      if (existing) {
+        osmBuildingsTilesetRef.current = null;
+        primitives.remove(existing);
+        try {
+          existing.destroy();
+        } catch {
+          // ignore teardown errors
+        }
+        scene.requestRender();
+      }
+      return;
+    }
+
+    const token = mapConfig?.cesiumIonAccessToken;
+    if (!token) return;
+
+    const existing = osmBuildingsTilesetRef.current;
+    if (existing) {
+      existing.show = true;
+      scene.requestRender();
+      return;
+    }
+
+    if (osmBuildingsLoadingRef.current) return;
+
+    let cancelled = false;
+    const loadPromise = createOsmBuildingsAsync();
+    osmBuildingsLoadingRef.current = loadPromise;
+
+    void loadPromise
+      .then((tileset) => {
+        if (cancelled) {
+          tileset.destroy();
+          return;
+        }
+
+        if (!Object.is(osmBuildingsLoadingRef.current, loadPromise)) {
+          tileset.destroy();
+          return;
+        }
+
+        osmBuildingsLoadingRef.current = null;
+        osmBuildingsTilesetRef.current = tileset;
+        tileset.show = true;
+
+        osmBuildingsTilesetCleanupRef.current?.();
+        const requestRender = () => {
+          scene.requestRender();
+        };
+        tileset.loadProgress.addEventListener(requestRender);
+        tileset.allTilesLoaded.addEventListener(requestRender);
+        tileset.initialTilesLoaded.addEventListener(requestRender);
+        osmBuildingsTilesetCleanupRef.current = () => {
+          tileset.loadProgress.removeEventListener(requestRender);
+          tileset.allTilesLoaded.removeEventListener(requestRender);
+          tileset.initialTilesLoaded.removeEventListener(requestRender);
+        };
+
+        // Add buildings below other primitives so weather and overlays can still render on top.
+        primitives.add(tileset, 0);
+        scene.requestRender();
+      })
+      .catch((error: unknown) => {
+        if (cancelled) return;
+        if (!Object.is(osmBuildingsLoadingRef.current, loadPromise)) return;
+        osmBuildingsLoadingRef.current = null;
+        console.warn('[Digital Earth] failed to load Cesium OSM Buildings', error);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [lowModeEnabled, mapConfig?.cesiumIonAccessToken, osmBuildingsEnabled, sceneModeId, viewModeRoute.viewModeId, viewer]);
 
   useEffect(() => {
     if (!viewer) return;
