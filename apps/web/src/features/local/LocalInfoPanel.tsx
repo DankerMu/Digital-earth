@@ -1,4 +1,5 @@
 import type { LayerConfig } from '../../state/layerManager';
+import { useAircraftDemoStore } from '../../state/aircraftDemo';
 import { useCameraPerspectiveStore, type CameraPerspectiveId } from '../../state/cameraPerspective';
 
 const PERSPECTIVE_LABELS: Record<CameraPerspectiveId, string> = {
@@ -79,6 +80,8 @@ export function LocalInfoPanel({
   onBack,
   onLockLayer,
 }: LocalInfoPanelProps) {
+  const aircraftEnabled = useAircraftDemoStore((state) => state.enabled);
+  const setAircraftEnabled = useAircraftDemoStore((state) => state.setEnabled);
   const cameraPerspectiveId = useCameraPerspectiveStore((state) => state.cameraPerspectiveId);
   const setCameraPerspectiveId = useCameraPerspectiveStore((state) => state.setCameraPerspectiveId);
 
@@ -131,6 +134,20 @@ export function LocalInfoPanel({
             </button>
           ))}
         </div>
+      </div>
+
+      <div className="mt-3 flex items-center justify-between gap-3">
+        <div className="text-xs text-slate-400">演示</div>
+        <label className="flex items-center gap-2 text-xs text-slate-200">
+          <span className="select-none">飞行器</span>
+          <input
+            type="checkbox"
+            className="h-4 w-4 accent-blue-400"
+            checked={aircraftEnabled}
+            onChange={(event) => setAircraftEnabled(event.target.checked)}
+            aria-label="显示飞行器"
+          />
+        </label>
       </div>
 
       <dl className="mt-3 grid grid-cols-[1fr_auto] gap-x-3 gap-y-2 text-sm">

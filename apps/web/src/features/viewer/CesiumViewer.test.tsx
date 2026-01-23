@@ -432,6 +432,7 @@ import { DEFAULT_BASEMAP_ID } from '../../config/basemaps';
 import { clearProductsCache } from '../products/productsApi';
 import { clearCldasTileProbeCache } from '../layers/layersApi';
 import { useBasemapStore } from '../../state/basemap';
+import { useAircraftDemoStore } from '../../state/aircraftDemo';
 import { DEFAULT_CAMERA_PERSPECTIVE_ID, useCameraPerspectiveStore } from '../../state/cameraPerspective';
 import { useEventAutoLayersStore } from '../../state/eventAutoLayers';
 import { DEFAULT_EVENT_LAYER_MODE, useEventLayersStore } from '../../state/eventLayers';
@@ -471,7 +472,9 @@ describe('CesiumViewer', () => {
     localStorage.removeItem('digital-earth.viewMode');
     localStorage.removeItem('digital-earth.cameraPerspective');
     localStorage.removeItem('digital-earth.osmBuildings');
+    localStorage.removeItem('digital-earth.aircraftDemo');
     useBasemapStore.setState({ basemapId: DEFAULT_BASEMAP_ID });
+    useAircraftDemoStore.setState({ enabled: false });
     useCameraPerspectiveStore.setState({ cameraPerspectiveId: DEFAULT_CAMERA_PERSPECTIVE_ID });
     useEventAutoLayersStore.setState({ restoreOnExit: true, overrides: {} });
     useEventLayersStore.setState({ enabled: true, mode: DEFAULT_EVENT_LAYER_MODE });
