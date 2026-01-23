@@ -103,7 +103,9 @@ class FakeRedis:
     ) -> object:
         self._purge_if_expired(key)
         entries = self.zsets.get(key, {})
-        items = sorted(entries.items(), key=lambda item: (item[1], item[0]), reverse=True)
+        items = sorted(
+            entries.items(), key=lambda item: (item[1], item[0]), reverse=True
+        )
 
         resolved_start = max(0, int(start))
         resolved_end = int(end)
