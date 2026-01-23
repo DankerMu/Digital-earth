@@ -62,6 +62,20 @@ test('throws on truncated header', () => {
   expect(() => decodeVolumePack(out)).toThrow(/truncated/i);
 });
 
+test('throws on header length zero', () => {
+  const out = new Uint8Array(8);
+  out.set([0x56, 0x4f, 0x4c, 0x50], 0);
+  new DataView(out.buffer).setUint32(4, 0, true);
+  expect(() => decodeVolumePack(out)).toThrow(/header length/i);
+});
+
+test('throws on header length exceeds maximum', () => {
+  const out = new Uint8Array(8);
+  out.set([0x56, 0x4f, 0x4c, 0x50], 0);
+  new DataView(out.buffer).setUint32(4, 1024 * 1024 + 1, true);
+  expect(() => decodeVolumePack(out)).toThrow(/header.*large/i);
+});
+
 test('throws on invalid header JSON', () => {
   const headerBytes = new Uint8Array([0x7b, 0x7d, 0x2c]); // "{},"
   const out = new Uint8Array(8 + headerBytes.byteLength);
@@ -87,6 +101,24 @@ test('throws on unsupported dtype', async () => {
     body,
   );
   expect(() => decodeVolumePack(pack)).toThrow(/dtype/i);
+});
+
+test('throws on prototype-chain dtype', async () => {
+  const values = new Float32Array([1]);
+  const pack = await buildPack(
+    { shape: [1, 1, 1], dtype: 'toString', scale: 1, offset: 0, compression: 'zstd' },
+    new Uint8Array(values.buffer),
+  );
+  expect(() => decodeVolumePack(pack)).toThrow(/dtype/i);
+});
+
+test('throws on invalid shape', async () => {
+  const body = new Uint8Array([0, 0, 0, 0]);
+  const pack = await buildPack(
+    { shape: [0, 1, 1], dtype: 'float32', scale: 1, offset: 0, compression: 'zstd' },
+    body,
+  );
+  expect(() => decodeVolumePack(pack)).toThrow(/shape/i);
 });
 
 test('throws on decoded body size mismatch', async () => {

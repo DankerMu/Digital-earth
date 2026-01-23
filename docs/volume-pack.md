@@ -91,7 +91,20 @@ values:
 
 For unscaled floats, use `scale = 1.0` and `offset = 0.0`.
 
-## 5) Versioning & compatibility rules
+## 5) Defensive limits
+
+Implementations use conservative size limits to reduce denial-of-service risk when
+decoding untrusted payloads:
+
+- **Max header bytes**: `1 MiB` (1,048,576 bytes). `Header Len` must be `>= 1` and
+  `<= 1 MiB`.
+- **Max body bytes (decoded)**: `256 MiB` (268,435,456 bytes). The decoded body must
+  match `shape[0] * shape[1] * shape[2] * bytesPerElement(dtype)` and must be
+  `<= 256 MiB`.
+- **Default scale/offset**: if missing or invalid, decoders use `scale = 1.0` and
+  `offset = 0.0`.
+
+## 6) Versioning & compatibility rules
 
 - The fixed binary prefix (`VOLP` + header length + JSON header) is intended to stay
   stable across header schema versions.
@@ -102,8 +115,7 @@ For unscaled floats, use `scale = 1.0` and `offset = 0.0`.
 - If a future change requires a breaking binary layout, it must use a **different**
   4-byte magic value so old clients fail fast with a clear “unknown format” error.
 
-## 6) Reference implementations
+## 7) Reference implementations
 
 - Python encoder/decoder: `services/data-pipeline/src/volume/pack.py`
 - TypeScript decoder: `apps/web/src/lib/volumePack.ts`
-

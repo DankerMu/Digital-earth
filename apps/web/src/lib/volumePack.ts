@@ -34,6 +34,7 @@ export type VolumePackDecoded<T extends ArrayBufferView = ArrayBufferView> = {
 
 const MAGIC = new Uint8Array([0x56, 0x4f, 0x4c, 0x50]); // "VOLP"
 const MAX_HEADER_BYTES = 1024 * 1024;
+const MAX_BODY_BYTES = 256 * 1024 * 1024;
 
 const DTYPE_TABLE = {
   uint8: { bytesPerElement: 1, ctor: Uint8Array },
@@ -76,7 +77,7 @@ function parseShape(value: unknown): [number, number, number] {
 
 function parseDtype(value: unknown): VolumePackHeader['dtype'] {
   const dtype = String(value);
-  if (!(dtype in DTYPE_TABLE)) {
+  if (!Object.hasOwn(DTYPE_TABLE, dtype)) {
     throw new Error(`Unsupported Volume Pack dtype: ${dtype}`);
   }
   return dtype as VolumePackHeader['dtype'];
@@ -134,14 +135,20 @@ export function decodeVolumePack(input: ArrayBuffer | Uint8Array): VolumePackDec
   const shape = parseShape(header.shape);
   const dtype = parseDtype(header.dtype);
   const { bytesPerElement, ctor } = DTYPE_TABLE[dtype];
-  const scale = Number(header.scale ?? 1.0);
-  const offset = Number(header.offset ?? 0.0);
+  const scaleRaw = Number(header.scale ?? 1.0);
+  const scale = Number.isFinite(scaleRaw) ? scaleRaw : 1.0;
+  const offsetRaw = Number(header.offset ?? 0.0);
+  const offset = Number.isFinite(offsetRaw) ? offsetRaw : 0.0;
+
+  const elementsBig = BigInt(shape[0]) * BigInt(shape[1]) * BigInt(shape[2]);
+  const expectedBytesBig = elementsBig * BigInt(bytesPerElement);
+  if (expectedBytesBig > BigInt(MAX_BODY_BYTES)) {
+    throw new Error('Volume Pack decoded body is too large');
+  }
+  const expectedBytes = Number(expectedBytesBig);
 
   const bodyCompressed = bytes.slice(headerEnd);
   const body = decompress(bodyCompressed);
-
-  const elements = shape[0] * shape[1] * shape[2];
-  const expectedBytes = elements * bytesPerElement;
   if (body.byteLength !== expectedBytes) {
     throw new Error(
       `Volume Pack decoded body size mismatch (expected=${expectedBytes}, got=${body.byteLength})`,
@@ -165,4 +172,3 @@ export function decodeVolumePack(input: ArrayBuffer | Uint8Array): VolumePackDec
     data,
   };
 }
-

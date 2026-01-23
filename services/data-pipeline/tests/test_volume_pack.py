@@ -272,6 +272,28 @@ def test_decode_normalizes_version_lt_1() -> None:
     assert header["version"] == 1
 
 
+def test_decode_rejects_invalid_dtype_format() -> None:
+    from volume.pack import MAGIC, decode_volume_pack
+
+    header = {"shape": [1, 1, 1], "dtype": "", "compression": "zstd"}
+    header_bytes = json.dumps(header).encode("utf-8")
+    payload = MAGIC + len(header_bytes).to_bytes(4, "little") + header_bytes + b""
+    with pytest.raises(ValueError, match="Invalid dtype"):
+        decode_volume_pack(payload)
+
+
+def test_decode_rejects_body_size_exceeds_maximum() -> None:
+    from volume.pack import MAGIC, MAX_BODY_BYTES, decode_volume_pack
+
+    # float32 is 4 bytes; pick a shape that exceeds the decoder's max size
+    lon = (MAX_BODY_BYTES // 4) + 1
+    header = {"shape": [1, 1, lon], "dtype": "float32", "compression": "zstd"}
+    header_bytes = json.dumps(header).encode("utf-8")
+    payload = MAGIC + len(header_bytes).to_bytes(4, "little") + header_bytes + b""
+    with pytest.raises(ValueError, match="exceeds maximum"):
+        decode_volume_pack(payload)
+
+
 def test_write_and_read_volume_pack(tmp_path) -> None:
     from volume.pack import read_volume_pack, write_volume_pack
 

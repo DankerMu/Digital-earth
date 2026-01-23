@@ -14,6 +14,7 @@ _HEADER_LEN: Final[struct.Struct] = struct.Struct("<I")
 # Defensive limits: headers should be tiny (JSON metadata), and bodies are bounded
 # by the declared shape+dtype for decoding.
 MAX_HEADER_BYTES: Final[int] = 1024 * 1024  # 1 MiB
+MAX_BODY_BYTES: Final[int] = 256 * 1024 * 1024  # 256 MiB
 
 _SUPPORTED_DTYPES: Final[dict[str, np.dtype]] = {
     "uint8": np.dtype("uint8"),
@@ -25,10 +26,13 @@ _SUPPORTED_DTYPES: Final[dict[str, np.dtype]] = {
 
 
 def _normalize_dtype(value: str | np.dtype) -> np.dtype:
-    if isinstance(value, np.dtype):
-        dtype = value
-    else:
-        dtype = np.dtype(str(value))
+    try:
+        if isinstance(value, np.dtype):
+            dtype = value
+        else:
+            dtype = np.dtype(str(value))
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"Invalid dtype {value!r}") from exc
 
     # Normalize endian for multi-byte dtypes. (uint8 is endian-agnostic.)
     if dtype.itemsize > 1:
@@ -169,6 +173,8 @@ def decode_volume_pack(
     expected_nbytes = elements * int(dtype.itemsize)
     if expected_nbytes <= 0:
         raise ValueError("invalid decoded byte size")
+    if expected_nbytes > MAX_BODY_BYTES:
+        raise ValueError("decoded body size exceeds maximum")
 
     body = view[header_end:].tobytes()
     decompressor = zstd.ZstdDecompressor()
