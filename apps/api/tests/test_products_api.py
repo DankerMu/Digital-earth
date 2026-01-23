@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -390,6 +391,99 @@ def test_products_endpoint_etag_returns_304_on_match(
     assert cached.status_code == 304
 
 
+def test_products_endpoint_etag_supports_multiple_values_and_star(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    db_url = f"sqlite+pysqlite:///{tmp_path / 'products.db'}"
+    _seed_products(db_url)
+
+    client = _make_client(monkeypatch, tmp_path, db_url=db_url)
+    response = client.get("/api/v1/products")
+    assert response.status_code == 200
+    etag = response.headers.get("etag")
+    assert etag
+
+    cached_multi = client.get(
+        "/api/v1/products",
+        headers={"if-none-match": f'"bogus", {etag}, "other"'},
+    )
+    assert cached_multi.status_code == 304
+
+    cached_star = client.get("/api/v1/products", headers={"if-none-match": "*"})
+    assert cached_star.status_code == 304
+
+
+def test_products_endpoint_does_not_recompute_etag_on_cache_hit(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    db_url = f"sqlite+pysqlite:///{tmp_path / 'products.db'}"
+    _seed_products(db_url)
+
+    client = _make_client(monkeypatch, tmp_path, db_url=db_url)
+    first = client.get("/api/v1/products")
+    assert first.status_code == 200
+    etag = first.headers.get("etag")
+    assert etag
+
+    from routers import products as products_router
+
+    def _boom(*_args: object, **_kwargs: object) -> None:
+        raise RuntimeError("db should not be hit on cache")
+
+    def _etag_boom(_body: bytes) -> str:
+        raise RuntimeError("etag should be served from cache")
+
+    monkeypatch.setattr(products_router, "_query_product_summaries", _boom)
+    monkeypatch.setattr(products_router, "_make_etag", _etag_boom)
+
+    second = client.get("/api/v1/products")
+    assert second.status_code == 200
+    assert second.headers.get("etag") == etag
+
+
+def test_products_endpoint_cache_control_is_private_for_draft_filter(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    db_url = f"sqlite+pysqlite:///{tmp_path / 'products-edit.db'}"
+    from models import Base
+
+    Base.metadata.create_all(create_engine(db_url))
+    monkeypatch.setenv("ENABLE_EDITOR", "1")
+
+    client = _make_client(monkeypatch, tmp_path, db_url=db_url)
+
+    created = client.post(
+        "/api/v1/products",
+        json={
+            "title": "Draft",
+            "issued_at": "2026-01-01T00:00:00Z",
+            "valid_from": "2026-01-01T00:00:00Z",
+            "valid_to": "2026-01-02T00:00:00Z",
+            "hazards": [],
+        },
+    )
+    assert created.status_code == 201
+
+    first = client.get("/api/v1/products", params={"status": "draft"})
+    assert first.status_code == 200
+    assert first.json()["total"] == 1
+    assert "private" in (first.headers.get("cache-control") or "")
+    assert "public" not in (first.headers.get("cache-control") or "")
+
+    from routers import products as products_router
+
+    def _boom(*_args: object, **_kwargs: object) -> None:
+        raise RuntimeError("db should not be hit on cache")
+
+    monkeypatch.setattr(products_router, "_query_product_summaries", _boom)
+
+    second = client.get("/api/v1/products", params={"status": "draft"})
+    assert second.status_code == 200
+    assert second.json()["total"] == 1
+    assert "private" in (second.headers.get("cache-control") or "")
+    assert "public" not in (second.headers.get("cache-control") or "")
+
+
 def test_product_detail_endpoint_is_cached_between_requests(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -416,6 +510,128 @@ def test_product_detail_endpoint_is_cached_between_requests(
     assert second.json()["title"] == "降雪"
 
 
+def test_product_detail_endpoint_cache_control_is_public_for_published(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    db_url = f"sqlite+pysqlite:///{tmp_path / 'products.db'}"
+    _seed_products(db_url)
+
+    client = _make_client(monkeypatch, tmp_path, db_url=db_url)
+    products = client.get("/api/v1/products").json()["items"]
+    product_id = next(item["id"] for item in products if item["title"] == "降雪")
+
+    first = client.get(f"/api/v1/products/{product_id}")
+    assert first.status_code == 200
+    assert "public" in (first.headers.get("cache-control") or "")
+
+    from routers import products as products_router
+
+    def _boom(*_args: object, **_kwargs: object) -> None:
+        raise RuntimeError("db should not be hit on cache")
+
+    monkeypatch.setattr(products_router, "_query_product_detail", _boom)
+
+    second = client.get(f"/api/v1/products/{product_id}")
+    assert second.status_code == 200
+    assert "public" in (second.headers.get("cache-control") or "")
+
+
+def test_product_detail_endpoint_cache_control_is_private_for_draft(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    db_url = f"sqlite+pysqlite:///{tmp_path / 'products-edit.db'}"
+    from models import Base
+
+    Base.metadata.create_all(create_engine(db_url))
+    monkeypatch.setenv("ENABLE_EDITOR", "1")
+
+    client = _make_client(monkeypatch, tmp_path, db_url=db_url)
+
+    created = client.post(
+        "/api/v1/products",
+        json={
+            "title": "Draft",
+            "issued_at": "2026-01-01T00:00:00Z",
+            "valid_from": "2026-01-01T00:00:00Z",
+            "valid_to": "2026-01-02T00:00:00Z",
+            "hazards": [],
+        },
+    )
+    assert created.status_code == 201
+    product_id = created.json()["id"]
+
+    first = client.get(f"/api/v1/products/{product_id}")
+    assert first.status_code == 200
+    assert "private" in (first.headers.get("cache-control") or "")
+    assert "public" not in (first.headers.get("cache-control") or "")
+
+    from routers import products as products_router
+
+    def _boom(*_args: object, **_kwargs: object) -> None:
+        raise RuntimeError("db should not be hit on cache")
+
+    monkeypatch.setattr(products_router, "_query_product_detail", _boom)
+
+    second = client.get(f"/api/v1/products/{product_id}")
+    assert second.status_code == 200
+    assert "private" in (second.headers.get("cache-control") or "")
+    assert "public" not in (second.headers.get("cache-control") or "")
+
+
+def test_product_detail_endpoint_cache_keys_use_hashed_identity(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    db_url = f"sqlite+pysqlite:///{tmp_path / 'products.db'}"
+    _seed_products(db_url)
+
+    client = _make_client(monkeypatch, tmp_path, db_url=db_url)
+    products = client.get("/api/v1/products").json()["items"]
+    product_id = next(item["id"] for item in products if item["title"] == "降雪")
+
+    response = client.get(f"/api/v1/products/{product_id}")
+    assert response.status_code == 200
+
+    redis = client.app.state.redis_client
+    epoch_key = f"products:detail:epoch:{product_id}"
+    epoch = redis.values[epoch_key].decode("utf-8")
+    identity = f"epoch={epoch}:product={product_id}"
+    identity_hash = hashlib.sha256(identity.encode("utf-8")).hexdigest()
+
+    assert f"products:detail:fresh:{identity_hash}" in redis.values
+    assert f"products:detail:stale:{identity_hash}" in redis.values
+
+
+def test_product_detail_endpoint_does_not_recompute_etag_on_cache_hit(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    db_url = f"sqlite+pysqlite:///{tmp_path / 'products.db'}"
+    _seed_products(db_url)
+
+    client = _make_client(monkeypatch, tmp_path, db_url=db_url)
+    products = client.get("/api/v1/products").json()["items"]
+    product_id = next(item["id"] for item in products if item["title"] == "降雪")
+
+    first = client.get(f"/api/v1/products/{product_id}")
+    assert first.status_code == 200
+    etag = first.headers.get("etag")
+    assert etag
+
+    from routers import products as products_router
+
+    def _boom(*_args: object, **_kwargs: object) -> None:
+        raise RuntimeError("db should not be hit on cache")
+
+    def _etag_boom(_body: bytes) -> str:
+        raise RuntimeError("etag should be served from cache")
+
+    monkeypatch.setattr(products_router, "_query_product_detail", _boom)
+    monkeypatch.setattr(products_router, "_make_etag", _etag_boom)
+
+    second = client.get(f"/api/v1/products/{product_id}")
+    assert second.status_code == 200
+    assert second.headers.get("etag") == etag
+
+
 def test_product_detail_endpoint_etag_returns_304_on_match(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -435,6 +651,33 @@ def test_product_detail_endpoint_etag_returns_304_on_match(
         f"/api/v1/products/{product_id}", headers={"if-none-match": etag}
     )
     assert cached.status_code == 304
+
+
+def test_product_detail_endpoint_etag_supports_multiple_values_and_star(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    db_url = f"sqlite+pysqlite:///{tmp_path / 'products.db'}"
+    _seed_products(db_url)
+
+    client = _make_client(monkeypatch, tmp_path, db_url=db_url)
+    products = client.get("/api/v1/products").json()["items"]
+    product_id = next(item["id"] for item in products if item["title"] == "降雪")
+
+    response = client.get(f"/api/v1/products/{product_id}")
+    assert response.status_code == 200
+    etag = response.headers.get("etag")
+    assert etag
+
+    cached_multi = client.get(
+        f"/api/v1/products/{product_id}",
+        headers={"if-none-match": f'"bogus", {etag}, "other"'},
+    )
+    assert cached_multi.status_code == 304
+
+    cached_star = client.get(
+        f"/api/v1/products/{product_id}", headers={"if-none-match": "*"}
+    )
+    assert cached_star.status_code == 304
 
 
 def test_products_snapshot_helpers_support_non_utc_isoformat_and_memoryview_geometry() -> (
