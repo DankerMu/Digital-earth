@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from typing import Any, Optional
 
 from fastapi import APIRouter, status
+from fastapi.responses import Response
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 logger = logging.getLogger("api.error")
@@ -62,8 +63,12 @@ class ErrorReport(BaseModel):
         return value.astimezone(timezone.utc)
 
 
-@router.post("/errors", status_code=status.HTTP_204_NO_CONTENT)
-def report_frontend_error(report: ErrorReport) -> None:
+@router.post(
+    "/errors",
+    status_code=status.HTTP_204_NO_CONTENT,
+    response_class=Response,
+)
+def report_frontend_error(report: ErrorReport) -> Response:
     logger.error(
         "frontend.error_reported",
         extra={
@@ -72,3 +77,4 @@ def report_frontend_error(report: ErrorReport) -> None:
             "reported_at": _format_timestamp(report.timestamp),
         },
     )
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

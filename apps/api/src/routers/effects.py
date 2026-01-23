@@ -123,12 +123,16 @@ class EffectTriggerLogsIngestRequest(BaseModel):
     events: list[EffectTriggerEvent] = Field(min_length=1, max_length=1000)
 
 
-@router.post("/trigger-logs", status_code=status.HTTP_204_NO_CONTENT)
-def ingest_effect_trigger_logs(payload: EffectTriggerLogsIngestRequest) -> None:
+@router.post(
+    "/trigger-logs",
+    status_code=status.HTTP_204_NO_CONTENT,
+    response_class=Response,
+)
+def ingest_effect_trigger_logs(payload: EffectTriggerLogsIngestRequest) -> Response:
     settings = get_settings()
     config = settings.api.effect_trigger_logging
     if not config.enabled:
-        return
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
 
     if len(payload.events) > config.max_events_per_request:
         raise HTTPException(status_code=413, detail="Too many events in request")
@@ -160,7 +164,7 @@ def ingest_effect_trigger_logs(payload: EffectTriggerLogsIngestRequest) -> None:
         )
 
     if not records:
-        return
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
 
     try:
         with Session(db.get_engine()) as session:
@@ -169,6 +173,7 @@ def ingest_effect_trigger_logs(payload: EffectTriggerLogsIngestRequest) -> None:
     except SQLAlchemyError as exc:
         logger.error("effect_trigger_logs_db_error", extra={"error": str(exc)})
         raise HTTPException(status_code=500, detail="Internal Server Error") from exc
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 class EffectTriggerLogItem(BaseModel):
