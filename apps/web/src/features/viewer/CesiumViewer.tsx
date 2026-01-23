@@ -204,7 +204,7 @@ function materialForSeverity(severity: string): { fill: Color; outline: Color } 
   return { fill: Color.CYAN.withAlpha(0.35), outline: Color.CYAN };
 }
 
-function colorForRiskLevel(level: number | null | undefined): Color {
+function colorForRiskLevel(level: number | 'unknown' | null | undefined): Color {
   const severity = riskSeverityForLevel(level);
   if (severity === 'high') return Color.RED;
   if (severity === 'medium') return Color.ORANGE;

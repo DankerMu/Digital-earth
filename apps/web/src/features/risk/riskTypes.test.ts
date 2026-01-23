@@ -107,11 +107,13 @@ describe('riskTypes', () => {
 
   it('maps risk levels to severities and formats labels', () => {
     expect(riskSeverityForLevel(null)).toBe('unknown');
+    expect(riskSeverityForLevel('unknown')).toBe('unknown');
     expect(riskSeverityForLevel(1)).toBe('low');
     expect(riskSeverityForLevel(3)).toBe('medium');
     expect(riskSeverityForLevel(5)).toBe('high');
 
     expect(formatRiskLevel(null)).toBe('--');
+    expect(formatRiskLevel('unknown')).toBe('--');
     expect(formatRiskLevel(3.2)).toBe('3');
   });
 
@@ -124,4 +126,3 @@ describe('riskTypes', () => {
     ]);
   });
 });
-

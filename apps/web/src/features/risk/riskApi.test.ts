@@ -28,7 +28,7 @@ describe('riskApi', () => {
             page_size: 1000,
             total: 1,
             items: [
-              { id: 2, name: 'a', type: 'fire', lon: 179.5, lat: 10.5, alt: null, weight: 1, tags: null, risk_level: null },
+              { id: 2, name: 'a', type: 'fire', lon: 179.5, lat: 10.5, alt: null, weight: 1, tags: null, risk_level: 'unknown' },
             ],
           });
         }
@@ -38,7 +38,7 @@ describe('riskApi', () => {
             page_size: 1000,
             total: 1,
             items: [
-              { id: 1, name: 'b', type: 'fire', lon: -179.5, lat: 10.5, alt: null, weight: 1, tags: null, risk_level: null },
+              { id: 1, name: 'b', type: 'fire', lon: -179.5, lat: 10.5, alt: null, weight: 1, tags: null, risk_level: 'unknown' },
             ],
           });
         }

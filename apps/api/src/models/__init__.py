@@ -6,6 +6,7 @@ from .effect_trigger_logs import EffectTriggerLog
 from .monitoring_analytics import BiasTileSet, HistoricalStatisticArtifact
 from .products import Product, ProductHazard, ProductVersion
 from .risk_poi import RiskPOI
+from .risk_poi_evaluation import RiskPOIEvaluation
 
 __all__ = [
     "Base",
@@ -19,4 +20,5 @@ __all__ = [
     "ProductHazard",
     "ProductVersion",
     "RiskPOI",
+    "RiskPOIEvaluation",
 ]

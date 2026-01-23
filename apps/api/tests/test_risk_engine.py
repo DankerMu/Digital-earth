@@ -777,6 +777,47 @@ def test_risk_evaluate_endpoint_without_redis_returns_results_and_summary(
     assert all(isinstance(item["reasons"], list) for item in payload["results"])
 
 
+def test_risk_evaluate_persists_levels_for_risk_pois_lookup(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    rules_path = tmp_path / "risk-rules.yaml"
+    _write_risk_rules_config_all_positive(rules_path)
+    monkeypatch.setenv("DIGITAL_EARTH_RISK_RULES_CONFIG", str(rules_path))
+
+    from risk_rules_config import get_risk_rules_payload
+
+    get_risk_rules_payload.cache_clear()
+    _db_url, product_id = _setup_db(monkeypatch, tmp_path)
+
+    client = _make_risk_client(redis=None)
+
+    evaluation = client.post(
+        "/api/v1/risk/evaluate",
+        json={"product_id": product_id, "valid_time": "2024-01-01T00:00:00Z"},
+    )
+    assert evaluation.status_code == 200
+    evaluation_payload = evaluation.json()
+    assert [item["poi_id"] for item in evaluation_payload["results"]] == [1, 2]
+    levels_by_poi_id = {
+        int(item["poi_id"]): int(item["level"]) for item in evaluation_payload["results"]
+    }
+
+    pois = client.get(
+        "/api/v1/risk/pois",
+        params={
+            "bbox": "100,10,101,11",
+            "product_id": product_id,
+            "valid_time": "2024-01-01T00:00:00Z",
+        },
+    )
+    assert pois.status_code == 200
+    pois_payload = pois.json()
+    assert pois_payload["total"] == 2
+    assert [item["id"] for item in pois_payload["items"]] == [1, 2]
+    for item in pois_payload["items"]:
+        assert item["risk_level"] == levels_by_poi_id[int(item["id"])]
+
+
 def test_risk_evaluate_endpoint_uses_locale_in_cache_key_for_reasons(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

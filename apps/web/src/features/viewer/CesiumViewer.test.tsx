@@ -2494,7 +2494,7 @@ describe('CesiumViewer', () => {
                 alt: null,
                 weight: 1,
                 tags: null,
-                risk_level: null,
+                risk_level: 'unknown',
               },
             ],
           });
@@ -2706,7 +2706,7 @@ describe('CesiumViewer', () => {
               alt: null,
               weight: 1,
               tags: null,
-              risk_level: null,
+              risk_level: 'unknown',
             },
           ],
         });
@@ -2820,7 +2820,7 @@ describe('CesiumViewer', () => {
                 alt: null,
                 weight: 1,
                 tags: null,
-                risk_level: null,
+                risk_level: 'unknown',
               },
             ],
           });

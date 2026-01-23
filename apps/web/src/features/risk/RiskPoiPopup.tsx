@@ -6,7 +6,7 @@ function formatNumber(value: number | null | undefined, digits: number): string 
   return value.toFixed(digits);
 }
 
-function severityLabel(level: number | null | undefined): string {
+function severityLabel(level: number | 'unknown' | null | undefined): string {
   const severity = riskSeverityForLevel(level);
   if (severity === 'high') return '高';
   if (severity === 'medium') return '中';
@@ -14,7 +14,7 @@ function severityLabel(level: number | null | undefined): string {
   return '未知';
 }
 
-function severityClass(level: number | null | undefined): string {
+function severityClass(level: number | 'unknown' | null | undefined): string {
   const severity = riskSeverityForLevel(level);
   if (severity === 'high') return 'border-red-500/40 bg-red-500/10 text-red-100';
   if (severity === 'medium') return 'border-orange-500/40 bg-orange-500/10 text-orange-100';

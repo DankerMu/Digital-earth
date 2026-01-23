@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -165,6 +166,49 @@ def _seed_risk_pois_for_clustering(db_url: str) -> None:
     engine.dispose()
 
 
+def _seed_products_and_risk_poi_evaluations(db_url: str) -> int:
+    from models import Base, Product, RiskPOIEvaluation
+
+    engine = create_engine(db_url)
+    Base.metadata.create_all(engine)
+
+    with Session(engine) as session:
+        product = Product(
+            title="test-product",
+            text=None,
+            issued_at=datetime(2024, 1, 1, tzinfo=timezone.utc),
+            valid_from=datetime(2024, 1, 1, tzinfo=timezone.utc),
+            valid_to=datetime(2024, 1, 2, tzinfo=timezone.utc),
+            version=1,
+            status="published",
+        )
+        session.add(product)
+        session.flush()
+
+        session.add_all(
+            [
+                RiskPOIEvaluation(
+                    poi_id=1,
+                    product_id=int(product.id),
+                    valid_time=datetime(2024, 1, 1, tzinfo=timezone.utc),
+                    risk_level=4,
+                ),
+                RiskPOIEvaluation(
+                    poi_id=3,
+                    product_id=int(product.id),
+                    valid_time=datetime(2024, 1, 1, tzinfo=timezone.utc),
+                    risk_level=2,
+                ),
+            ]
+        )
+        session.commit()
+
+        product_id = int(product.id)
+
+    engine.dispose()
+    return product_id
+
+
 def test_risk_pois_bbox_filter_and_pagination(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -181,7 +225,7 @@ def test_risk_pois_bbox_filter_and_pagination(
     assert payload["page_size"] == 2
     assert payload["total"] == 3
     assert [item["name"] for item in payload["items"]] == ["poi-a", "poi-b"]
-    assert all(item["risk_level"] is None for item in payload["items"])
+    assert all(item["risk_level"] == "unknown" for item in payload["items"])
 
     second = client.get(
         "/api/v1/risk/pois",
@@ -191,6 +235,54 @@ def test_risk_pois_bbox_filter_and_pagination(
     payload2 = second.json()
     assert payload2["total"] == 3
     assert [item["name"] for item in payload2["items"]] == ["poi-c"]
+
+
+def test_risk_pois_product_and_valid_time_lookup(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    db_url = f"sqlite+pysqlite:///{tmp_path / 'risk.db'}"
+    _seed_risk_pois(db_url)
+    product_id = _seed_products_and_risk_poi_evaluations(db_url)
+    client, _redis = _make_client(monkeypatch, tmp_path, db_url=db_url)
+
+    response = client.get(
+        "/api/v1/risk/pois",
+        params={
+            "bbox": "109,34,112,36",
+            "product_id": product_id,
+            "valid_time": "2024-01-01T00:00:00Z",
+        },
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["total"] == 3
+
+    by_name = {item["name"]: item for item in payload["items"]}
+    assert by_name["poi-a"]["risk_level"] == 4
+    assert by_name["poi-b"]["risk_level"] == "unknown"
+    assert by_name["poi-c"]["risk_level"] == 2
+
+
+def test_risk_pois_requires_product_id_and_valid_time_together(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    db_url = f"sqlite+pysqlite:///{tmp_path / 'risk.db'}"
+    _seed_risk_pois(db_url)
+    client, _redis = _make_client(monkeypatch, tmp_path, db_url=db_url)
+
+    missing_time = client.get(
+        "/api/v1/risk/pois",
+        params={"bbox": "109,34,112,36", "product_id": 1},
+    )
+    assert missing_time.status_code == 400
+    assert missing_time.json()["error_code"] == 40000
+
+    missing_product = client.get(
+        "/api/v1/risk/pois",
+        params={"bbox": "109,34,112,36", "valid_time": "2024-01-01T00:00:00Z"},
+    )
+    assert missing_product.status_code == 400
+    assert missing_product.json()["error_code"] == 40000
 
 
 def test_risk_pois_cache_hit_skips_db_queries(
@@ -356,6 +448,8 @@ def test_risk_pois_http_exception_is_not_retried_after_cache_layer(
         max_lat: float,
         page: int,
         page_size: int,
+        product_id: int | None = None,
+        valid_time: object | None = None,
     ) -> None:
         calls.append(
             {
