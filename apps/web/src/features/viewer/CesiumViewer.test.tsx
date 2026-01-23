@@ -32,6 +32,12 @@ const windArrowsMocks = vi.hoisted(() => {
   };
 });
 
+const osmBuildingsMocks = vi.hoisted(() => {
+  return {
+    instances: [] as Array<{ show: boolean; destroy: ReturnType<typeof vi.fn> }>,
+  };
+});
+
 const customDataSourceMocks = vi.hoisted(() => {
   return {
     instances: [] as Array<{
@@ -121,6 +127,12 @@ vi.mock('cesium', () => {
   const GeographicTilingScheme = vi.fn(() => ({ kind: 'geographic' }));
   const TextureMinificationFilter = { LINEAR: 'linear', NEAREST: 'nearest' };
   const TextureMagnificationFilter = { LINEAR: 'linear', NEAREST: 'nearest' };
+
+  const createOsmBuildingsAsync = vi.fn(async () => {
+    const tileset = { show: true, destroy: vi.fn() };
+    osmBuildingsMocks.instances.push(tileset);
+    return tileset;
+  });
 
   class Ellipsoid {
     radii: { x: number; y: number; z: number };
@@ -290,6 +302,10 @@ vi.mock('cesium', () => {
         addEventListener: vi.fn(),
         removeEventListener: vi.fn(),
       },
+      primitives: {
+        add: vi.fn((primitive: unknown) => primitive),
+        remove: vi.fn(() => true),
+      },
     },
     destroy: vi.fn()
   };
@@ -385,13 +401,14 @@ vi.mock('cesium', () => {
       },
     },
     createWorldTerrainAsync,
+    createOsmBuildingsAsync,
     Ellipsoid,
     EllipsoidTerrainProvider,
     Ion,
   };
 });
 
-import { Cartesian3, EllipsoidTerrainProvider, Rectangle, createWorldTerrainAsync, Viewer } from 'cesium';
+import { Cartesian3, EllipsoidTerrainProvider, Rectangle, createOsmBuildingsAsync, createWorldTerrainAsync, Viewer } from 'cesium';
 import { clearConfigCache } from '../../config';
 import { DEFAULT_BASEMAP_ID } from '../../config/basemaps';
 import { clearProductsCache } from '../products/productsApi';
@@ -401,6 +418,7 @@ import { DEFAULT_CAMERA_PERSPECTIVE_ID, useCameraPerspectiveStore } from '../../
 import { useEventAutoLayersStore } from '../../state/eventAutoLayers';
 import { DEFAULT_EVENT_LAYER_MODE, useEventLayersStore } from '../../state/eventLayers';
 import { useLayerManagerStore } from '../../state/layerManager';
+import { useOsmBuildingsStore } from '../../state/osmBuildings';
 import { usePerformanceModeStore } from '../../state/performanceMode';
 import { DEFAULT_SCENE_MODE_ID, useSceneModeStore } from '../../state/sceneMode';
 import { DEFAULT_TIME_KEY, useTimeStore } from '../../state/time';
@@ -421,6 +439,7 @@ describe('CesiumViewer', () => {
     vi.unstubAllGlobals();
     precipitationParticlesMocks.instances.length = 0;
     windArrowsMocks.instances.length = 0;
+    osmBuildingsMocks.instances.length = 0;
     customDataSourceMocks.instances.length = 0;
     clearConfigCache();
     clearProductsCache();
@@ -433,6 +452,7 @@ describe('CesiumViewer', () => {
     localStorage.removeItem('digital-earth.performanceMode');
     localStorage.removeItem('digital-earth.viewMode');
     localStorage.removeItem('digital-earth.cameraPerspective');
+    localStorage.removeItem('digital-earth.osmBuildings');
     useBasemapStore.setState({ basemapId: DEFAULT_BASEMAP_ID });
     useCameraPerspectiveStore.setState({ cameraPerspectiveId: DEFAULT_CAMERA_PERSPECTIVE_ID });
     useEventAutoLayersStore.setState({ restoreOnExit: true, overrides: {} });
@@ -440,6 +460,7 @@ describe('CesiumViewer', () => {
     useSceneModeStore.setState({ sceneModeId: DEFAULT_SCENE_MODE_ID });
     useTimeStore.setState({ timeKey: DEFAULT_TIME_KEY });
     useLayerManagerStore.setState({ layers: [] });
+    useOsmBuildingsStore.setState({ enabled: false });
     usePerformanceModeStore.setState({ mode: 'high' });
     useViewModeStore.setState({ route: { viewModeId: 'global' }, history: [], saved: {} });
     useViewerStatsStore.setState({ fps: null });
@@ -701,6 +722,58 @@ describe('CesiumViewer', () => {
     );
     expect(vi.mocked(EllipsoidTerrainProvider)).toHaveBeenCalled();
     expect(viewer.scene.requestRender).toHaveBeenCalled();
+  });
+
+  it('loads Cesium OSM buildings tileset when enabled', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        jsonResponse({
+          apiBaseUrl: 'http://api.test',
+          map: { cesiumIonAccessToken: 'token' },
+        }),
+      ),
+    );
+
+    useOsmBuildingsStore.setState({ enabled: true });
+
+    render(<CesiumViewer />);
+
+    await waitFor(() => expect(vi.mocked(Viewer)).toHaveBeenCalledTimes(1));
+
+    const viewer = vi.mocked(Viewer).mock.results[0].value;
+    await waitFor(() => expect(vi.mocked(createOsmBuildingsAsync)).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(viewer.scene.primitives.add).toHaveBeenCalledTimes(1));
+
+    expect(osmBuildingsMocks.instances).toHaveLength(1);
+    expect(viewer.scene.primitives.add).toHaveBeenCalledWith(osmBuildingsMocks.instances[0], 0);
+    expect(viewer.scene.requestRender).toHaveBeenCalled();
+  });
+
+  it('does not load OSM buildings when performance mode is low', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        jsonResponse({
+          apiBaseUrl: 'http://api.test',
+          map: { cesiumIonAccessToken: 'token' },
+        }),
+      ),
+    );
+
+    usePerformanceModeStore.setState({ mode: 'low' });
+    useOsmBuildingsStore.setState({ enabled: true });
+
+    render(<CesiumViewer />);
+
+    await waitFor(() => expect(vi.mocked(Viewer)).toHaveBeenCalledTimes(1));
+
+    const cesium = await import('cesium');
+    await waitFor(() => {
+      expect((cesium as unknown as { Ion: { defaultAccessToken: string } }).Ion.defaultAccessToken).toBe('token');
+    });
+
+    expect(vi.mocked(createOsmBuildingsAsync)).not.toHaveBeenCalled();
   });
 
   it('switches scene mode and restores camera view after morph completes', async () => {
