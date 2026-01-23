@@ -28,6 +28,7 @@ export class VoxelCloudLayer {
 
   private loadAbortController: AbortController | null = null;
   private inFlightKey: string | null = null;
+  private lastLoadedKey: string | null = null;
   private requestToken = 0;
   private fallbackActive = false;
 
@@ -43,6 +44,7 @@ export class VoxelCloudLayer {
     this.loadAbortController?.abort();
     this.loadAbortController = null;
     this.inFlightKey = null;
+    this.lastLoadedKey = null;
     this.renderer.destroy();
   }
 
@@ -63,20 +65,38 @@ export class VoxelCloudLayer {
 
     const cached = this.cache.get(cacheKey);
     if (cached) {
+      if (this.lastLoadedKey === cacheKey) {
+        if (this.inFlightKey && this.inFlightKey !== cacheKey) {
+          this.loadAbortController?.abort();
+          this.loadAbortController = null;
+          this.inFlightKey = null;
+          this.requestToken += 1;
+          this.viewer.scene.requestRender();
+        }
+        return;
+      }
+
+      if (this.inFlightKey === cacheKey) return;
+
       this.loadAbortController?.abort();
-      this.loadAbortController = null;
-      this.inFlightKey = null;
-      this.requestToken += 1;
+      const controller = new AbortController();
+      this.loadAbortController = controller;
+      this.inFlightKey = cacheKey;
+      const token = (this.requestToken += 1);
 
       try {
-        await this.renderer.loadFromArrayBuffer(cached);
+        await this.renderer.loadFromArrayBuffer(cached, { signal: controller.signal });
+        if (controller.signal.aborted || token !== this.requestToken) return;
         this.renderer.setEnabled(true);
         this.fallbackActive = false;
+        this.lastLoadedKey = cacheKey;
       } catch (error) {
-        if (isAbortError(error)) return;
+        if (isAbortError(error, controller.signal)) return;
         console.warn('[Digital Earth] cached voxel volume failed, using 2D cloud layer fallback', error);
         this.activateFallback();
       } finally {
+        if (this.loadAbortController === controller) this.loadAbortController = null;
+        if (this.inFlightKey === cacheKey) this.inFlightKey = null;
         this.viewer.scene.requestRender();
       }
       return;
@@ -111,6 +131,7 @@ export class VoxelCloudLayer {
 
       this.renderer.setEnabled(true);
       this.fallbackActive = false;
+      this.lastLoadedKey = cacheKey;
     } catch (error) {
       if (isAbortError(error, controller.signal)) return;
       console.warn('[Digital Earth] Volume API failed, using 2D cloud layer fallback', error);
@@ -125,6 +146,7 @@ export class VoxelCloudLayer {
   private activateFallback(): void {
     if (this.fallbackActive) return;
     this.fallbackActive = true;
+    this.lastLoadedKey = null;
     this.loadAbortController?.abort();
     this.loadAbortController = null;
     this.inFlightKey = null;
