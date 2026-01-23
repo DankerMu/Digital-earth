@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 from copy import deepcopy
 from pathlib import Path
@@ -284,6 +285,24 @@ class PipelineSettings(BaseModel):
         default=0.0,
         description="Temperature threshold (°C) used as a fallback for precipitation type; below => snow.",
     )
+    cloud_density_rh0: float = Field(
+        default=0.8,
+        ge=0.0,
+        le=100.0,
+        description=(
+            "Lower RH threshold for cloud density smoothstep. "
+            "Accepts either fraction [0, 1] or percent [0, 100]."
+        ),
+    )
+    cloud_density_rh1: float = Field(
+        default=0.95,
+        ge=0.0,
+        le=100.0,
+        description=(
+            "Upper RH threshold for cloud density smoothstep. "
+            "Accepts either fraction [0, 1] or percent [0, 100]."
+        ),
+    )
 
     @model_validator(mode="after")
     def _reject_empty_ecmwf_key(self) -> "PipelineSettings":
@@ -298,6 +317,28 @@ class PipelineSettings(BaseModel):
         if normalized not in {"remote", "local"}:
             raise ValueError("pipeline.data_source must be either 'remote' or 'local'")
         self.data_source = normalized
+
+        rh0 = float(self.cloud_density_rh0)
+        rh1 = float(self.cloud_density_rh1)
+        if not (math.isfinite(rh0) and math.isfinite(rh1)):
+            raise ValueError("pipeline.cloud_density_rh0/rh1 must be finite numbers")
+        if (rh0 > 1.0) != (rh1 > 1.0):
+            raise ValueError(
+                "pipeline.cloud_density_rh0 and pipeline.cloud_density_rh1 must use "
+                "consistent units (both fraction ≤ 1 or both percent > 1)"
+            )
+        if rh0 >= rh1:
+            raise ValueError(
+                "pipeline.cloud_density_rh0 must be < pipeline.cloud_density_rh1"
+            )
+        if rh0 <= 1.0 and rh1 <= 1.0 and (rh0 < 0.0 or rh1 > 1.0):
+            raise ValueError(
+                "pipeline.cloud_density_rh0/rh1 fraction must be within [0, 1]"
+            )
+        if rh0 > 1.0 and rh1 > 1.0 and (rh0 < 0.0 or rh1 > 100.0):
+            raise ValueError(
+                "pipeline.cloud_density_rh0/rh1 percent must be within [0, 100]"
+            )
         return self
 
 
