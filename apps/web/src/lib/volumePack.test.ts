@@ -1,4 +1,4 @@
-import { zstdCompressSync } from 'node:zlib';
+import * as zstd from '@mongodb-js/zstd';
 import { expect, test } from 'vitest';
 
 import { decodeVolumePack } from './volumePack';
@@ -7,11 +7,11 @@ function encodeHeader(header: object): Uint8Array {
   return new TextEncoder().encode(JSON.stringify(header));
 }
 
-function buildPack(header: object, bodyRaw: Uint8Array): Uint8Array {
+async function buildPack(header: object, bodyRaw: Uint8Array): Promise<Uint8Array> {
   const headerBytes = encodeHeader(header);
   const headerLen = headerBytes.byteLength;
 
-  const bodyCompressed = zstdCompressSync(bodyRaw);
+  const bodyCompressed = await zstd.compress(bodyRaw as any);
   const out = new Uint8Array(8 + headerLen + bodyCompressed.byteLength);
 
   out.set([0x56, 0x4f, 0x4c, 0x50], 0); // "VOLP"
@@ -21,7 +21,7 @@ function buildPack(header: object, bodyRaw: Uint8Array): Uint8Array {
   return out;
 }
 
-test('decodes float32 payload', () => {
+test('decodes float32 payload', async () => {
   const shape: [number, number, number] = [2, 2, 3];
   const values = Float32Array.from({ length: shape[0] * shape[1] * shape[2] }, (_, i) => i / 10);
   const bodyRaw = new Uint8Array(values.buffer);
@@ -36,7 +36,7 @@ test('decodes float32 payload', () => {
     valid_time: '2026-01-01T00:00:00Z',
   };
 
-  const pack = buildPack(header, bodyRaw);
+  const pack = await buildPack(header, bodyRaw);
   const decoded = decodeVolumePack(pack);
 
   expect(decoded.shape).toEqual(shape);
@@ -71,30 +71,29 @@ test('throws on invalid header JSON', () => {
   expect(() => decodeVolumePack(out)).toThrow(/header json/i);
 });
 
-test('throws on unsupported compression', () => {
+test('throws on unsupported compression', async () => {
   const values = new Float32Array([1]);
-  const pack = buildPack(
+  const pack = await buildPack(
     { shape: [1, 1, 1], dtype: 'float32', scale: 1, offset: 0, compression: 'lz4' },
     new Uint8Array(values.buffer),
   );
   expect(() => decodeVolumePack(pack)).toThrow(/compression/i);
 });
 
-test('throws on unsupported dtype', () => {
+test('throws on unsupported dtype', async () => {
   const body = new Uint8Array([0, 0, 0, 0]);
-  const pack = buildPack(
+  const pack = await buildPack(
     { shape: [1, 1, 1], dtype: 'float16', scale: 1, offset: 0, compression: 'zstd' },
     body,
   );
   expect(() => decodeVolumePack(pack)).toThrow(/dtype/i);
 });
 
-test('throws on decoded body size mismatch', () => {
+test('throws on decoded body size mismatch', async () => {
   const values = new Float32Array([1]);
-  const pack = buildPack(
+  const pack = await buildPack(
     { shape: [1, 1, 2], dtype: 'float32', scale: 1, offset: 0, compression: 'zstd' },
     new Uint8Array(values.buffer),
   );
   expect(() => decodeVolumePack(pack)).toThrow(/size mismatch/i);
 });
-
