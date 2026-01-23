@@ -50,7 +50,7 @@ jobs:
         with:
           python-version: '3.11'
           cache: 'pip'
-      - run: pip install fastapi httpx pydantic pydantic-settings pytest pytest-cov pyyaml redis sqlalchemy alembic xarray h5netcdf h5py 'pillow>=10.0.0'
+      - run: pip install 'fastapi==0.115.0' httpx 'pydantic==2.7.4' 'pydantic-settings==2.2.1' pytest pytest-cov pyyaml redis sqlalchemy alembic xarray h5netcdf h5py 'pillow>=10.0.0' zstandard numpy
       - run: |
           PYTHONPATH=apps/api/src:services/data-pipeline/src:packages/config/src:packages/shared/src pytest apps/api/tests/ \
             --cov=apps/api/src \

@@ -1,0 +1,5 @@
+from __future__ import annotations
+
+from routes.volume import router
+
+__all__ = ["router"]
