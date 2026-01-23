@@ -1,5 +1,7 @@
 import type { VolumePackDecoded } from '../../lib/volumePack';
 
+export const MAX_ATLAS_PIXELS = 4096 * 4096;
+
 export type VolumeAtlas = {
   atlas: Uint8Array;
   atlasWidth: number;
@@ -30,6 +32,13 @@ export function buildVolumeAtlas(decoded: VolumePackDecoded): VolumeAtlas {
   const gridRows = Math.ceil(depth / gridCols);
   const atlasWidth = gridCols * sliceWidth;
   const atlasHeight = gridRows * sliceHeight;
+
+  const atlasPixels = atlasWidth * atlasHeight;
+  if (!Number.isFinite(atlasPixels) || atlasPixels > MAX_ATLAS_PIXELS) {
+    throw new Error(
+      `Voxel cloud atlas too large: ${atlasWidth}x${atlasHeight} (${atlasPixels} pixels) exceeds MAX_ATLAS_PIXELS (${MAX_ATLAS_PIXELS})`,
+    );
+  }
 
   const atlas = new Uint8Array(atlasWidth * atlasHeight);
   let minValue = Number.POSITIVE_INFINITY;
@@ -88,6 +97,13 @@ export type AtlasCanvas = {
 };
 
 export function buildAtlasCanvas(atlas: Uint8Array, width: number, height: number): AtlasCanvas {
+  const atlasPixels = width * height;
+  if (!Number.isFinite(atlasPixels) || atlasPixels > MAX_ATLAS_PIXELS) {
+    throw new Error(
+      `Voxel cloud atlas too large: ${width}x${height} (${atlasPixels} pixels) exceeds MAX_ATLAS_PIXELS (${MAX_ATLAS_PIXELS})`,
+    );
+  }
+
   const canvas = document.createElement('canvas');
   canvas.width = width;
   canvas.height = height;

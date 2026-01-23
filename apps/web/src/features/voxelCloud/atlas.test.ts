@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { VolumePackDecoded } from '../../lib/volumePack';
-import { buildAtlasCanvas, buildVolumeAtlas } from './atlas';
+import { MAX_ATLAS_PIXELS, buildAtlasCanvas, buildVolumeAtlas } from './atlas';
 
 function makeDecoded(): VolumePackDecoded<Float32Array> {
   const shape: [number, number, number] = [2, 2, 2];
@@ -42,6 +42,19 @@ describe('buildVolumeAtlas', () => {
     expect(atlas.atlas[3]).toBe(Math.round(0.1 * 255));
     expect(atlas.atlas[6]).toBe(Math.round(0.2 * 255));
   });
+
+  it('throws when the atlas exceeds the maximum size', () => {
+    const decoded = {
+      header: { shape: [1, 4096, 4097], dtype: 'uint8', scale: 1, offset: 0, compression: 'zstd' },
+      shape: [1, 4096, 4097],
+      dtype: 'uint8',
+      scale: 1,
+      offset: 0,
+      data: new Uint8Array(0),
+    } satisfies VolumePackDecoded;
+
+    expect(() => buildVolumeAtlas(decoded)).toThrow(/MAX_ATLAS_PIXELS/);
+  });
 });
 
 describe('buildAtlasCanvas', () => {
@@ -73,5 +86,9 @@ describe('buildAtlasCanvas', () => {
     );
 
     expect(() => buildAtlasCanvas(new Uint8Array([0]), 1, 1)).toThrow(/CanvasRenderingContext2D/);
+  });
+
+  it('throws when the atlas exceeds the maximum size', () => {
+    expect(() => buildAtlasCanvas(new Uint8Array(0), MAX_ATLAS_PIXELS + 1, 1)).toThrow(/MAX_ATLAS_PIXELS/);
   });
 });

@@ -67,6 +67,20 @@ function nowMs(): number {
     : Date.now();
 }
 
+function isAbortError(error: unknown): boolean {
+  if (!error) return false;
+  if (error instanceof DOMException) return error.name === 'AbortError';
+  if (error instanceof Error) return error.name === 'AbortError';
+  return false;
+}
+
+function throwIfAborted(signal: AbortSignal | undefined): void {
+  if (!signal?.aborted) return;
+  const reason = (signal as unknown as { reason?: unknown }).reason;
+  if (reason != null) throw reason;
+  throw new DOMException('The operation was aborted.', 'AbortError');
+}
+
 function normalizeBBox(bbox: VolumePackBBox): VolumePackBBox {
   const west = CesiumMath.negativePiToPi(CesiumMath.toRadians(bbox.west));
   const east = CesiumMath.negativePiToPi(CesiumMath.toRadians(bbox.east));
@@ -178,19 +192,26 @@ export class VoxelCloudRenderer {
   async loadFromUrl(url: string, options: { signal?: AbortSignal } = {}): Promise<void> {
     const startedAt = nowMs();
     this.lastError = null;
+    const signal = options.signal;
 
     try {
+      throwIfAborted(signal);
+
       const fetchStartedAt = nowMs();
-      const response = await fetch(url, { signal: options.signal });
+      const response = await fetch(url, { signal });
       if (!response.ok) {
         throw new Error(`Failed to fetch volume pack (${response.status})`);
       }
       const bytes = await response.arrayBuffer();
       const fetchMs = nowMs() - fetchStartedAt;
 
+      throwIfAborted(signal);
+
       const decodeStartedAt = nowMs();
       const decoded = decodeVolumePack(bytes);
       const decodeMs = nowMs() - decodeStartedAt;
+
+      throwIfAborted(signal);
 
       const bbox = decoded.header.bbox ? normalizeBBox(decoded.header.bbox as VolumePackBBox) : null;
       this.bbox = bbox;
@@ -206,20 +227,28 @@ export class VoxelCloudRenderer {
       const centerWorld = Cartesian3.fromDegrees(lon, lat, height);
       this.centerWorld = centerWorld;
 
+      throwIfAborted(signal);
+
       const frame = Transforms.eastNorthUpToFixedFrame(centerWorld);
       this.eastWorld = new Cartesian3(frame[0], frame[1], frame[2]);
       this.northWorld = new Cartesian3(frame[4], frame[5], frame[6]);
       this.upWorld = new Cartesian3(frame[8], frame[9], frame[10]);
+
+      throwIfAborted(signal);
 
       const atlasStartedAt = nowMs();
       const atlas = buildVolumeAtlas(decoded);
       this.atlasInfo = atlas;
       const atlasMs = nowMs() - atlasStartedAt;
 
+      throwIfAborted(signal);
+
       const canvasStartedAt = nowMs();
       const { canvas, approxBytes } = buildAtlasCanvas(atlas.atlas, atlas.atlasWidth, atlas.atlasHeight);
       this.atlasCanvas = canvas;
       const canvasMs = nowMs() - canvasStartedAt;
+
+      throwIfAborted(signal);
 
       this.recommended = recommendVoxelCloudParams({
         volumeShape: decoded.shape,
@@ -249,6 +278,9 @@ export class VoxelCloudRenderer {
 
       this.viewer.scene.requestRender();
     } catch (error) {
+      if (signal?.aborted || isAbortError(error)) {
+        throw error;
+      }
       this.lastError = error instanceof Error ? error.message : String(error);
       throw error;
     }

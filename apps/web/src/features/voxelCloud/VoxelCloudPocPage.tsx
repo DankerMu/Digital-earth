@@ -57,6 +57,8 @@ function clampNumber(value: number, min: number, max: number): number {
 export function VoxelCloudPocPage() {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const rendererRef = useRef<VoxelCloudRenderer | null>(null);
+  const loadAbortControllerRef = useRef<AbortController | null>(null);
+  const activeLoadRef = useRef(0);
 
   const [viewer, setViewer] = useState<Viewer | null>(null);
   const [volumeUrl, setVolumeUrl] = useState(DEFAULT_VOLUME_URL);
@@ -84,6 +86,16 @@ export function VoxelCloudPocPage() {
     const renderer = rendererRef.current;
     if (!renderer) return;
     setSnapshot(renderer.getSnapshot());
+  }, []);
+
+  const cancelActiveLoad = useCallback(() => {
+    const controller = loadAbortControllerRef.current;
+    if (controller) {
+      controller.abort();
+      loadAbortControllerRef.current = null;
+    }
+    activeLoadRef.current += 1;
+    setLoading(false);
   }, []);
 
   useEffect(() => {
@@ -138,10 +150,13 @@ export function VoxelCloudPocPage() {
     setSnapshot(renderer.getSnapshot());
 
     return () => {
+      cancelActiveLoad();
       renderer.destroy();
       rendererRef.current = null;
     };
-  }, [viewer]);
+  }, [cancelActiveLoad, viewer]);
+
+  useEffect(() => cancelActiveLoad, [cancelActiveLoad]);
 
   useEffect(() => {
     if (!viewer) return;
@@ -168,17 +183,27 @@ export function VoxelCloudPocPage() {
     const renderer = rendererRef.current;
     if (!renderer) return;
 
+    cancelActiveLoad();
+    const controller = new AbortController();
+    loadAbortControllerRef.current = controller;
+    const loadId = activeLoadRef.current;
+
     setLoading(true);
     try {
-      await renderer.loadFromUrl(volumeUrl);
+      await renderer.loadFromUrl(volumeUrl, { signal: controller.signal });
       renderer.setEnabled(true);
       refreshSnapshot();
-    } catch {
+    } catch (error) {
+      if (controller.signal.aborted) return;
       refreshSnapshot();
     } finally {
+      if (activeLoadRef.current !== loadId) return;
+      if (loadAbortControllerRef.current === controller) {
+        loadAbortControllerRef.current = null;
+      }
       setLoading(false);
     }
-  }, [refreshSnapshot, volumeUrl]);
+  }, [cancelActiveLoad, refreshSnapshot, volumeUrl]);
 
   const onToggleEnabled = useCallback(() => {
     const renderer = rendererRef.current;
@@ -216,6 +241,19 @@ export function VoxelCloudPocPage() {
     const total = approxCanvas != null && decodedBytes != null ? approxCanvas + decodedBytes : null;
     return { approxCanvas, decodedBytes, total };
   }, [metrics?.approxAtlasBytes, metrics?.bytes]);
+
+  const onResetClick = useCallback(() => {
+    cancelActiveLoad();
+
+    rendererRef.current?.destroy();
+    rendererRef.current = null;
+
+    if (!viewer) return;
+    const renderer = new VoxelCloudRenderer(viewer, { enabled: snapshot.enabled });
+    rendererRef.current = renderer;
+    renderer.setEnabled(snapshot.enabled);
+    setSnapshot(renderer.getSnapshot());
+  }, [cancelActiveLoad, snapshot.enabled, viewer]);
 
   return (
     <div className="relative h-screen w-screen overflow-hidden bg-slate-950 text-slate-100">
@@ -261,16 +299,7 @@ export function VoxelCloudPocPage() {
             <button
               type="button"
               className="rounded-md border border-slate-400/30 bg-slate-900/60 px-2 py-1 hover:bg-slate-900"
-              onClick={() => {
-                rendererRef.current?.destroy();
-                rendererRef.current = null;
-                if (viewer) {
-                  const renderer = new VoxelCloudRenderer(viewer, { enabled: snapshot.enabled });
-                  rendererRef.current = renderer;
-                  renderer.setEnabled(snapshot.enabled);
-                  setSnapshot(renderer.getSnapshot());
-                }
-              }}
+              onClick={onResetClick}
               disabled={!viewer}
               title="Recreate stage"
             >

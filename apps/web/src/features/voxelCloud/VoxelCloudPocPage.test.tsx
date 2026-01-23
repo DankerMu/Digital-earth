@@ -100,6 +100,7 @@ const rendererMocks = vi.hoisted(() => {
       destroy: ReturnType<typeof vi.fn>;
     }>,
     failLoad: false,
+    blockLoad: false,
   };
 });
 
@@ -132,11 +133,28 @@ vi.mock('./VoxelCloudRenderer', () => {
         updateSettings: vi.fn((partial: Record<string, unknown>) => {
           snapshot = { ...snapshot, settings: { ...snapshot.settings, ...partial } };
         }),
-        loadFromUrl: vi.fn(async (url: string) => {
+        loadFromUrl: vi.fn((url: string, options?: { signal?: AbortSignal }) => {
+          if (rendererMocks.blockLoad) {
+            return new Promise<void>((_resolve, reject) => {
+              const signal = options?.signal;
+              if (!signal) return;
+              if (signal.aborted) {
+                reject(new DOMException('The operation was aborted.', 'AbortError'));
+                return;
+              }
+              signal.addEventListener(
+                'abort',
+                () => reject(new DOMException('The operation was aborted.', 'AbortError')),
+                { once: true },
+              );
+            });
+          }
+
           if (rendererMocks.failLoad) {
             snapshot = { ...snapshot, lastError: 'load failed' };
-            throw new Error('load failed');
+            return Promise.reject(new Error('load failed'));
           }
+
           snapshot = {
             ...snapshot,
             ready: true,
@@ -152,6 +170,7 @@ vi.mock('./VoxelCloudRenderer', () => {
             },
             recommended: { stepVoxels: 1, stepMeters: 12.5, maxSteps: 128 },
           };
+          return Promise.resolve();
         }),
         destroy: vi.fn(),
       };
@@ -169,6 +188,7 @@ describe('VoxelCloudPocPage', () => {
     rendererMocks.instances.length = 0;
     viewerMocks.instances.length = 0;
     rendererMocks.failLoad = false;
+    rendererMocks.blockLoad = false;
     vi.clearAllMocks();
   });
 
@@ -211,6 +231,35 @@ describe('VoxelCloudPocPage', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Reset' }));
     expect(instance.destroy).toHaveBeenCalled();
     expect(rendererMocks.instances.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('aborts the in-flight load when Reset is clicked', async () => {
+    rendererMocks.blockLoad = true;
+
+    render(<VoxelCloudPocPage />);
+
+    expect(await screen.findByText('[ST-0109] Voxel Cloud PoC')).toBeInTheDocument();
+
+    await waitFor(() => {
+      expect(rendererMocks.instances.length).toBe(1);
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Load' }));
+
+    const instance = rendererMocks.instances[0]!;
+    await waitFor(() => expect(instance.loadFromUrl).toHaveBeenCalledTimes(1));
+
+    const [, options] = instance.loadFromUrl.mock.calls[0]!;
+    const signal = (options as { signal?: AbortSignal } | undefined)?.signal;
+    expect(signal).toBeDefined();
+    expect(signal?.aborted).toBe(false);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Reset' }));
+    expect(signal?.aborted).toBe(true);
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Load' })).toBeEnabled();
+    });
   });
 
   it('shows an error when loading fails', async () => {

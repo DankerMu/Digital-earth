@@ -154,6 +154,27 @@ describe('VoxelCloudRenderer', () => {
     expect(viewer.scene.postProcessStages.remove).toHaveBeenCalledTimes(1);
   });
 
+  it('supports AbortSignal cancellation without setting lastError', async () => {
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      arrayBuffer: async () => new ArrayBuffer(0),
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const viewer = makeViewer();
+    const renderer = new VoxelCloudRenderer(viewer as never, { enabled: true });
+
+    const controller = new AbortController();
+    controller.abort();
+
+    await expect(
+      renderer.loadFromUrl('http://test/volume.volp', { signal: controller.signal }),
+    ).rejects.toMatchObject({ name: 'AbortError' });
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(renderer.getSnapshot().lastError).toBeNull();
+  });
+
   it('throws when bbox is missing', async () => {
     const getContext = vi.fn(() => ({ putImageData: vi.fn() }));
     (HTMLCanvasElement.prototype.getContext as unknown as ReturnType<typeof vi.fn>).mockImplementation(
