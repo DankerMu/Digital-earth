@@ -412,8 +412,9 @@ def test_risk_pois_lookup_caches_fully_known_results_with_short_ttl(
 
     assert fresh_key in redis.values
     assert stale_key in redis.values
-    assert redis.expires_at[fresh_key] - redis.now() == 5.0
-    assert redis.expires_at[stale_key] - redis.now() == 60.0
+    now = redis.now()
+    assert redis.expires_at[fresh_key] - now == pytest.approx(5.0)
+    assert redis.expires_at[stale_key] - now == pytest.approx(60.0)
 
     import db as db_module
 
