@@ -109,11 +109,13 @@ def _resolve_time_index(ds: xr.Dataset, valid_time: object | None) -> tuple[int,
     if values.size == 0:
         raise CloudDensityExportError("time coordinate is empty")
 
-    dt = _parse_time(values[0] if valid_time is None else valid_time)
+    dt_raw = _parse_time(values[0] if valid_time is None else valid_time)
+    dt = dt_raw.replace(microsecond=0)
     key = _validate_time_key(_normalize_time_key(dt))
 
-    target = np.datetime64(dt.strftime("%Y-%m-%dT%H:%M:%S"))
-    matches = np.where(values.astype("datetime64[s]") == target)[0]
+    target = np.datetime64(dt.strftime("%Y-%m-%dT%H:%M:%S"), "s")
+    values_sec = values.astype("datetime64[s]")
+    matches = np.where(values_sec == target)[0]
     if matches.size == 0:
         sample = [_normalize_time_key(_parse_time(item)) for item in values[:3]]
         raise CloudDensityExportError(
@@ -209,11 +211,20 @@ def export_cloud_density_slices(
 
     files: list[Path] = []
     level_keys: list[str] = []
-    ext = "nc" if output_format == "netcdf" else "zarr"
-    for level_index, level_value in enumerate(levels.tolist()):
+    seen_level_keys: dict[str, object] = {}
+    level_values = levels.tolist()
+    for level_value in level_values:
         level_key = _level_key(level_value)
+        if level_key in seen_level_keys:
+            raise CloudDensityExportError(
+                "Level key collision: "
+                f"{seen_level_keys[level_key]!r} and {level_value!r} -> {level_key!r}"
+            )
+        seen_level_keys[level_key] = level_value
         level_keys.append(level_key)
 
+    ext = "nc" if output_format == "netcdf" else "zarr"
+    for level_index, level_key in enumerate(level_keys):
         target = (time_dir / f"{level_key}.{ext}").resolve()
         _ensure_relative_to_base(base_dir=base, path=target, label="slice")
 

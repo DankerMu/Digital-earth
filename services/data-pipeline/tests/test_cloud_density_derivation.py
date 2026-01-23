@@ -391,6 +391,32 @@ def test_volume_export_input_validation_errors(tmp_path: Path) -> None:
         )
 
 
+def test_volume_export_rejects_level_key_collisions(tmp_path: Path) -> None:
+    time = np.array(["2026-01-01T00:00:00"], dtype="datetime64[s]")
+    level = np.array([850.0, 850.0000005], dtype=np.float64)
+    lat = np.array([0.0], dtype=np.float32)
+    lon = np.array([0.0], dtype=np.float32)
+    ds = xr.Dataset(
+        {
+            "r": xr.DataArray(
+                np.full((1, 2, 1, 1), 100.0, dtype=np.float32),
+                dims=("time", "level", "lat", "lon"),
+                attrs={"units": "%"},
+            )
+        },
+        coords={"time": time, "level": level, "lat": lat, "lon": lon},
+    )
+
+    with pytest.raises(CloudDensityExportError, match="Level key collision"):
+        export_cloud_density_slices(
+            ds,
+            tmp_path,
+            layer="ecmwf/cloud_density",
+            rh0=80.0,
+            rh1=100.0,
+        )
+
+
 def test_volume_helpers_cover_error_paths(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="time_key must not be empty"):
         volume_cloud_density._validate_time_key("")  # noqa: SLF001
@@ -454,6 +480,32 @@ def test_volume_resolve_time_index_error_paths() -> None:
     )
     with pytest.raises(CloudDensityExportError, match="valid_time not found"):
         volume_cloud_density._resolve_time_index(ds, valid_time="2026-01-01T01:00:00Z")  # noqa: SLF001
+
+
+def test_volume_resolve_time_index_matches_subsecond_valid_time() -> None:
+    ds = xr.Dataset(
+        coords={
+            "time": np.array(["2026-01-01T00:00:00"], dtype="datetime64[s]"),
+        }
+    )
+    idx, key = volume_cloud_density._resolve_time_index(  # noqa: SLF001
+        ds, valid_time="2026-01-01T00:00:00.999Z"
+    )
+    assert idx == 0
+    assert key == "20260101T000000Z"
+
+
+def test_volume_resolve_time_index_matches_subsecond_dataset_time() -> None:
+    ds = xr.Dataset(
+        coords={
+            "time": np.array(["2026-01-01T00:00:00.123"], dtype="datetime64[ms]"),
+        }
+    )
+    idx, key = volume_cloud_density._resolve_time_index(  # noqa: SLF001
+        ds, valid_time="2026-01-01T00:00:00Z"
+    )
+    assert idx == 0
+    assert key == "20260101T000000Z"
 
 
 def test_volume_level_key_formats_and_errors() -> None:

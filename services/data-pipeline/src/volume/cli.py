@@ -34,8 +34,18 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         help="RH variable name in DataCube (default: infer from dataset)",
     )
-    parser.add_argument("--rh0", type=float, default=None, help="Lower RH threshold")
-    parser.add_argument("--rh1", type=float, default=None, help="Upper RH threshold")
+    parser.add_argument(
+        "--rh0",
+        type=float,
+        default=None,
+        help="Lower RH threshold (fraction [0,1] or percent [0,100])",
+    )
+    parser.add_argument(
+        "--rh1",
+        type=float,
+        default=None,
+        help="Upper RH threshold (fraction [0,1] or percent [0,100])",
+    )
     parser.add_argument(
         "--format",
         choices=("netcdf", "zarr"),

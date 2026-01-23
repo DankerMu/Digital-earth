@@ -25,7 +25,7 @@ def _normalize_units_text(value: object) -> str:
     return str(value or "").strip()
 
 
-def _resolve_rh_fraction_scale(*, units: str, grid: np.ndarray) -> float:
+def _resolve_rh_fraction_scale(*, units: str, da: xr.DataArray) -> float:
     """Return the multiplicative factor to convert RH into [0, 1]."""
 
     normalized_units = _normalize_units_text(units).lower()
@@ -35,12 +35,10 @@ def _resolve_rh_fraction_scale(*, units: str, grid: np.ndarray) -> float:
         if normalized_units in {"1"} or "fraction" in normalized_units:
             return 1.0
 
-    values = np.asarray(grid, dtype=np.float32)
-    mask = np.isfinite(values)
-    if not mask.any():
+    vmax = float(da.max(skipna=True).item())
+    if not np.isfinite(vmax):
         return 1.0
 
-    vmax = float(np.nanmax(values))
     if vmax > 1.5:
         return 0.01
     return 1.0
@@ -49,17 +47,13 @@ def _resolve_rh_fraction_scale(*, units: str, grid: np.ndarray) -> float:
 def normalize_relative_humidity(da: xr.DataArray) -> xr.DataArray:
     """Normalize RH into a float32 fraction in [0, 1] when possible."""
 
-    raw = np.asarray(da.values, dtype=np.float32)
     scale = _resolve_rh_fraction_scale(
-        units=_normalize_units_text(da.attrs.get("units")), grid=raw
+        units=_normalize_units_text(da.attrs.get("units")), da=da
     )
-    out = xr.DataArray(
-        (raw * scale).astype(np.float32, copy=False),
-        dims=da.dims,
-        coords=da.coords,
-        name=da.name,
-        attrs=dict(da.attrs),
-    )
+    out = da.astype(np.float32) * np.float32(scale)
+    out = out.astype(np.float32)
+    out.name = da.name
+    out.attrs = dict(da.attrs)
     out.attrs["units"] = "1"
     out.attrs.setdefault("standard_name", "relative_humidity")
     return out
