@@ -7,7 +7,7 @@ import math
 import time
 from asyncio import to_thread
 from datetime import datetime, timezone
-from typing import TypedDict
+from typing import TypeAlias, TypedDict
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import Response
@@ -19,7 +19,7 @@ from sqlalchemy.orm import Session
 from catalog_cache import RedisLike, get_or_compute_cached_bytes
 import db
 from http_cache import if_none_match_matches
-from models import RiskPOI
+from models import RiskPOI, RiskPOIEvaluation
 from risk.intensity_mapping import RiskIntensityMapping
 from risk.rules import RiskEvaluationResult, RiskRuleModel
 from risk_intensity_config import get_risk_intensity_mappings_payload
@@ -41,6 +41,13 @@ CACHE_STALE_TTL_SECONDS = 60 * 60
 CACHE_LOCK_TTL_MS = 30_000
 CACHE_WAIT_TIMEOUT_MS = 200
 CACHE_COOLDOWN_TTL_SECONDS: tuple[int, int] = (5, 30)
+
+LOOKUP_CACHE_FRESH_TTL_SECONDS = 5
+LOOKUP_CACHE_STALE_TTL_SECONDS = 60
+LOOKUP_SQLITE_CHUNK_SIZE = 900
+
+
+RiskLevelValue: TypeAlias = int | None
 
 
 class RiskIntensityMappingsResponse(BaseModel):
@@ -176,9 +183,9 @@ class RiskPOIItemResponse(BaseModel):
     alt: float | None = None
     weight: float
     tags: list[str] | None = None
-    risk_level: int | None = Field(
+    risk_level: RiskLevelValue = Field(
         default=None,
-        description="Risk level (1-5) when evaluated, otherwise null",
+        description="Risk level (1-5) when evaluated; null when unavailable",
     )
 
 
@@ -199,6 +206,8 @@ def _query_risk_pois(
     max_lat: float,
     page: int,
     page_size: int,
+    product_id: int | None = None,
+    valid_time: datetime | None = None,
 ) -> RiskPOIQueryResponse:
     offset = (page - 1) * page_size
     bbox_filters = (
@@ -222,6 +231,36 @@ def _query_risk_pois(
         with Session(db.get_engine()) as session:
             total = int(session.execute(count_stmt).scalar_one())
             pois = session.scalars(stmt).all()
+            risk_levels: dict[int, int] = {}
+            if product_id is not None and valid_time is not None:
+                poi_ids = [int(item.id) for item in pois]
+                if poi_ids:
+                    dialect = session.bind.dialect.name if session.bind else ""
+                    chunk_size = (
+                        LOOKUP_SQLITE_CHUNK_SIZE
+                        if dialect == "sqlite"
+                        else len(poi_ids)
+                    )
+                    normalized_time = _normalize_time(valid_time)
+
+                    for offset in range(0, len(poi_ids), chunk_size):
+                        chunk = poi_ids[offset : offset + chunk_size]
+                        if not chunk:
+                            continue
+
+                        levels_stmt = (
+                            select(
+                                RiskPOIEvaluation.poi_id, RiskPOIEvaluation.risk_level
+                            )
+                            .where(
+                                RiskPOIEvaluation.poi_id.in_(chunk),
+                                RiskPOIEvaluation.product_id == int(product_id),
+                                RiskPOIEvaluation.valid_time == normalized_time,
+                            )
+                            .order_by(RiskPOIEvaluation.poi_id)
+                        )
+                        for poi_id, level in session.execute(levels_stmt).all():
+                            risk_levels[int(poi_id)] = int(level)
     except SQLAlchemyError as exc:
         logger.error("risk_pois_db_error", extra={"error": str(exc)})
         raise HTTPException(
@@ -238,7 +277,9 @@ def _query_risk_pois(
             alt=item.alt,
             weight=item.weight,
             tags=item.tags,
-            risk_level=None,
+            risk_level=risk_levels.get(int(item.id))
+            if product_id is not None and valid_time is not None
+            else None,
         )
         for item in pois
     ]
@@ -392,15 +433,33 @@ async def get_risk_pois(
     bbox: str = Query(description="Bounding box: min_lon,min_lat,max_lon,max_lat"),
     page: int = Query(default=1, ge=1, le=1000),
     page_size: int = Query(default=100, ge=1, le=1000),
+    product_id: int | None = Query(
+        default=None,
+        gt=0,
+        description="Product id for risk evaluation lookup (must be provided together with valid_time)",
+    ),
+    valid_time: datetime | None = Query(
+        default=None,
+        description="Valid time (ISO8601) for risk evaluation lookup (must be provided together with product_id)",
+    ),
 ) -> Response:
     try:
         min_lon, min_lat, max_lon, max_lat = _parse_bbox(bbox)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    redis: RedisLike | None = getattr(request.app.state, "redis_client", None)
+    if (product_id is None) != (valid_time is None):
+        raise HTTPException(
+            status_code=400,
+            detail="product_id and valid_time must be provided together",
+        )
 
-    async def _compute() -> bytes:
+    valid_dt = _normalize_time(valid_time) if valid_time is not None else None
+
+    redis: RedisLike | None = getattr(request.app.state, "redis_client", None)
+    lookup_requested = product_id is not None and valid_dt is not None
+
+    async def _compute_body() -> bytes:
         def _sync() -> bytes:
             payload = _query_risk_pois(
                 min_lon=min_lon,
@@ -409,36 +468,86 @@ async def get_risk_pois(
                 max_lat=max_lat,
                 page=page,
                 page_size=page_size,
+                product_id=product_id,
+                valid_time=valid_dt,
             )
             return payload.model_dump_json().encode("utf-8")
 
         return await to_thread(_sync)
 
+    async def _compute_body_with_metadata() -> tuple[bytes, bool]:
+        def _sync() -> tuple[bytes, bool]:
+            payload = _query_risk_pois(
+                min_lon=min_lon,
+                min_lat=min_lat,
+                max_lon=max_lon,
+                max_lat=max_lat,
+                page=page,
+                page_size=page_size,
+                product_id=product_id,
+                valid_time=valid_dt,
+            )
+            body = payload.model_dump_json().encode("utf-8")
+            has_unknown = any(item.risk_level is None for item in payload.items)
+            return body, has_unknown
+
+        return await to_thread(_sync)
+
     if redis is None:
-        body = await _compute()
+        body = await _compute_body()
     else:
+        product_key = str(int(product_id)) if product_id is not None else "none"
+        time_key = (
+            valid_dt.strftime("%Y%m%dT%H%M%SZ") if valid_dt is not None else "none"
+        )
         identity = (
             f"{min_lon!r},{min_lat!r},{max_lon!r},{max_lat!r}"
-            f":page={page}:size={page_size}"
+            f":page={page}:size={page_size}:product={product_key}:time={time_key}"
         )
         fresh_key = f"risk:pois:fresh:{identity}"
         stale_key = f"risk:pois:stale:{identity}"
         lock_key = f"risk:pois:lock:{identity}"
 
         try:
-            result = await get_or_compute_cached_bytes(
-                redis,
-                fresh_key=fresh_key,
-                stale_key=stale_key,
-                lock_key=lock_key,
-                fresh_ttl_seconds=CACHE_FRESH_TTL_SECONDS,
-                stale_ttl_seconds=CACHE_STALE_TTL_SECONDS,
-                lock_ttl_ms=CACHE_LOCK_TTL_MS,
-                wait_timeout_ms=CACHE_WAIT_TIMEOUT_MS,
-                compute=_compute,
-                cooldown_ttl_seconds=CACHE_COOLDOWN_TTL_SECONDS,
-            )
-            body = result.body
+            if not lookup_requested:
+                result = await get_or_compute_cached_bytes(
+                    redis,
+                    fresh_key=fresh_key,
+                    stale_key=stale_key,
+                    lock_key=lock_key,
+                    fresh_ttl_seconds=CACHE_FRESH_TTL_SECONDS,
+                    stale_ttl_seconds=CACHE_STALE_TTL_SECONDS,
+                    lock_ttl_ms=CACHE_LOCK_TTL_MS,
+                    wait_timeout_ms=CACHE_WAIT_TIMEOUT_MS,
+                    compute=_compute_body,
+                    cooldown_ttl_seconds=CACHE_COOLDOWN_TTL_SECONDS,
+                )
+                body = result.body
+            else:
+                cached = await redis.get(fresh_key)
+                if cached is not None:
+                    body = cached
+                else:
+                    stale = await redis.get(stale_key)
+                    computed: bytes
+                    has_unknown: bool
+                    try:
+                        computed, has_unknown = await _compute_body_with_metadata()
+                    except Exception:
+                        if stale is not None:
+                            body = stale
+                        else:
+                            raise
+                    else:
+                        if not has_unknown:
+                            fresh_ttl = LOOKUP_CACHE_FRESH_TTL_SECONDS
+                            await redis.set(fresh_key, computed, ex=fresh_ttl)
+                            await redis.set(
+                                stale_key,
+                                computed,
+                                ex=LOOKUP_CACHE_STALE_TTL_SECONDS,
+                            )
+                        body = computed
         except TimeoutError as exc:
             raise HTTPException(
                 status_code=503, detail="Risk POI cache warming timed out"
@@ -447,10 +556,15 @@ async def get_risk_pois(
             raise
         except Exception as exc:  # noqa: BLE001
             logger.warning("risk_pois_cache_unavailable", extra={"error": str(exc)})
-            body = await _compute()
+            body = await _compute_body()
 
     etag = f'"sha256-{hashlib.sha256(body).hexdigest()}"'
-    headers = {"Cache-Control": CACHE_CONTROL_HEADER, "ETag": etag}
+    cache_control = (
+        f"public, max-age={LOOKUP_CACHE_FRESH_TTL_SECONDS}"
+        if lookup_requested
+        else CACHE_CONTROL_HEADER
+    )
+    headers = {"Cache-Control": cache_control, "ETag": etag}
 
     if if_none_match_matches(request.headers.get("if-none-match"), etag):
         return Response(status_code=304, headers=headers)
@@ -642,6 +756,9 @@ async def evaluate_risk(
     request: Request,
     payload: RiskEvaluateRequest,
 ) -> Response:
+    # NOTE: /risk/evaluate can be CPU/DB intensive. In production, protect this
+    # endpoint with authentication/authorization and enforce rate limiting via
+    # `ApiRateLimitSettings` (e.g. a rule for `/api/v1/risk/evaluate`).
     try:
         rules_payload = get_risk_rules_payload()
     except (FileNotFoundError, ValueError) as exc:
@@ -675,6 +792,49 @@ async def evaluate_risk(
                 poi_ids=payload.poi_ids,
                 locale=locale,
             )
+
+            try:
+                with Session(db.get_engine()) as session:
+                    rows = [
+                        {
+                            "poi_id": int(item.poi_id),
+                            "product_id": int(payload.product_id),
+                            "valid_time": valid_dt,
+                            "risk_level": int(item.level),
+                        }
+                        for item in results
+                    ]
+                    if rows:
+                        dialect = session.bind.dialect.name if session.bind else ""
+                        if dialect == "postgresql":
+                            from sqlalchemy.dialects.postgresql import (
+                                insert as dialect_insert,
+                            )
+                        else:
+                            from sqlalchemy.dialects.sqlite import (
+                                insert as dialect_insert,
+                            )
+
+                        stmt = dialect_insert(RiskPOIEvaluation).values(rows)
+                        stmt = stmt.on_conflict_do_update(
+                            index_elements=[
+                                RiskPOIEvaluation.poi_id,
+                                RiskPOIEvaluation.product_id,
+                                RiskPOIEvaluation.valid_time,
+                            ],
+                            set_={
+                                "risk_level": stmt.excluded.risk_level,
+                                "evaluated_at": func.now(),
+                            },
+                        )
+                        session.execute(stmt)
+                        session.commit()
+            except SQLAlchemyError as exc:
+                logger.warning(
+                    "risk_poi_evaluations_write_failed",
+                    extra={"error": str(exc)},
+                )
+
             duration_ms = (time.perf_counter() - started) * 1000.0
             response_payload = RiskEvaluateResponse(
                 results=results,

@@ -109,12 +109,7 @@ function parseRiskPoiItem(value: unknown): RiskPOI | null {
   }
 
   const alt = parseOptionalNumber(value.alt);
-  const risk_level =
-    value.risk_level == null
-      ? null
-      : isFiniteNumber(value.risk_level)
-        ? value.risk_level
-        : null;
+  const risk_level = isFiniteNumber(value.risk_level) ? value.risk_level : null;
 
   return {
     id,

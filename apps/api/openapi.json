@@ -1862,7 +1862,7 @@
                 "type": "null"
               }
             ],
-            "description": "Risk level (1-5) when evaluated, otherwise null",
+            "description": "Risk level (1-5) when evaluated; null when unavailable",
             "title": "Risk Level"
           },
           "tags": {
@@ -3853,6 +3853,44 @@
               "minimum": 1,
               "title": "Page Size",
               "type": "integer"
+            }
+          },
+          {
+            "description": "Product id for risk evaluation lookup (must be provided together with valid_time)",
+            "in": "query",
+            "name": "product_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "exclusiveMinimum": 0,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Product id for risk evaluation lookup (must be provided together with valid_time)",
+              "title": "Product Id"
+            }
+          },
+          {
+            "description": "Valid time (ISO8601) for risk evaluation lookup (must be provided together with product_id)",
+            "in": "query",
+            "name": "valid_time",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Valid time (ISO8601) for risk evaluation lookup (must be provided together with product_id)",
+              "title": "Valid Time"
             }
           }
         ],

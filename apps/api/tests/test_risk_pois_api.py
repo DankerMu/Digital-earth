@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -115,6 +116,30 @@ def _seed_risk_pois(db_url: str) -> None:
     engine.dispose()
 
 
+def _seed_many_risk_pois(db_url: str, *, count: int) -> None:
+    from models import Base, RiskPOI
+
+    engine = create_engine(db_url)
+    Base.metadata.create_all(engine)
+    with Session(engine) as session:
+        session.add_all(
+            [
+                RiskPOI(
+                    name=f"poi-{idx:04d}",
+                    poi_type="fire",
+                    lon=109.1 + idx * 1e-4,
+                    lat=34.1,
+                    alt=None,
+                    weight=1.0,
+                    tags=None,
+                )
+                for idx in range(1, int(count) + 1)
+            ]
+        )
+        session.commit()
+    engine.dispose()
+
+
 def _seed_risk_pois_for_clustering(db_url: str) -> None:
     from models import Base, RiskPOI
 
@@ -165,6 +190,49 @@ def _seed_risk_pois_for_clustering(db_url: str) -> None:
     engine.dispose()
 
 
+def _seed_products_and_risk_poi_evaluations(db_url: str) -> int:
+    from models import Base, Product, RiskPOIEvaluation
+
+    engine = create_engine(db_url)
+    Base.metadata.create_all(engine)
+
+    with Session(engine) as session:
+        product = Product(
+            title="test-product",
+            text=None,
+            issued_at=datetime(2024, 1, 1, tzinfo=timezone.utc),
+            valid_from=datetime(2024, 1, 1, tzinfo=timezone.utc),
+            valid_to=datetime(2024, 1, 2, tzinfo=timezone.utc),
+            version=1,
+            status="published",
+        )
+        session.add(product)
+        session.flush()
+
+        session.add_all(
+            [
+                RiskPOIEvaluation(
+                    poi_id=1,
+                    product_id=int(product.id),
+                    valid_time=datetime(2024, 1, 1, tzinfo=timezone.utc),
+                    risk_level=4,
+                ),
+                RiskPOIEvaluation(
+                    poi_id=3,
+                    product_id=int(product.id),
+                    valid_time=datetime(2024, 1, 1, tzinfo=timezone.utc),
+                    risk_level=2,
+                ),
+            ]
+        )
+        session.commit()
+
+        product_id = int(product.id)
+
+    engine.dispose()
+    return product_id
+
+
 def test_risk_pois_bbox_filter_and_pagination(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -191,6 +259,54 @@ def test_risk_pois_bbox_filter_and_pagination(
     payload2 = second.json()
     assert payload2["total"] == 3
     assert [item["name"] for item in payload2["items"]] == ["poi-c"]
+
+
+def test_risk_pois_product_and_valid_time_lookup(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    db_url = f"sqlite+pysqlite:///{tmp_path / 'risk.db'}"
+    _seed_risk_pois(db_url)
+    product_id = _seed_products_and_risk_poi_evaluations(db_url)
+    client, _redis = _make_client(monkeypatch, tmp_path, db_url=db_url)
+
+    response = client.get(
+        "/api/v1/risk/pois",
+        params={
+            "bbox": "109,34,112,36",
+            "product_id": product_id,
+            "valid_time": "2024-01-01T00:00:00Z",
+        },
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["total"] == 3
+
+    by_name = {item["name"]: item for item in payload["items"]}
+    assert by_name["poi-a"]["risk_level"] == 4
+    assert by_name["poi-b"]["risk_level"] is None
+    assert by_name["poi-c"]["risk_level"] == 2
+
+
+def test_risk_pois_requires_product_id_and_valid_time_together(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    db_url = f"sqlite+pysqlite:///{tmp_path / 'risk.db'}"
+    _seed_risk_pois(db_url)
+    client, _redis = _make_client(monkeypatch, tmp_path, db_url=db_url)
+
+    missing_time = client.get(
+        "/api/v1/risk/pois",
+        params={"bbox": "109,34,112,36", "product_id": 1},
+    )
+    assert missing_time.status_code == 400
+    assert missing_time.json()["error_code"] == 40000
+
+    missing_product = client.get(
+        "/api/v1/risk/pois",
+        params={"bbox": "109,34,112,36", "valid_time": "2024-01-01T00:00:00Z"},
+    )
+    assert missing_product.status_code == 400
+    assert missing_product.json()["error_code"] == 40000
 
 
 def test_risk_pois_cache_hit_skips_db_queries(
@@ -220,6 +336,127 @@ def test_risk_pois_cache_hit_skips_db_queries(
     assert cached.status_code == 200
     assert cached.headers.get("etag") == etag
     assert cached.json() == first.json()
+
+
+def test_risk_pois_lookup_does_not_cache_unknown_results(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    db_url = f"sqlite+pysqlite:///{tmp_path / 'risk.db'}"
+    _seed_risk_pois(db_url)
+    product_id = _seed_products_and_risk_poi_evaluations(db_url)
+    client, redis = _make_client(monkeypatch, tmp_path, db_url=db_url)
+
+    response = client.get(
+        "/api/v1/risk/pois",
+        params={
+            "bbox": "109,34,112,36",
+            "product_id": product_id,
+            "valid_time": "2024-01-01T00:00:00Z",
+        },
+    )
+    assert response.status_code == 200
+    assert response.headers.get("cache-control") == "public, max-age=5"
+
+    identity = (
+        f"{109.0!r},{34.0!r},{112.0!r},{36.0!r}"
+        f":page=1:size=100:product={product_id}:time=20240101T000000Z"
+    )
+    fresh_key = f"risk:pois:fresh:{identity}"
+    stale_key = f"risk:pois:stale:{identity}"
+
+    assert fresh_key not in redis.values
+    assert stale_key not in redis.values
+
+
+def test_risk_pois_lookup_caches_fully_known_results_with_short_ttl(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    db_url = f"sqlite+pysqlite:///{tmp_path / 'risk.db'}"
+    _seed_risk_pois(db_url)
+    product_id = _seed_products_and_risk_poi_evaluations(db_url)
+
+    from models import RiskPOIEvaluation
+
+    engine = create_engine(db_url)
+    with Session(engine) as session:
+        session.add(
+            RiskPOIEvaluation(
+                poi_id=2,
+                product_id=int(product_id),
+                valid_time=datetime(2024, 1, 1, tzinfo=timezone.utc),
+                risk_level=1,
+            )
+        )
+        session.commit()
+    engine.dispose()
+
+    client, redis = _make_client(monkeypatch, tmp_path, db_url=db_url)
+
+    first = client.get(
+        "/api/v1/risk/pois",
+        params={
+            "bbox": "109,34,112,36",
+            "product_id": product_id,
+            "valid_time": "2024-01-01T00:00:00Z",
+        },
+    )
+    assert first.status_code == 200
+    assert first.headers.get("cache-control") == "public, max-age=5"
+
+    identity = (
+        f"{109.0!r},{34.0!r},{112.0!r},{36.0!r}"
+        f":page=1:size=100:product={product_id}:time=20240101T000000Z"
+    )
+    fresh_key = f"risk:pois:fresh:{identity}"
+    stale_key = f"risk:pois:stale:{identity}"
+
+    assert fresh_key in redis.values
+    assert stale_key in redis.values
+    now = redis.now()
+    assert redis.expires_at[fresh_key] - now == pytest.approx(5.0)
+    assert redis.expires_at[stale_key] - now == pytest.approx(60.0)
+
+    import db as db_module
+
+    def _boom() -> None:
+        raise AssertionError("db.get_engine() should not be called on cache hit")
+
+    monkeypatch.setattr(db_module, "get_engine", _boom)
+
+    cached = client.get(
+        "/api/v1/risk/pois",
+        params={
+            "bbox": "109,34,112,36",
+            "product_id": product_id,
+            "valid_time": "2024-01-01T00:00:00Z",
+        },
+    )
+    assert cached.status_code == 200
+    assert cached.json() == first.json()
+
+
+def test_risk_pois_lookup_chunks_poi_ids_for_sqlite_variable_limit(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    db_url = f"sqlite+pysqlite:///{tmp_path / 'risk.db'}"
+    _seed_many_risk_pois(db_url, count=1000)
+    product_id = _seed_products_and_risk_poi_evaluations(db_url)
+    client, _redis = _make_client(monkeypatch, tmp_path, db_url=db_url)
+
+    response = client.get(
+        "/api/v1/risk/pois",
+        params={
+            "bbox": "109,34,112,36",
+            "page": 1,
+            "page_size": 1000,
+            "product_id": product_id,
+            "valid_time": "2024-01-01T00:00:00Z",
+        },
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["total"] == 1000
+    assert len(payload["items"]) == 1000
 
 
 def test_risk_pois_without_redis_returns_payload(
@@ -356,6 +593,8 @@ def test_risk_pois_http_exception_is_not_retried_after_cache_layer(
         max_lat: float,
         page: int,
         page_size: int,
+        product_id: int | None = None,
+        valid_time: object | None = None,
     ) -> None:
         calls.append(
             {
