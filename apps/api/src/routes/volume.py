@@ -256,6 +256,23 @@ def _bounding_slice(coord_sorted: np.ndarray, vmin: float, vmax: float) -> slice
     return slice(start, end + 1)
 
 
+def _bounding_slice_monotonic(coord: np.ndarray, vmin: float, vmax: float) -> slice:
+    coord_f = np.asarray(coord, dtype=np.float64)
+    if coord_f.size == 0:
+        return slice(0, 0)
+    if coord_f.size == 1:
+        return slice(0, 1)
+
+    if coord_f[0] < coord_f[-1]:
+        return _bounding_slice(coord_f, vmin, vmax)
+
+    reverse = _bounding_slice(coord_f[::-1], vmin, vmax)
+    if reverse.stop == 0:
+        return slice(0, 0)
+    size = int(coord_f.size)
+    return slice(size - int(reverse.stop), size - int(reverse.start))
+
+
 def _interp_1d(x: np.ndarray, y: np.ndarray, x_new: np.ndarray) -> np.ndarray:
     x_f = np.asarray(x, dtype=np.float64)
     y_f = np.asarray(y, dtype=np.float32)
@@ -291,7 +308,7 @@ def _interp2d(
     return out
 
 
-def _read_cloud_density_grid(path: Path) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+def _read_cloud_density_coords(path: Path) -> tuple[np.ndarray, np.ndarray]:
     ds = open_datacube(path)
     try:
         if "cloud_density" not in ds.data_vars:
@@ -301,6 +318,62 @@ def _read_cloud_density_grid(path: Path) -> tuple[np.ndarray, np.ndarray, np.nda
             raise HTTPException(
                 status_code=500, detail="Slice must have lat/lon dimensions"
             )
+        lat = np.asarray(da["lat"].values, dtype=np.float64)
+        lon = np.asarray(da["lon"].values, dtype=np.float64)
+    finally:
+        ds.close()
+
+    if not (_monotonic_1d(lat) and _monotonic_1d(lon)):
+        raise HTTPException(
+            status_code=500, detail="Slice coordinates are not monotonic"
+        )
+    return lat, lon
+
+
+def _read_cloud_density_grid(
+    path: Path,
+    *,
+    lat_bounds: tuple[float, float] | None = None,
+    lon_bounds: tuple[float, float] | None = None,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    ds = open_datacube(path)
+    try:
+        if "cloud_density" not in ds.data_vars:
+            raise HTTPException(status_code=500, detail="Slice missing cloud_density")
+        da = ds["cloud_density"].squeeze(drop=True)
+        if set(da.dims) != {"lat", "lon"}:
+            raise HTTPException(
+                status_code=500, detail="Slice must have lat/lon dimensions"
+            )
+
+        if lat_bounds is not None or lon_bounds is not None:
+            lat_full = np.asarray(da["lat"].values, dtype=np.float64)
+            lon_full = np.asarray(da["lon"].values, dtype=np.float64)
+            if not (_monotonic_1d(lat_full) and _monotonic_1d(lon_full)):
+                raise HTTPException(
+                    status_code=500, detail="Slice coordinates are not monotonic"
+                )
+
+            if lat_bounds is not None:
+                lat_min, lat_max = sorted(lat_bounds)
+                lat_isel = _bounding_slice_monotonic(lat_full, lat_min, lat_max)
+                if lat_isel.stop == 0:
+                    da = da.isel(lat=slice(0, 0))
+                else:
+                    start = float(lat_full[int(lat_isel.start)])
+                    end = float(lat_full[int(lat_isel.stop) - 1])
+                    da = da.sel(lat=slice(start, end))
+
+            if lon_bounds is not None:
+                lon_min, lon_max = sorted(lon_bounds)
+                lon_isel = _bounding_slice_monotonic(lon_full, lon_min, lon_max)
+                if lon_isel.stop == 0:
+                    da = da.isel(lon=slice(0, 0))
+                else:
+                    start = float(lon_full[int(lon_isel.start)])
+                    end = float(lon_full[int(lon_isel.stop) - 1])
+                    da = da.sel(lon=slice(start, end))
+
         lat = np.asarray(da["lat"].values, dtype=np.float64)
         lon = np.asarray(da["lon"].values, dtype=np.float64)
         values = np.asarray(da.values, dtype=np.float32)
@@ -316,7 +389,7 @@ def _read_cloud_density_grid(path: Path) -> tuple[np.ndarray, np.ndarray, np.nda
     return lat, lon, values
 
 
-def _target_grid(bbox: BBox, *, res_m: float) -> tuple[np.ndarray, np.ndarray]:
+def _estimate_grid_size(bbox: BBox, *, res_m: float) -> tuple[int, int]:
     lat_dist_m = (bbox.north - bbox.south) * METERS_PER_DEG_LAT
     mean_lat_rad = math.radians((bbox.south + bbox.north) / 2.0)
     lon_dist_m = (
@@ -325,8 +398,20 @@ def _target_grid(bbox: BBox, *, res_m: float) -> tuple[np.ndarray, np.ndarray]:
         * max(0.0, abs(math.cos(mean_lat_rad)))
     )
 
-    n_lat = max(2, int(math.ceil(lat_dist_m / res_m)) + 1)
-    n_lon = max(2, int(math.ceil(lon_dist_m / res_m)) + 1)
+    if not (math.isfinite(lat_dist_m) and math.isfinite(lon_dist_m)):
+        raise ValueError("bbox/res must produce a finite grid size")
+
+    try:
+        n_lat = max(2, int(math.ceil(lat_dist_m / res_m)) + 1)
+        n_lon = max(2, int(math.ceil(lon_dist_m / res_m)) + 1)
+    except OverflowError as exc:
+        raise ValueError("bbox/res must produce a finite grid size") from exc
+
+    return n_lat, n_lon
+
+
+def _target_grid(bbox: BBox, *, res_m: float) -> tuple[np.ndarray, np.ndarray]:
+    n_lat, n_lon = _estimate_grid_size(bbox, res_m=res_m)
 
     target_lat = np.linspace(bbox.south, bbox.north, n_lat, dtype=np.float64)
     target_lon = np.linspace(bbox.west, bbox.east, n_lon, dtype=np.float64)
@@ -387,29 +472,38 @@ def get_volume(
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    target_lat, target_lon = _target_grid(bbox_parsed, res_m=res_m)
-    decoded_bytes = (
-        int(len(levels_keys)) * int(target_lat.size) * int(target_lon.size) * 4
-    )
-    if decoded_bytes > MAX_OUTPUT_BYTES:
+    try:
+        n_lat, n_lon = _estimate_grid_size(bbox_parsed, res_m=res_m)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    estimated_bytes = int(len(levels_keys)) * n_lat * n_lon * 4
+    if estimated_bytes > MAX_OUTPUT_BYTES:
         raise HTTPException(status_code=400, detail="Requested volume exceeds max size")
+
+    target_lat, target_lon = _target_grid(bbox_parsed, res_m=res_m)
 
     base_dir = _resolve_volume_base_dir()
     _time_key, resolved_dt, time_dir = _resolve_time_dir(
         base_dir, layer=DEFAULT_CLOUD_DENSITY_LAYER, valid_time=dt
     )
 
+    reference_slice_path = _resolve_slice_path(time_dir, level_key=levels_keys[0])
+    _, reference_lon = _read_cloud_density_coords(reference_slice_path)
+    lon_w = _normalize_lon(bbox_parsed.west, reference_lon)
+    lon_e = _normalize_lon(bbox_parsed.east, reference_lon)
+    if lon_e <= lon_w:
+        raise HTTPException(status_code=400, detail="bbox crosses longitude seam")
+
     slices: list[np.ndarray] = []
     lon_coord: np.ndarray | None = None
     lat_coord: np.ndarray | None = None
     for level_key in levels_keys:
         slice_path = _resolve_slice_path(time_dir, level_key=level_key)
-        lat, lon, values = _read_cloud_density_grid(slice_path)
-
-        lon_w = _normalize_lon(bbox_parsed.west, lon)
-        lon_e = _normalize_lon(bbox_parsed.east, lon)
-        if lon_e <= lon_w:
-            raise HTTPException(status_code=400, detail="bbox crosses longitude seam")
+        lat, lon, values = _read_cloud_density_grid(
+            slice_path,
+            lat_bounds=(bbox_parsed.south, bbox_parsed.north),
+            lon_bounds=(lon_w, lon_e),
+        )
 
         lon_sorted, lon_order = _sorted_axis(lon)
         lat_sorted, lat_order = _sorted_axis(lat)
