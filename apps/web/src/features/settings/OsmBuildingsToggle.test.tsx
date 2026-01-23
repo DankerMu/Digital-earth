@@ -15,8 +15,12 @@ beforeEach(() => {
 test('toggles OSM buildings and persists', () => {
   render(<OsmBuildingsToggle />);
 
-  const checkbox = screen.getByRole('checkbox', { name: '开启' });
+  const checkbox = screen.getByRole('checkbox', { name: '3D 建筑' });
   expect(checkbox).toBeChecked();
+
+  const statusId = checkbox.getAttribute('aria-describedby');
+  expect(statusId).toBeTruthy();
+  expect(document.getElementById(statusId!)).toHaveTextContent('开启');
 
   fireEvent.click(checkbox);
   expect(useOsmBuildingsStore.getState().enabled).toBe(false);
@@ -31,8 +35,11 @@ test('disables OSM buildings toggle in low performance mode', () => {
 
   render(<OsmBuildingsToggle />);
 
-  const checkbox = screen.getByRole('checkbox', { name: 'Low 模式已关闭' });
+  const checkbox = screen.getByRole('checkbox', { name: '3D 建筑' });
   expect(checkbox).toBeDisabled();
   expect(checkbox).not.toBeChecked();
-});
 
+  const statusId = checkbox.getAttribute('aria-describedby');
+  expect(statusId).toBeTruthy();
+  expect(document.getElementById(statusId!)).toHaveTextContent('Low 模式已关闭');
+});

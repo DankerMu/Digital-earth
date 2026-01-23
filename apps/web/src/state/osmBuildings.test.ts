@@ -14,10 +14,10 @@ function writeStorage(value: unknown) {
 }
 
 describe('osmBuildings store', () => {
-  it('defaults to enabled when localStorage is empty', async () => {
+  it('defaults to disabled when localStorage is empty', async () => {
     localStorage.removeItem(STORAGE_KEY);
     const { useOsmBuildingsStore } = await importFresh();
-    expect(useOsmBuildingsStore.getState().enabled).toBe(true);
+    expect(useOsmBuildingsStore.getState().enabled).toBe(false);
   });
 
   it('restores a persisted enabled flag', async () => {
@@ -30,20 +30,20 @@ describe('osmBuildings store', () => {
     localStorage.removeItem(STORAGE_KEY);
     const { useOsmBuildingsStore } = await importFresh();
 
-    useOsmBuildingsStore.getState().setEnabled(false);
-    expect(useOsmBuildingsStore.getState().enabled).toBe(false);
+    useOsmBuildingsStore.getState().setEnabled(true);
+    expect(useOsmBuildingsStore.getState().enabled).toBe(true);
 
     const persisted = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? 'null') as unknown;
-    expect(persisted).toEqual({ enabled: false });
+    expect(persisted).toEqual({ enabled: true });
   });
 
   it('toggleEnabled flips enabled', async () => {
     localStorage.removeItem(STORAGE_KEY);
     const { useOsmBuildingsStore } = await importFresh();
 
-    expect(useOsmBuildingsStore.getState().enabled).toBe(true);
-    useOsmBuildingsStore.getState().toggleEnabled();
     expect(useOsmBuildingsStore.getState().enabled).toBe(false);
+    useOsmBuildingsStore.getState().toggleEnabled();
+    expect(useOsmBuildingsStore.getState().enabled).toBe(true);
   });
 
   it('useOsmBuildingsStore subscribes via useSyncExternalStore', async () => {
@@ -56,13 +56,12 @@ describe('osmBuildings store', () => {
     }
 
     render(createElement(EnabledLabel));
-    expect(screen.getByTestId('enabled')).toHaveTextContent('true');
+    expect(screen.getByTestId('enabled')).toHaveTextContent('false');
 
     act(() => {
-      useOsmBuildingsStore.getState().setEnabled(false);
+      useOsmBuildingsStore.getState().setEnabled(true);
     });
 
-    expect(screen.getByTestId('enabled')).toHaveTextContent('false');
+    expect(screen.getByTestId('enabled')).toHaveTextContent('true');
   });
 });
-

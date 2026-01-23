@@ -24,6 +24,8 @@ import {
   Viewer,
   WebMercatorTilingScheme,
   type Cesium3DTileset,
+  type PrimitiveCollection,
+  type Scene,
   type Viewer as CesiumViewerInstance
 } from 'cesium';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
@@ -721,6 +723,7 @@ export function CesiumViewer() {
   const samplingAbortRef = useRef<AbortController | null>(null);
   const osmBuildingsTilesetRef = useRef<Cesium3DTileset | null>(null);
   const osmBuildingsLoadingRef = useRef<Promise<Cesium3DTileset> | null>(null);
+  const osmBuildingsTilesetCleanupRef = useRef<(() => void) | null>(null);
   const [cloudFrameIndex, setCloudFrameIndex] = useState(0);
   const [eventMonitoringTimeKey, setEventMonitoringTimeKey] = useState<string | null>(null);
   const [eventMonitoringRectangle, setEventMonitoringRectangle] = useState<{
@@ -1132,13 +1135,13 @@ export function CesiumViewer() {
     if (!viewer) return;
     return () => {
       osmBuildingsLoadingRef.current = null;
+      osmBuildingsTilesetCleanupRef.current?.();
+      osmBuildingsTilesetCleanupRef.current = null;
       const existing = osmBuildingsTilesetRef.current;
       if (!existing) return;
       osmBuildingsTilesetRef.current = null;
       try {
-        (viewer.scene as unknown as { primitives?: { remove?: (primitive: unknown) => boolean } }).primitives?.remove?.(
-          existing,
-        );
+        viewer.scene.primitives.remove(existing);
       } catch {
         // ignore teardown errors
       }
@@ -1159,21 +1162,22 @@ export function CesiumViewer() {
       viewModeRoute.viewModeId !== 'layerGlobal' &&
       sceneModeId === '3d';
 
-    const scene = viewer.scene as unknown as {
-      requestRender: () => void;
-      primitives?: {
-        add?: (primitive: unknown, index?: number) => unknown;
-        remove?: (primitive: unknown) => boolean;
-      };
-    };
+    const scene: Scene = viewer.scene;
+    const primitives: PrimitiveCollection = scene.primitives;
 
     if (!active) {
       osmBuildingsLoadingRef.current = null;
+      osmBuildingsTilesetCleanupRef.current?.();
+      osmBuildingsTilesetCleanupRef.current = null;
       const existing = osmBuildingsTilesetRef.current;
       if (existing) {
         osmBuildingsTilesetRef.current = null;
-        scene.primitives?.remove?.(existing);
-        existing.destroy();
+        primitives.remove(existing);
+        try {
+          existing.destroy();
+        } catch {
+          // ignore teardown errors
+        }
         scene.requestRender();
       }
       return;
@@ -1211,8 +1215,21 @@ export function CesiumViewer() {
         osmBuildingsTilesetRef.current = tileset;
         tileset.show = true;
 
+        osmBuildingsTilesetCleanupRef.current?.();
+        const requestRender = () => {
+          scene.requestRender();
+        };
+        tileset.loadProgress.addEventListener(requestRender);
+        tileset.allTilesLoaded.addEventListener(requestRender);
+        tileset.initialTilesLoaded.addEventListener(requestRender);
+        osmBuildingsTilesetCleanupRef.current = () => {
+          tileset.loadProgress.removeEventListener(requestRender);
+          tileset.allTilesLoaded.removeEventListener(requestRender);
+          tileset.initialTilesLoaded.removeEventListener(requestRender);
+        };
+
         // Add buildings below other primitives so weather and overlays can still render on top.
-        scene.primitives?.add?.(tileset, 0);
+        primitives.add(tileset, 0);
         scene.requestRender();
       })
       .catch((error: unknown) => {

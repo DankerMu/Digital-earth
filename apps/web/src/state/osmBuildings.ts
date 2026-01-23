@@ -19,14 +19,14 @@ function notify() {
 function safeReadEnabled(): boolean {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return true;
+    if (!raw) return false;
     const parsed = JSON.parse(raw) as unknown;
     if (typeof parsed === 'boolean') return parsed;
-    if (!parsed || typeof parsed !== 'object') return true;
+    if (!parsed || typeof parsed !== 'object') return false;
     const record = parsed as Record<string, unknown>;
-    return typeof record.enabled === 'boolean' ? record.enabled : true;
+    return typeof record.enabled === 'boolean' ? record.enabled : false;
   } catch {
-    return true;
+    return false;
   }
 }
 
@@ -88,4 +88,3 @@ export const useOsmBuildingsStore: StoreHook = Object.assign(useOsmBuildingsStor
   getState,
   setState,
 });
-

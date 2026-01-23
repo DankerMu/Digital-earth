@@ -33,8 +33,20 @@ const windArrowsMocks = vi.hoisted(() => {
 });
 
 const osmBuildingsMocks = vi.hoisted(() => {
+  type MockCesiumEvent = {
+    addEventListener: ReturnType<typeof vi.fn>;
+    removeEventListener: ReturnType<typeof vi.fn>;
+    __mocks: { trigger: (...args: unknown[]) => void };
+  };
+
   return {
-    instances: [] as Array<{ show: boolean; destroy: ReturnType<typeof vi.fn> }>,
+    instances: [] as Array<{
+      show: boolean;
+      destroy: ReturnType<typeof vi.fn>;
+      loadProgress: MockCesiumEvent;
+      allTilesLoaded: MockCesiumEvent;
+      initialTilesLoaded: MockCesiumEvent;
+    }>,
   };
 });
 
@@ -128,8 +140,31 @@ vi.mock('cesium', () => {
   const TextureMinificationFilter = { LINEAR: 'linear', NEAREST: 'nearest' };
   const TextureMagnificationFilter = { LINEAR: 'linear', NEAREST: 'nearest' };
 
+  const makeEvent = () => {
+    const handlers = new Set<(...args: unknown[]) => void>();
+    return {
+      addEventListener: vi.fn((handler: (...args: unknown[]) => void) => {
+        handlers.add(handler);
+      }),
+      removeEventListener: vi.fn((handler: (...args: unknown[]) => void) => {
+        handlers.delete(handler);
+      }),
+      __mocks: {
+        trigger: (...args: unknown[]) => {
+          for (const handler of handlers) handler(...args);
+        },
+      },
+    };
+  };
+
   const createOsmBuildingsAsync = vi.fn(async () => {
-    const tileset = { show: true, destroy: vi.fn() };
+    const tileset = {
+      show: true,
+      destroy: vi.fn(),
+      loadProgress: makeEvent(),
+      allTilesLoaded: makeEvent(),
+      initialTilesLoaded: makeEvent(),
+    };
     osmBuildingsMocks.instances.push(tileset);
     return tileset;
   });
@@ -151,23 +186,6 @@ vi.mock('cesium', () => {
 
   const Cartographic = {
     fromCartesian: vi.fn(() => ({ longitude: 0, latitude: 0 })),
-  };
-
-  const makeEvent = () => {
-    const handlers = new Set<() => void>();
-    return {
-      addEventListener: vi.fn((handler: () => void) => {
-        handlers.add(handler);
-      }),
-      removeEventListener: vi.fn((handler: () => void) => {
-        handlers.delete(handler);
-      }),
-      __mocks: {
-        trigger: () => {
-          for (const handler of handlers) handler();
-        },
-      },
-    };
   };
 
   const camera = {
@@ -748,6 +766,45 @@ describe('CesiumViewer', () => {
     expect(osmBuildingsMocks.instances).toHaveLength(1);
     expect(viewer.scene.primitives.add).toHaveBeenCalledWith(osmBuildingsMocks.instances[0], 0);
     expect(viewer.scene.requestRender).toHaveBeenCalled();
+
+    const requestRenderCalls = viewer.scene.requestRender.mock.calls.length;
+    osmBuildingsMocks.instances[0].loadProgress.__mocks.trigger(1, 0);
+    expect(viewer.scene.requestRender).toHaveBeenCalledTimes(requestRenderCalls + 1);
+  });
+
+  it('removes and destroys OSM buildings tileset when disabled', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        jsonResponse({
+          apiBaseUrl: 'http://api.test',
+          map: { cesiumIonAccessToken: 'token' },
+        }),
+      ),
+    );
+
+    useOsmBuildingsStore.setState({ enabled: true });
+
+    render(<CesiumViewer />);
+
+    await waitFor(() => expect(vi.mocked(Viewer)).toHaveBeenCalledTimes(1));
+
+    const viewer = vi.mocked(Viewer).mock.results[0].value;
+    await waitFor(() => expect(vi.mocked(createOsmBuildingsAsync)).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(viewer.scene.primitives.add).toHaveBeenCalledTimes(1));
+
+    const tileset = osmBuildingsMocks.instances[0];
+    expect(tileset).toBeTruthy();
+
+    act(() => {
+      useOsmBuildingsStore.setState({ enabled: false });
+    });
+
+    await waitFor(() => expect(viewer.scene.primitives.remove).toHaveBeenCalledWith(tileset));
+    expect(tileset.destroy).toHaveBeenCalledTimes(1);
+    expect(tileset.loadProgress.removeEventListener).toHaveBeenCalledTimes(1);
+    expect(tileset.allTilesLoaded.removeEventListener).toHaveBeenCalledTimes(1);
+    expect(tileset.initialTilesLoaded.removeEventListener).toHaveBeenCalledTimes(1);
   });
 
   it('does not load OSM buildings when performance mode is low', async () => {
