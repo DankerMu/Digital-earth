@@ -11,7 +11,7 @@ async function buildPack(header: object, bodyRaw: Uint8Array): Promise<Uint8Arra
   const headerBytes = encodeHeader(header);
   const headerLen = headerBytes.byteLength;
 
-  const bodyCompressed = await zstd.compress(bodyRaw as any);
+  const bodyCompressed = await zstd.compress(Buffer.from(bodyRaw));
   const out = new Uint8Array(8 + headerLen + bodyCompressed.byteLength);
 
   out.set([0x56, 0x4f, 0x4c, 0x50], 0); // "VOLP"
