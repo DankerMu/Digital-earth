@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -9,7 +10,9 @@ import pytest
 import xarray as xr
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
+from starlette.requests import Request as StarletteRequest
 
+from redis_fakes import FakeRedis
 from volume.cloud_density import DEFAULT_CLOUD_DENSITY_LAYER
 from volume.pack import decode_volume_pack
 from routes import volume as volume_routes
@@ -42,6 +45,7 @@ def _make_client(
     tmp_path: Path,
     *,
     volume_data_dir: Path | None = None,
+    redis: FakeRedis | None = None,
 ) -> TestClient:
     config_dir = tmp_path / "config"
     _write_config(config_dir, "dev", _base_config())
@@ -57,10 +61,13 @@ def _make_client(
         monkeypatch.delenv("DIGITAL_EARTH_VOLUME_DATA_DIR", raising=False)
 
     from config import get_settings
-    from main import create_app
+    import main as main_module
+
+    redis_client = redis or FakeRedis()
+    monkeypatch.setattr(main_module, "create_redis_client", lambda _url: redis_client)
 
     get_settings.cache_clear()
-    return TestClient(create_app())
+    return TestClient(main_module.create_app())
 
 
 def _write_cloud_density_slice(
@@ -190,6 +197,172 @@ def test_volume_returns_volume_pack_for_cloud_density_slices(
     assert array.shape == (2, 3, 3)
     assert np.allclose(array[0], values_300)
     assert np.allclose(array[1], values_500)
+
+
+def test_volume_caches_volume_pack_payload_in_redis(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    redis = FakeRedis(use_real_time=False)
+    base_dir = tmp_path / "volume-data"
+    time_key = "20260101T000000Z"
+    valid_time = "2026-01-01T00:00:00"
+
+    time_dir = base_dir / DEFAULT_CLOUD_DENSITY_LAYER / time_key
+    lat = [0.0, 0.1, 0.2]
+    lon = [0.0, 0.1, 0.2]
+    values = np.ones((3, 3), dtype=np.float32)
+    _write_cloud_density_slice(
+        time_dir / "300.nc",
+        valid_time=valid_time,
+        level=300,
+        lat=lat,
+        lon=lon,
+        values=values,
+    )
+
+    client = _make_client(monkeypatch, tmp_path, volume_data_dir=base_dir, redis=redis)
+    params = {
+        "bbox": "0,0,0.2,0.2,0,12000",
+        "levels": "300",
+        "res": "11132",
+        "valid_time": "2026-01-01T00:00:00Z",
+    }
+
+    response = client.get("/api/v1/volume", params=params)
+    assert response.status_code == 200
+
+    cache_key = volume_routes._cache_key(
+        params["bbox"],
+        params["levels"],
+        params["valid_time"],
+        float(params["res"]),
+    )
+    assert cache_key in redis.values
+    assert int(redis.expires_at[cache_key] - redis.now()) == 3600
+
+    def _unexpected(*args: object, **kwargs: object) -> object:
+        raise AssertionError("expected cache hit")
+
+    monkeypatch.setattr(volume_routes, "_read_cloud_density_grid", _unexpected)
+    cached = client.get("/api/v1/volume", params=params)
+    assert cached.status_code == 200
+    assert cached.content == response.content
+
+
+def test_volume_audit_log_includes_cache_hit(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    redis = FakeRedis()
+    base_dir = tmp_path / "volume-data"
+    time_key = "20260101T000000Z"
+    valid_time = "2026-01-01T00:00:00"
+
+    time_dir = base_dir / DEFAULT_CLOUD_DENSITY_LAYER / time_key
+    lat = [0.0, 0.1, 0.2]
+    lon = [0.0, 0.1, 0.2]
+    values = np.ones((3, 3), dtype=np.float32)
+    _write_cloud_density_slice(
+        time_dir / "300.nc",
+        valid_time=valid_time,
+        level=300,
+        lat=lat,
+        lon=lon,
+        values=values,
+    )
+
+    client = _make_client(monkeypatch, tmp_path, volume_data_dir=base_dir, redis=redis)
+    caplog.set_level(logging.INFO, logger="api.error")
+
+    params = {
+        "bbox": "0,0,0.2,0.2,0,12000",
+        "levels": "300",
+        "res": "11132",
+        "valid_time": "2026-01-01T00:00:00Z",
+    }
+    headers = {"X-Forwarded-For": "203.0.113.10"}
+
+    caplog.clear()
+    first = client.get("/api/v1/volume", params=params, headers=headers)
+    assert first.status_code == 200
+
+    first_record = next(
+        item for item in caplog.records if item.getMessage() == "volume_request"
+    )
+    assert first_record.bbox == params["bbox"]
+    assert first_record.levels == params["levels"]
+    assert first_record.res == float(params["res"])
+    assert first_record.client_ip == "203.0.113.10"
+    assert isinstance(first_record.response_time_ms, int)
+    assert first_record.cache_hit is False
+
+    caplog.clear()
+    second = client.get("/api/v1/volume", params=params, headers=headers)
+    assert second.status_code == 200
+
+    second_record = next(
+        item for item in caplog.records if item.getMessage() == "volume_request"
+    )
+    assert second_record.cache_hit is True
+
+
+def test_volume_stats_returns_top_bbox_buckets(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    redis = FakeRedis()
+    base_dir = tmp_path / "volume-data"
+    time_key = "20260101T000000Z"
+    valid_time = "2026-01-01T00:00:00"
+
+    time_dir = base_dir / DEFAULT_CLOUD_DENSITY_LAYER / time_key
+    lat = [0.0, 0.1, 0.2]
+    lon = [0.0, 1.0, 1.5]
+    values = np.ones((3, 3), dtype=np.float32)
+    _write_cloud_density_slice(
+        time_dir / "300.nc",
+        valid_time=valid_time,
+        level=300,
+        lat=lat,
+        lon=lon,
+        values=values,
+    )
+
+    client = _make_client(monkeypatch, tmp_path, volume_data_dir=base_dir, redis=redis)
+    params = {
+        "levels": "300",
+        "res": "11132",
+        "valid_time": "2026-01-01T00:00:00Z",
+    }
+
+    bbox_a = "0,0,0.2,0.2,0,12000"
+    bbox_b = "1,0,1.2,0.2,0,12000"
+
+    assert (
+        client.get("/api/v1/volume", params={**params, "bbox": bbox_a}).status_code
+        == 200
+    )
+    assert (
+        client.get("/api/v1/volume", params={**params, "bbox": bbox_a}).status_code
+        == 200
+    )
+    assert (
+        client.get("/api/v1/volume", params={**params, "bbox": bbox_b}).status_code
+        == 200
+    )
+
+    stats = client.get("/api/v1/volume/stats")
+    assert stats.status_code == 200
+    payload = stats.json()
+    assert payload["top"]
+
+    bucket_a = volume_routes._bbox_bucket(bbox_a)
+    bucket_b = volume_routes._bbox_bucket(bbox_b)
+
+    top = payload["top"]
+    assert top[0]["bbox_bucket"] == bucket_a
+    assert top[0]["count"] == 2
+    assert any(item["bbox_bucket"] == bucket_b and item["count"] == 1 for item in top)
 
 
 def test_volume_returns_503_when_data_dir_not_configured(
@@ -705,3 +878,41 @@ def test_volume_returns_400_for_non_numeric_res(
         },
     )
     assert response.status_code == 400
+
+
+def test_client_ip_returns_unknown_without_forwarded_or_client() -> None:
+    request = StarletteRequest(
+        {
+            "type": "http",
+            "method": "GET",
+            "path": "/",
+            "headers": [],
+            "query_string": b"",
+        }
+    )
+    assert volume_routes._client_ip(request) == "unknown"
+
+
+def test_format_bucket_value_and_quantize_cover_edge_cases() -> None:
+    assert volume_routes._format_bucket_value(0.25) == "0.25"
+    assert volume_routes._quantize(123.0, step=0.0) == 123.0
+
+
+@pytest.mark.anyio
+async def test_log_volume_request_skips_redis_when_none(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.INFO, logger="api.error")
+    caplog.clear()
+
+    await volume_routes._log_volume_request(
+        None,
+        bbox="0,0,0.2,0.2,0,12000",
+        levels="300",
+        res=11132.0,
+        client_ip="203.0.113.10",
+        response_time_ms=5,
+        cache_hit=False,
+    )
+
+    assert any(record.getMessage() == "volume_request" for record in caplog.records)

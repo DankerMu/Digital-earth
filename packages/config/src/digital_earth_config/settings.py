@@ -219,7 +219,7 @@ def _default_api_rate_limit_rules() -> list[ApiRateLimitRule]:
         ApiRateLimitRule(path_prefix="/api/v1/catalog", requests_per_minute=100),
         ApiRateLimitRule(path_prefix="/api/v1/vector", requests_per_minute=60),
         ApiRateLimitRule(path_prefix="/api/v1/tiles", requests_per_minute=300),
-        ApiRateLimitRule(path_prefix="/api/v1/volume", requests_per_minute=30),
+        ApiRateLimitRule(path_prefix="/api/v1/volume", requests_per_minute=10),
         ApiRateLimitRule(path_prefix="/api/v1/errors", requests_per_minute=10),
     ]
 
@@ -258,6 +258,11 @@ class ApiSettings(BaseModel):
     port: int
     debug: bool = False
     cors_origins: list[str] = Field(default_factory=list)
+    volume_cache_ttl_seconds: int = Field(
+        default=3600,
+        ge=0,
+        description="TTL for cached /api/v1/volume responses stored in Redis.",
+    )
     rate_limit: ApiRateLimitSettings = Field(default_factory=ApiRateLimitSettings)
     effect_trigger_logging: ApiEffectTriggerLoggingSettings = Field(
         default_factory=ApiEffectTriggerLoggingSettings

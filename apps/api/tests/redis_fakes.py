@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 class FakeRedis:
     use_real_time: bool = True
     values: dict[str, bytes] = field(default_factory=dict)
+    zsets: dict[str, dict[bytes, float]] = field(default_factory=dict)
     expires_at: dict[str, float] = field(default_factory=dict)
     _now_value: float = field(default_factory=time.monotonic, init=False)
 
@@ -27,6 +28,7 @@ class FakeRedis:
             return
         if self.now() >= expires_at:
             self.values.pop(key, None)
+            self.zsets.pop(key, None)
             self.expires_at.pop(key, None)
 
     async def get(self, key: str) -> bytes | None:
@@ -67,9 +69,59 @@ class FakeRedis:
 
         return True
 
+    async def expire(self, key: str, seconds: int) -> object:
+        self._purge_if_expired(key)
+        if key not in self.values and key not in self.zsets:
+            return 0
+
+        ttl_s = max(0, int(seconds))
+        self.expires_at[key] = self.now() + ttl_s
+        if ttl_s == 0:
+            self._purge_if_expired(key)
+        return 1
+
+    async def zincrby(self, key: str, amount: int | float, member: str) -> object:
+        self._purge_if_expired(key)
+        if isinstance(member, bytes):  # pragma: no cover
+            member_bytes = bytes(member)
+        else:
+            member_bytes = str(member).encode("utf-8")
+
+        entries = self.zsets.setdefault(key, {})
+        current = float(entries.get(member_bytes, 0.0))
+        updated = current + float(amount)
+        entries[member_bytes] = updated
+        return updated
+
+    async def zrevrange(
+        self,
+        key: str,
+        start: int,
+        end: int,
+        *,
+        withscores: bool = False,
+    ) -> object:
+        self._purge_if_expired(key)
+        entries = self.zsets.get(key, {})
+        items = sorted(entries.items(), key=lambda item: (item[1], item[0]), reverse=True)
+
+        resolved_start = max(0, int(start))
+        resolved_end = int(end)
+        if resolved_end < 0:
+            resolved_end = len(items) - 1
+
+        if resolved_end < resolved_start:
+            selected: list[tuple[bytes, float]] = []
+        else:
+            selected = items[resolved_start : resolved_end + 1]
+
+        if withscores:
+            return [(member, score) for member, score in selected]
+        return [member for member, _score in selected]
+
     async def pttl(self, key: str) -> int:
         self._purge_if_expired(key)
-        if key not in self.values:
+        if key not in self.values and key not in self.zsets:
             return -2
         expires_at = self.expires_at.get(key)
         if expires_at is None:

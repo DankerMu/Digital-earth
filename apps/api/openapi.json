@@ -262,11 +262,7 @@
             "$ref": "#/components/schemas/ParticleSizeRange"
           },
           "risk_level": {
-            "allOf": [
-              {
-                "$ref": "#/components/schemas/RiskLevel"
-              }
-            ],
+            "$ref": "#/components/schemas/RiskLevel",
             "readOnly": true
           },
           "spawn_rate": {
@@ -490,6 +486,7 @@
           "app_state": {
             "anyOf": [
               {
+                "additionalProperties": true,
                 "type": "object"
               },
               {
@@ -501,6 +498,7 @@
           "browser_info": {
             "anyOf": [
               {
+                "additionalProperties": true,
                 "type": "object"
               },
               {
@@ -814,6 +812,7 @@
             "type": "string"
           },
           "meta": {
+            "additionalProperties": true,
             "title": "Meta",
             "type": "object"
           },
@@ -1101,9 +1100,6 @@
           "type": {
             "const": "FeatureCollection",
             "default": "FeatureCollection",
-            "enum": [
-              "FeatureCollection"
-            ],
             "title": "Type",
             "type": "string"
           }
@@ -1127,9 +1123,6 @@
           "type": {
             "const": "Feature",
             "default": "Feature",
-            "enum": [
-              "Feature"
-            ],
             "title": "Type",
             "type": "string"
           }
@@ -1413,6 +1406,7 @@
             "type": "string"
           },
           "snapshot": {
+            "additionalProperties": true,
             "title": "Snapshot",
             "type": "object"
           },
@@ -1697,11 +1691,7 @@
         "additionalProperties": false,
         "properties": {
           "direction": {
-            "allOf": [
-              {
-                "$ref": "#/components/schemas/ThresholdDirection"
-              }
-            ],
+            "$ref": "#/components/schemas/ThresholdDirection",
             "default": "ascending"
           },
           "id": {
@@ -2036,6 +2026,7 @@
         "additionalProperties": false,
         "properties": {
           "definition": {
+            "additionalProperties": true,
             "title": "Definition",
             "type": "object"
           },
@@ -3123,6 +3114,7 @@
             "content": {
               "application/json": {
                 "schema": {
+                  "additionalProperties": true,
                   "title": "Response Get Cldas Summary Api V1 Local Data Cldas Summary Get",
                   "type": "object"
                 }
@@ -3274,6 +3266,7 @@
             "content": {
               "application/json": {
                 "schema": {
+                  "additionalProperties": true,
                   "title": "Response Get Town Forecast Api V1 Local Data Town Forecast Get",
                   "type": "object"
                 }
