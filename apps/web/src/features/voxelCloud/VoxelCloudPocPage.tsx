@@ -189,20 +189,23 @@ export function VoxelCloudPocPage() {
     const loadId = activeLoadRef.current;
 
     setLoading(true);
+    let aborted = false;
     try {
       await renderer.loadFromUrl(volumeUrl, { signal: controller.signal });
       renderer.setEnabled(true);
       refreshSnapshot();
-    } catch (error) {
-      if (controller.signal.aborted) return;
-      refreshSnapshot();
-    } finally {
-      if (activeLoadRef.current !== loadId) return;
-      if (loadAbortControllerRef.current === controller) {
-        loadAbortControllerRef.current = null;
+    } catch {
+      if (controller.signal.aborted) {
+        aborted = true;
+        return;
       }
-      setLoading(false);
+      refreshSnapshot();
     }
+    if (aborted || activeLoadRef.current !== loadId) return;
+    if (loadAbortControllerRef.current === controller) {
+      loadAbortControllerRef.current = null;
+    }
+    setLoading(false);
   }, [cancelActiveLoad, refreshSnapshot, volumeUrl]);
 
   const onToggleEnabled = useCallback(() => {
