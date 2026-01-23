@@ -15,7 +15,7 @@ const mocks = vi.hoisted(() => {
   }));
 
   const fetchVolumePack = vi.fn();
-  const loadFromArrayBuffer = vi.fn(async (_buffer: ArrayBuffer, _options?: { signal?: AbortSignal }) => {});
+  const loadFromArrayBuffer = vi.fn(async () => {});
   const setEnabled = vi.fn();
   const destroy = vi.fn();
 
@@ -65,7 +65,7 @@ describe('VoxelCloudLayer', () => {
     vi.clearAllMocks();
     mocks.computeLocalModeBBox.mockImplementation(() => ({ ...mocks.defaultBBox }));
     mocks.fetchVolumePack.mockReset();
-    mocks.loadFromArrayBuffer.mockImplementation(async (_buffer: ArrayBuffer, _options?: { signal?: AbortSignal }) => {});
+    mocks.loadFromArrayBuffer.mockImplementation(async () => {});
   });
 
   it('caches and skips reloads when camera stays stable', async () => {
