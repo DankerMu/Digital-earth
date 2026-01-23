@@ -171,7 +171,9 @@ def _resolve_volume_base_dir() -> Path:
     if not path.exists():
         raise HTTPException(status_code=404, detail="Volume data directory not found")
     if not path.is_dir():
-        raise HTTPException(status_code=400, detail="Volume data path is not a directory")
+        raise HTTPException(
+            status_code=400, detail="Volume data path is not a directory"
+        )
     return path
 
 
@@ -306,7 +308,9 @@ def _read_cloud_density_grid(path: Path) -> tuple[np.ndarray, np.ndarray, np.nda
         ds.close()
 
     if not (_monotonic_1d(lat) and _monotonic_1d(lon)):
-        raise HTTPException(status_code=500, detail="Slice coordinates are not monotonic")
+        raise HTTPException(
+            status_code=500, detail="Slice coordinates are not monotonic"
+        )
     if values.ndim != 2 or values.shape != (lat.size, lon.size):
         raise HTTPException(status_code=500, detail="Slice has invalid data shape")
     return lat, lon, values
@@ -384,7 +388,9 @@ def get_volume(
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     target_lat, target_lon = _target_grid(bbox_parsed, res_m=res_m)
-    decoded_bytes = int(len(levels_keys)) * int(target_lat.size) * int(target_lon.size) * 4
+    decoded_bytes = (
+        int(len(levels_keys)) * int(target_lat.size) * int(target_lon.size) * 4
+    )
     if decoded_bytes > MAX_OUTPUT_BYTES:
         raise HTTPException(status_code=400, detail="Requested volume exceeds max size")
 
@@ -422,7 +428,11 @@ def get_volume(
             lat_coord = lat_sub
             lon_coord = lon_sub
         else:
-            if lat_coord.shape != lat_sub.shape or lon_coord is None or lon_coord.shape != lon_sub.shape:
+            if (
+                lat_coord.shape != lat_sub.shape
+                or lon_coord is None
+                or lon_coord.shape != lon_sub.shape
+            ):
                 raise HTTPException(status_code=500, detail="Slice grids do not match")
 
         target_lon_norm = np.linspace(lon_w, lon_e, target_lon.size, dtype=np.float64)
@@ -439,7 +449,9 @@ def get_volume(
 
     header = {
         "bbox": bbox_parsed.to_header(),
-        "levels": [int(level) if level.isdigit() else float(level) for level in levels_keys],
+        "levels": [
+            int(level) if level.isdigit() else float(level) for level in levels_keys
+        ],
         "variable": "cloud_density",
         "valid_time": _iso_z(resolved_dt),
         "res_m": float(res_m),
@@ -459,4 +471,3 @@ def get_volume(
         raise HTTPException(status_code=400, detail="Encoded volume exceeds max size")
 
     return Response(content=payload, media_type="application/octet-stream")
-

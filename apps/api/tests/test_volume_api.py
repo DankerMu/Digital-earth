@@ -187,4 +187,3 @@ def test_volume_returns_volume_pack_for_cloud_density_slices(
     assert array.shape == (2, 3, 3)
     assert np.allclose(array[0], values_300)
     assert np.allclose(array[1], values_500)
-

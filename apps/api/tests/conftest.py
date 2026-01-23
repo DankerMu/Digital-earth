@@ -50,7 +50,9 @@ def _patch_testclient_client_kw() -> None:
             return
 
         transport = getattr(self, "_transport", None)
-        original_app = getattr(transport, "app", None) if transport is not None else None
+        original_app = (
+            getattr(transport, "app", None) if transport is not None else None
+        )
         if original_app is None:
             return
 
