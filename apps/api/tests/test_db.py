@@ -25,4 +25,3 @@ def test_get_engine_falls_back_to_settings_dsn_when_database_url_missing(
     finally:
         engine.dispose()
         db_module.get_engine.cache_clear()
-
