@@ -6,6 +6,7 @@
     "dev": "vite",
     "build": "vite build && node scripts/copy-cesium-assets.mjs",
     "preview": "vite preview",
+    "generate:voxel-cloud-demo": "node scripts/generate-voxel-cloud-demo.mjs",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
