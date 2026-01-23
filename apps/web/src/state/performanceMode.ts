@@ -1,8 +1,10 @@
 import { useSyncExternalStore } from 'react';
 
+import type { VoxelCloudQuality } from '../features/voxelCloud/qualityConfig';
+
 export type PerformanceMode = 'low' | 'high';
 
-type PerformanceModeState = {
+export interface PerformanceModeState {
   mode: PerformanceMode;
   setMode: (mode: PerformanceMode) => void;
   toggleMode: () => void;
@@ -12,7 +14,11 @@ type PerformanceModeState = {
    */
   enabled: boolean;
   setEnabled: (enabled: boolean) => void;
-};
+  voxelCloudQuality: VoxelCloudQuality;
+  setVoxelCloudQuality: (quality: VoxelCloudQuality) => void;
+  autoDowngrade: boolean;
+  setAutoDowngrade: (enabled: boolean) => void;
+}
 
 const STORAGE_KEY = 'digital-earth.performanceMode';
 
@@ -28,38 +34,59 @@ function normalizePerformanceMode(value: unknown): PerformanceMode {
   return value === 'low' ? 'low' : 'high';
 }
 
-function safeReadMode(): PerformanceMode {
+function normalizeVoxelCloudQuality(value: unknown): VoxelCloudQuality | null {
+  if (value === 'low' || value === 'medium' || value === 'high') return value;
+  return null;
+}
+
+function safeReadState(): Pick<PerformanceModeState, 'mode' | 'voxelCloudQuality' | 'autoDowngrade'> {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return 'high';
+    if (!raw) return { mode: 'high', voxelCloudQuality: 'high', autoDowngrade: true };
     const parsed = JSON.parse(raw) as unknown;
-    if (typeof parsed === 'string') return normalizePerformanceMode(parsed);
-    if (!parsed || typeof parsed !== 'object') return 'high';
+    if (typeof parsed === 'string') {
+      const mode = normalizePerformanceMode(parsed);
+      return { mode, voxelCloudQuality: mode === 'low' ? 'low' : 'high', autoDowngrade: true };
+    }
+    if (!parsed || typeof parsed !== 'object') {
+      return { mode: 'high', voxelCloudQuality: 'high', autoDowngrade: true };
+    }
     const record = parsed as Record<string, unknown>;
-    if (record.mode === 'low' || record.mode === 'high') return record.mode;
-    if (record.enabled === true) return 'low';
-    if (record.enabled === false) return 'high';
-    return 'high';
+    const mode =
+      record.mode === 'low' || record.mode === 'high'
+        ? record.mode
+        : record.enabled === true
+          ? 'low'
+          : record.enabled === false
+            ? 'high'
+            : 'high';
+    const fallbackQuality = mode === 'low' ? 'low' : 'high';
+    const voxelCloudQuality = normalizeVoxelCloudQuality(record.voxelCloudQuality) ?? fallbackQuality;
+    const autoDowngrade = typeof record.autoDowngrade === 'boolean' ? record.autoDowngrade : true;
+    return { mode, voxelCloudQuality, autoDowngrade };
   } catch {
-    return 'high';
+    return { mode: 'high', voxelCloudQuality: 'high', autoDowngrade: true };
   }
 }
 
-function safeWriteMode(mode: PerformanceMode) {
+function safeWriteState(state: Pick<PerformanceModeState, 'mode' | 'voxelCloudQuality' | 'autoDowngrade'>) {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({ mode }));
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
   } catch {
     // ignore write failures (e.g., disabled storage)
   }
 }
 
-let mode: PerformanceMode = safeReadMode();
+const initial = safeReadState();
+let mode: PerformanceMode = initial.mode;
+let voxelCloudQuality: VoxelCloudQuality = initial.voxelCloudQuality;
+let autoDowngrade: boolean = initial.autoDowngrade;
 
 const setMode: PerformanceModeState['setMode'] = (next) => {
   const normalized = normalizePerformanceMode(next);
   if (Object.is(mode, normalized)) return;
   mode = normalized;
-  safeWriteMode(mode);
+  safeWriteState({ mode, voxelCloudQuality, autoDowngrade });
   notify();
 };
 
@@ -71,17 +98,55 @@ const toggleMode: PerformanceModeState['toggleMode'] = () => {
   setMode(mode === 'low' ? 'high' : 'low');
 };
 
+const setVoxelCloudQuality: PerformanceModeState['setVoxelCloudQuality'] = (quality) => {
+  if (voxelCloudQuality === quality) return;
+  voxelCloudQuality = quality;
+  safeWriteState({ mode, voxelCloudQuality, autoDowngrade });
+  notify();
+};
+
+const setAutoDowngrade: PerformanceModeState['setAutoDowngrade'] = (enabled) => {
+  const normalized = Boolean(enabled);
+  if (autoDowngrade === normalized) return;
+  autoDowngrade = normalized;
+  safeWriteState({ mode, voxelCloudQuality, autoDowngrade });
+  notify();
+};
+
 function getState(): PerformanceModeState {
-  return { mode, setMode, toggleMode, enabled: mode === 'low', setEnabled };
+  return {
+    mode,
+    setMode,
+    toggleMode,
+    enabled: mode === 'low',
+    setEnabled,
+    voxelCloudQuality,
+    setVoxelCloudQuality,
+    autoDowngrade,
+    setAutoDowngrade,
+  };
 }
 
-function setState(partial: Partial<Pick<PerformanceModeState, 'mode' | 'enabled'>>) {
+function setState(
+  partial: Partial<Pick<PerformanceModeState, 'mode' | 'enabled' | 'voxelCloudQuality' | 'autoDowngrade'>>,
+) {
   if (partial.mode === 'low' || partial.mode === 'high') {
     setMode(partial.mode);
-    return;
+  } else if (typeof partial.enabled === 'boolean') {
+    setEnabled(partial.enabled);
   }
 
-  if (typeof partial.enabled === 'boolean') setEnabled(partial.enabled);
+  if (
+    partial.voxelCloudQuality === 'low' ||
+    partial.voxelCloudQuality === 'medium' ||
+    partial.voxelCloudQuality === 'high'
+  ) {
+    setVoxelCloudQuality(partial.voxelCloudQuality);
+  }
+
+  if (typeof partial.autoDowngrade === 'boolean') {
+    setAutoDowngrade(partial.autoDowngrade);
+  }
 }
 
 function subscribe(listener: Listener) {

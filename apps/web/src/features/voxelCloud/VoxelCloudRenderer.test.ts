@@ -271,4 +271,17 @@ describe('VoxelCloudRenderer', () => {
 
     await expect(renderer.loadFromUrl('http://test/volume.volp')).rejects.toThrow(/postProcessStages/i);
   });
+
+  it('setRaySteps updates maxSteps with clamping', () => {
+    const viewer = makeViewer();
+    const renderer = new VoxelCloudRenderer(viewer as never, { enabled: true });
+
+    expect(renderer.getSnapshot().settings.maxSteps).toBe(128);
+
+    renderer.setRaySteps(64);
+    expect(renderer.getSnapshot().settings.maxSteps).toBe(64);
+
+    renderer.setRaySteps(999);
+    expect(renderer.getSnapshot().settings.maxSteps).toBe(512);
+  });
 });
