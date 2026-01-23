@@ -50,7 +50,9 @@ def upgrade() -> None:
             name="uq_risk_poi_evaluations_identity",
         ),
     )
-    op.create_index("ix_risk_poi_evaluations_poi_id", "risk_poi_evaluations", ["poi_id"])
+    op.create_index(
+        "ix_risk_poi_evaluations_poi_id", "risk_poi_evaluations", ["poi_id"]
+    )
     op.create_index(
         "ix_risk_poi_evaluations_product_time",
         "risk_poi_evaluations",
@@ -62,10 +64,11 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.drop_index("ix_risk_poi_evaluations_valid_time", table_name="risk_poi_evaluations")
+    op.drop_index(
+        "ix_risk_poi_evaluations_valid_time", table_name="risk_poi_evaluations"
+    )
     op.drop_index(
         "ix_risk_poi_evaluations_product_time", table_name="risk_poi_evaluations"
     )
     op.drop_index("ix_risk_poi_evaluations_poi_id", table_name="risk_poi_evaluations")
     op.drop_table("risk_poi_evaluations")
-

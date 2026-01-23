@@ -799,7 +799,8 @@ def test_risk_evaluate_persists_levels_for_risk_pois_lookup(
     evaluation_payload = evaluation.json()
     assert [item["poi_id"] for item in evaluation_payload["results"]] == [1, 2]
     levels_by_poi_id = {
-        int(item["poi_id"]): int(item["level"]) for item in evaluation_payload["results"]
+        int(item["poi_id"]): int(item["level"])
+        for item in evaluation_payload["results"]
     }
 
     pois = client.get(

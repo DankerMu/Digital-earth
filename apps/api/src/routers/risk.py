@@ -430,7 +430,8 @@ async def get_risk_pois(
 
     if (product_id is None) != (valid_time is None):
         raise HTTPException(
-            status_code=400, detail="product_id and valid_time must be provided together"
+            status_code=400,
+            detail="product_id and valid_time must be provided together",
         )
 
     valid_dt = _normalize_time(valid_time) if valid_time is not None else None
@@ -737,7 +738,9 @@ async def evaluate_risk(
                                 insert as dialect_insert,
                             )
                         else:
-                            from sqlalchemy.dialects.sqlite import insert as dialect_insert
+                            from sqlalchemy.dialects.sqlite import (
+                                insert as dialect_insert,
+                            )
 
                         stmt = dialect_insert(RiskPOIEvaluation).values(rows)
                         stmt = stmt.on_conflict_do_update(
