@@ -15,7 +15,8 @@ const mocks = vi.hoisted(() => {
   }));
 
   const fetchVolumePack = vi.fn();
-  const loadFromArrayBuffer = vi.fn(async () => {});
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const loadFromArrayBuffer = vi.fn(async (_buffer: ArrayBuffer, _options?: { signal?: AbortSignal }) => {});
   const setEnabled = vi.fn();
   const destroy = vi.fn();
 
@@ -65,7 +66,8 @@ describe('VoxelCloudLayer', () => {
     vi.clearAllMocks();
     mocks.computeLocalModeBBox.mockImplementation(() => ({ ...mocks.defaultBBox }));
     mocks.fetchVolumePack.mockReset();
-    mocks.loadFromArrayBuffer.mockImplementation(async () => {});
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    mocks.loadFromArrayBuffer.mockImplementation(async (_buffer: ArrayBuffer, _options?: { signal?: AbortSignal }) => {});
   });
 
   it('caches and skips reloads when camera stays stable', async () => {
@@ -168,7 +170,8 @@ describe('VoxelCloudLayer', () => {
     expect(mocks.setEnabled).not.toHaveBeenCalled();
 
     mocks.computeLocalModeBBox.mockReturnValueOnce(bboxA);
-    mocks.loadFromArrayBuffer.mockImplementation(async () => {});
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    mocks.loadFromArrayBuffer.mockImplementation(async (_buffer: ArrayBuffer, _options?: { signal?: AbortSignal }) => {});
     await layer.updateForCamera({} as never);
     expect(mocks.loadFromArrayBuffer).toHaveBeenCalledTimes(2);
   });
