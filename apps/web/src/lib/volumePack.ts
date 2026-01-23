@@ -148,7 +148,9 @@ export function decodeVolumePack(input: ArrayBuffer | Uint8Array): VolumePackDec
     );
   }
 
-  const bodyBuffer = body.buffer.slice(body.byteOffset, body.byteOffset + body.byteLength);
+  // Copy to a fresh ArrayBuffer to avoid SharedArrayBuffer issues
+  const bodyBuffer = new ArrayBuffer(body.byteLength);
+  new Uint8Array(bodyBuffer).set(body);
   if (!isLittleEndian() && bytesPerElement > 1) {
     byteswapInPlace(new Uint8Array(bodyBuffer), bytesPerElement);
   }

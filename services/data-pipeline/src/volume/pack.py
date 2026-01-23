@@ -57,15 +57,12 @@ def _validate_shape(shape: Sequence[object]) -> tuple[int, int, int]:
 
 def _json_dumps(payload: Mapping[str, Any]) -> bytes:
     # Canonical-ish encoding to help debugging and deterministic fixtures.
-    return (
-        json.dumps(
-            payload,
-            ensure_ascii=True,
-            separators=(",", ":"),
-            sort_keys=True,
-        )
-        .encode("utf-8")
-    )
+    return json.dumps(
+        payload,
+        ensure_ascii=True,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
 
 
 def encode_volume_pack(
@@ -111,7 +108,9 @@ def encode_volume_pack(
     return MAGIC + _HEADER_LEN.pack(len(header_bytes)) + header_bytes + body
 
 
-def decode_volume_pack(payload: bytes | bytearray | memoryview) -> tuple[dict[str, Any], np.ndarray]:
+def decode_volume_pack(
+    payload: bytes | bytearray | memoryview,
+) -> tuple[dict[str, Any], np.ndarray]:
     """Decode Volume Pack bytes into (header, ndarray).
 
     Decoding is forward-compatible for header schema versions as long as the
@@ -195,7 +194,9 @@ def write_volume_pack(
     compression_level: int = 3,
 ) -> Path:
     target = Path(path)
-    payload = encode_volume_pack(data, header=header, compression_level=compression_level)
+    payload = encode_volume_pack(
+        data, header=header, compression_level=compression_level
+    )
     target.write_bytes(payload)
     return target
 

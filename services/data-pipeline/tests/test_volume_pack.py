@@ -179,7 +179,12 @@ def test_decode_rejects_invalid_shape_non_positive() -> None:
 def test_decode_rejects_invalid_version_type() -> None:
     from volume.pack import MAGIC, decode_volume_pack
 
-    header = {"version": "nope", "shape": [1, 1, 1], "dtype": "float32", "compression": "zstd"}
+    header = {
+        "version": "nope",
+        "shape": [1, 1, 1],
+        "dtype": "float32",
+        "compression": "zstd",
+    }
     header_bytes = json.dumps(header).encode("utf-8")
     payload = MAGIC + len(header_bytes).to_bytes(4, "little") + header_bytes + b""
     with pytest.raises(ValueError, match="header\\.version"):
@@ -191,7 +196,9 @@ def test_decode_rejects_invalid_zstd_body() -> None:
 
     header = {"shape": [1, 1, 1], "dtype": "float32", "compression": "zstd"}
     header_bytes = json.dumps(header).encode("utf-8")
-    payload = MAGIC + len(header_bytes).to_bytes(4, "little") + header_bytes + b"not-zstd"
+    payload = (
+        MAGIC + len(header_bytes).to_bytes(4, "little") + header_bytes + b"not-zstd"
+    )
     with pytest.raises(ValueError, match="decompression"):
         decode_volume_pack(payload)
 
@@ -205,7 +212,9 @@ def test_decode_rejects_unsupported_compression() -> None:
     header_len = int.from_bytes(payload[4:8], "little")
     header = json.loads(payload[8 : 8 + header_len].decode("utf-8"))
     header["compression"] = "lz4"
-    header_bytes = json.dumps(header, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    header_bytes = json.dumps(header, separators=(",", ":"), sort_keys=True).encode(
+        "utf-8"
+    )
 
     payload = (
         MAGIC
@@ -227,7 +236,9 @@ def test_decode_rejects_body_size_mismatch() -> None:
     header_len = int.from_bytes(payload[4:8], "little")
     header = json.loads(payload[8 : 8 + header_len].decode("utf-8"))
     header["shape"] = [1, 1, 2]
-    header_bytes = json.dumps(header, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    header_bytes = json.dumps(header, separators=(",", ":"), sort_keys=True).encode(
+        "utf-8"
+    )
 
     patched = (
         MAGIC
@@ -248,7 +259,9 @@ def test_decode_normalizes_version_lt_1() -> None:
     header_len = int.from_bytes(payload[4:8], "little")
     header = json.loads(payload[8 : 8 + header_len].decode("utf-8"))
     header["version"] = 0
-    header_bytes = json.dumps(header, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    header_bytes = json.dumps(header, separators=(",", ":"), sort_keys=True).encode(
+        "utf-8"
+    )
     payload = (
         MAGIC
         + len(header_bytes).to_bytes(4, "little")
@@ -264,7 +277,9 @@ def test_write_and_read_volume_pack(tmp_path) -> None:
 
     path = tmp_path / "x.volp"
     data = (np.arange(6, dtype=np.float32) / 5.0).reshape((1, 2, 3))
-    write_volume_pack(path, data, header={"variable": "cloud_density"}, compression_level=1)
+    write_volume_pack(
+        path, data, header={"variable": "cloud_density"}, compression_level=1
+    )
 
     header, decoded = read_volume_pack(path)
     assert header["variable"] == "cloud_density"
