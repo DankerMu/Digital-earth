@@ -1,17 +1,21 @@
 from __future__ import annotations
 
+import hashlib
 import logging
 import math
 import os
+import time
+from asyncio import to_thread
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Final
+from typing import Final, Protocol
 
 import numpy as np
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import Response
 
+from config import get_settings
 from datacube.storage import open_datacube
 from volume.cloud_density import DEFAULT_CLOUD_DENSITY_LAYER
 from volume.pack import encode_volume_pack
@@ -22,14 +26,145 @@ router = APIRouter(tags=["volume"])
 
 VOLUME_DATA_DIR_ENV: Final[str] = "DIGITAL_EARTH_VOLUME_DATA_DIR"
 
+DEFAULT_VOLUME_CACHE_TTL_SECONDS: Final[int] = 3600
+VOLUME_CACHE_KEY_PREFIX: Final[str] = "volume:cache:"
+
+VOLUME_AUDIT_KEY_PREFIX: Final[str] = "volume:audit:"
+VOLUME_AUDIT_TTL_SECONDS: Final[int] = 86400 * 7
+
+VOLUME_STATS_DEFAULT_LIMIT: Final[int] = 10
+VOLUME_STATS_MAX_LIMIT: Final[int] = 100
+
 MAX_BBOX_AREA_DEG2: Final[float] = 100.0
 MIN_RES_METERS: Final[float] = 100.0
 MAX_OUTPUT_BYTES: Final[int] = 64 * 1024 * 1024
+MAX_CACHEABLE_BYTES: Final[int] = 4 * 1024 * 1024
 
 METERS_PER_DEG_LAT: Final[float] = 111_320.0
 
 _TIME_KEY_FORMAT: Final[str] = "%Y%m%dT%H%M%SZ"
 _ISO_Z_FORMAT: Final[str] = "%Y-%m-%dT%H:%M:%SZ"
+
+_BBOX_BUCKET_DEG_STEP: Final[float] = 1.0
+_BBOX_BUCKET_M_STEP: Final[float] = 1000.0
+
+
+class RedisVolumeLike(Protocol):
+    async def get(self, key: str) -> bytes | None: ...
+
+    async def set(
+        self,
+        key: str,
+        value: bytes,
+        *,
+        ex: int | None = None,
+        px: int | None = None,
+        nx: bool = False,
+    ) -> object: ...
+
+    async def expire(self, key: str, seconds: int) -> object: ...
+
+    async def zincrby(self, key: str, amount: int | float, member: str) -> object: ...
+
+    async def zrevrange(
+        self,
+        key: str,
+        start: int,
+        end: int,
+        *,
+        withscores: bool = False,
+    ) -> object: ...
+
+
+def _cache_key(
+    *,
+    bbox: BBox,
+    levels: tuple[str, ...],
+    time_key: str,
+    res_m: float,
+) -> str:
+    bbox_str = (
+        f"{bbox.west},{bbox.south},{bbox.east},{bbox.north},{bbox.bottom},{bbox.top}"
+    )
+    levels_str = ",".join(levels)
+    raw = f"{bbox_str}|{levels_str}|{time_key}|{res_m}"
+    digest = hashlib.sha256(raw.encode()).hexdigest()[:32]
+    return f"{VOLUME_CACHE_KEY_PREFIX}{digest}"
+
+
+def _client_ip(request: Request) -> str:
+    forwarded = request.headers.get("x-forwarded-for")
+    if forwarded:
+        first = forwarded.split(",")[0].strip()
+        if first:
+            return first
+    if request.client is not None and request.client.host:
+        return request.client.host
+    return "unknown"
+
+
+def _format_bucket_value(value: float) -> str:
+    if abs(value - round(value)) < 1e-9:
+        return str(int(round(value)))
+    return str(float(value))
+
+
+def _quantize(value: float, *, step: float) -> float:
+    if step <= 0:
+        return float(value)
+    return round(float(value) / step) * step
+
+
+def _bbox_bucket_from_parsed(bbox: BBox) -> str:
+    parts = (
+        _format_bucket_value(_quantize(bbox.west, step=_BBOX_BUCKET_DEG_STEP)),
+        _format_bucket_value(_quantize(bbox.south, step=_BBOX_BUCKET_DEG_STEP)),
+        _format_bucket_value(_quantize(bbox.east, step=_BBOX_BUCKET_DEG_STEP)),
+        _format_bucket_value(_quantize(bbox.north, step=_BBOX_BUCKET_DEG_STEP)),
+        _format_bucket_value(_quantize(bbox.bottom, step=_BBOX_BUCKET_M_STEP)),
+        _format_bucket_value(_quantize(bbox.top, step=_BBOX_BUCKET_M_STEP)),
+    )
+    return ",".join(parts)
+
+
+def _bbox_bucket(value: str) -> str:
+    parsed = _parse_bbox(value)
+    return _bbox_bucket_from_parsed(parsed)
+
+
+async def _log_volume_request(
+    redis: RedisVolumeLike | None,
+    *,
+    bbox: str,
+    levels: str,
+    res: float,
+    client_ip: str,
+    response_time_ms: int,
+    cache_hit: bool,
+) -> None:
+    logger.info(
+        "volume_request",
+        extra={
+            "bbox": bbox,
+            "levels": levels,
+            "res": float(res),
+            "client_ip": client_ip,
+            "response_time_ms": int(response_time_ms),
+            "cache_hit": bool(cache_hit),
+        },
+    )
+
+    if redis is None:
+        return
+
+    hour_key = datetime.now(timezone.utc).strftime("%Y%m%d%H")
+    audit_key = f"{VOLUME_AUDIT_KEY_PREFIX}{hour_key}"
+    try:
+        bucket = _bbox_bucket(bbox)
+        await redis.zincrby(audit_key, 1, bucket)
+        await redis.expire(audit_key, VOLUME_AUDIT_TTL_SECONDS)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("volume_audit_redis_error", extra={"error": str(exc)})
 
 
 @dataclass(frozen=True)
@@ -418,79 +553,24 @@ def _target_grid(bbox: BBox, *, res_m: float) -> tuple[np.ndarray, np.ndarray]:
     return target_lat, target_lon
 
 
-@router.get(
-    "/volume",
-    response_class=Response,
-    responses={
-        200: {
-            "description": "Volume Pack binary payload",
-            "content": {
-                "application/octet-stream": {
-                    "schema": {"type": "string", "format": "binary"}
-                }
-            },
-        },
-        400: {"description": "Bad Request"},
-        404: {"description": "Not Found"},
-        500: {"description": "Internal Server Error"},
-        503: {"description": "Service Unavailable"},
-    },
-)
-def get_volume(
-    bbox: str = Query(
-        ...,
-        description="west,south,east,north,bottom,top (degrees/meters)",
-        examples=["-10,20,10,40,0,12000"],
-    ),
-    levels: str = Query(..., description="Comma-separated pressure levels (hPa)"),
-    res: float = Query(..., description="Horizontal resolution in meters"),
-    valid_time: str | None = Query(default=None, description="ISO8601 timestamp"),
-) -> Response:
-    try:
-        bbox_parsed = _parse_bbox(bbox)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-    try:
-        levels_keys = _parse_levels(levels)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-    try:
-        res_m = float(res)
-    except (TypeError, ValueError) as exc:
-        raise HTTPException(status_code=400, detail="res must be a number") from exc
-    if not math.isfinite(res_m) or res_m <= 0:
-        raise HTTPException(status_code=400, detail="res must be a positive number")
-    if res_m < MIN_RES_METERS:
-        raise HTTPException(status_code=400, detail="res is below minimum")
-
-    dt: datetime | None = None
-    if valid_time is not None:
-        try:
-            dt = _parse_valid_time(valid_time)
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-    try:
-        n_lat, n_lon = _estimate_grid_size(bbox_parsed, res_m=res_m)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    estimated_bytes = int(len(levels_keys)) * n_lat * n_lon * 4
-    if estimated_bytes > MAX_OUTPUT_BYTES:
-        raise HTTPException(status_code=400, detail="Requested volume exceeds max size")
-
-    target_lat, target_lon = _target_grid(bbox_parsed, res_m=res_m)
+def _compute_volume_payload(
+    *,
+    bbox: BBox,
+    levels_keys: tuple[str, ...],
+    res_m: float,
+    valid_time: datetime | None,
+) -> bytes:
+    target_lat, target_lon = _target_grid(bbox, res_m=res_m)
 
     base_dir = _resolve_volume_base_dir()
     _time_key, resolved_dt, time_dir = _resolve_time_dir(
-        base_dir, layer=DEFAULT_CLOUD_DENSITY_LAYER, valid_time=dt
+        base_dir, layer=DEFAULT_CLOUD_DENSITY_LAYER, valid_time=valid_time
     )
 
     reference_slice_path = _resolve_slice_path(time_dir, level_key=levels_keys[0])
     _, reference_lon = _read_cloud_density_coords(reference_slice_path)
-    lon_w = _normalize_lon(bbox_parsed.west, reference_lon)
-    lon_e = _normalize_lon(bbox_parsed.east, reference_lon)
+    lon_w = _normalize_lon(bbox.west, reference_lon)
+    lon_e = _normalize_lon(bbox.east, reference_lon)
     if lon_e <= lon_w:
         raise HTTPException(status_code=400, detail="bbox crosses longitude seam")
 
@@ -501,7 +581,7 @@ def get_volume(
         slice_path = _resolve_slice_path(time_dir, level_key=level_key)
         lat, lon, values = _read_cloud_density_grid(
             slice_path,
-            lat_bounds=(bbox_parsed.south, bbox_parsed.north),
+            lat_bounds=(bbox.south, bbox.north),
             lon_bounds=(lon_w, lon_e),
         )
 
@@ -509,7 +589,7 @@ def get_volume(
         lat_sorted, lat_order = _sorted_axis(lat)
         values_sorted = values[np.ix_(lat_order, lon_order)]
 
-        lat_slice = _bounding_slice(lat_sorted, bbox_parsed.south, bbox_parsed.north)
+        lat_slice = _bounding_slice(lat_sorted, bbox.south, bbox.north)
         lon_slice = _bounding_slice(lon_sorted, lon_w, lon_e)
         if lat_slice.stop == 0 or lon_slice.stop == 0:
             raise HTTPException(status_code=404, detail="bbox outside dataset")
@@ -542,7 +622,7 @@ def get_volume(
     volume = np.stack(slices, axis=0).astype(np.float32, copy=False)
 
     header = {
-        "bbox": bbox_parsed.to_header(),
+        "bbox": bbox.to_header(),
         "levels": [
             int(level) if level.isdigit() else float(level) for level in levels_keys
         ],
@@ -564,4 +644,181 @@ def get_volume(
     if len(payload) > MAX_OUTPUT_BYTES:
         raise HTTPException(status_code=400, detail="Encoded volume exceeds max size")
 
+    return payload
+
+
+@router.get(
+    "/volume",
+    response_class=Response,
+    responses={
+        200: {
+            "description": "Volume Pack binary payload",
+            "content": {
+                "application/octet-stream": {
+                    "schema": {"type": "string", "format": "binary"}
+                }
+            },
+        },
+        400: {"description": "Bad Request"},
+        404: {"description": "Not Found"},
+        500: {"description": "Internal Server Error"},
+        503: {"description": "Service Unavailable"},
+    },
+)
+async def get_volume(
+    request: Request,
+    bbox: str = Query(
+        ...,
+        description="west,south,east,north,bottom,top (degrees/meters)",
+        examples=["-10,20,10,40,0,12000"],
+    ),
+    levels: str = Query(..., description="Comma-separated pressure levels (hPa)"),
+    res: float = Query(..., description="Horizontal resolution in meters"),
+    valid_time: str | None = Query(default=None, description="ISO8601 timestamp"),
+) -> Response:
+    start = time.perf_counter()
+    bbox_raw = (bbox or "").strip()
+    levels_raw = (levels or "").strip()
+    valid_time_raw = (valid_time or "").strip() if valid_time is not None else None
+
+    try:
+        bbox_parsed = _parse_bbox(bbox_raw)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    try:
+        levels_keys = _parse_levels(levels_raw)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    try:
+        res_m = float(res)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail="res must be a number") from exc
+    if not math.isfinite(res_m) or res_m <= 0:
+        raise HTTPException(status_code=400, detail="res must be a positive number")
+    if res_m < MIN_RES_METERS:
+        raise HTTPException(status_code=400, detail="res is below minimum")
+
+    dt: datetime | None = None
+    if valid_time is not None:
+        try:
+            dt = _parse_valid_time(valid_time_raw or valid_time)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    try:
+        n_lat, n_lon = _estimate_grid_size(bbox_parsed, res_m=res_m)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    estimated_bytes = int(len(levels_keys)) * n_lat * n_lon * 4
+    if estimated_bytes > MAX_OUTPUT_BYTES:
+        raise HTTPException(status_code=400, detail="Requested volume exceeds max size")
+
+    redis: RedisVolumeLike | None = getattr(request.app.state, "redis_client", None)
+    settings = get_settings()
+    cache_ttl_seconds = int(
+        getattr(
+            settings.api, "volume_cache_ttl_seconds", DEFAULT_VOLUME_CACHE_TTL_SECONDS
+        )
+    )
+
+    payload: bytes | None = None
+    cache_hit = False
+
+    cache_key: str | None = None
+    resolved_dt: datetime | None = None
+    cache_enabled = redis is not None and cache_ttl_seconds > 0
+    if cache_enabled:
+        base_dir = _resolve_volume_base_dir()
+        time_key, resolved_dt, _ = _resolve_time_dir(
+            base_dir, layer=DEFAULT_CLOUD_DENSITY_LAYER, valid_time=dt
+        )
+        cache_key = _cache_key(
+            bbox=bbox_parsed,
+            levels=levels_keys,
+            time_key=time_key,
+            res_m=res_m,
+        )
+        try:
+            payload = await redis.get(cache_key)
+            cache_hit = payload is not None
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("volume_cache_unavailable", extra={"error": str(exc)})
+            payload = None
+            cache_hit = False
+
+    if payload is None:
+        payload = await to_thread(
+            _compute_volume_payload,
+            bbox=bbox_parsed,
+            levels_keys=levels_keys,
+            res_m=res_m,
+            valid_time=resolved_dt if resolved_dt is not None else dt,
+        )
+        if (
+            redis is not None
+            and cache_key is not None
+            and cache_ttl_seconds > 0
+            and len(payload) <= MAX_CACHEABLE_BYTES
+        ):
+            try:
+                await redis.set(cache_key, payload, ex=cache_ttl_seconds)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("volume_cache_set_failed", extra={"error": str(exc)})
+
+    response_time_ms = int(round((time.perf_counter() - start) * 1000))
+    await _log_volume_request(
+        redis,
+        bbox=bbox_raw,
+        levels=levels_raw,
+        res=res_m,
+        client_ip=_client_ip(request),
+        response_time_ms=response_time_ms,
+        cache_hit=cache_hit,
+    )
+
     return Response(content=payload, media_type="application/octet-stream")
+
+
+@router.get("/volume/stats", include_in_schema=False)
+async def get_volume_stats(
+    request: Request,
+    hour: str | None = Query(
+        default=None,
+        description="UTC hour key (YYYYMMDDHH). Defaults to current hour.",
+    ),
+    limit: int = Query(
+        default=VOLUME_STATS_DEFAULT_LIMIT, ge=1, le=VOLUME_STATS_MAX_LIMIT
+    ),
+) -> dict[str, object]:
+    redis: RedisVolumeLike | None = getattr(request.app.state, "redis_client", None)
+    if redis is None:
+        raise HTTPException(status_code=503, detail="Redis not configured")
+
+    hour_key = hour or datetime.now(timezone.utc).strftime("%Y%m%d%H")
+    audit_key = f"{VOLUME_AUDIT_KEY_PREFIX}{hour_key}"
+
+    try:
+        raw = await redis.zrevrange(audit_key, 0, limit - 1, withscores=True)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("volume_stats_redis_error", extra={"error": str(exc)})
+        raise HTTPException(status_code=503, detail="Failed to query stats") from exc
+
+    items: list[dict[str, object]] = []
+    if isinstance(raw, list):
+        for entry in raw:
+            if not isinstance(entry, (list, tuple)) or len(entry) != 2:
+                continue
+            member, score = entry
+            if isinstance(member, bytes):
+                bucket = member.decode("utf-8", errors="replace")
+            else:
+                bucket = str(member)
+            try:
+                count = int(score)
+            except (TypeError, ValueError):
+                continue
+            items.append({"bbox_bucket": bucket, "count": count})
+
+    return {"hour": hour_key, "top": items}

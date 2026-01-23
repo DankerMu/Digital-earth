@@ -59,8 +59,9 @@ def test_loads_json_and_requires_db_secrets(
     assert rules["/api/v1/catalog"] == 100
     assert rules["/api/v1/vector"] == 60
     assert rules["/api/v1/tiles"] == 300
-    assert rules["/api/v1/volume"] == 30
+    assert rules["/api/v1/volume"] == 10
     assert rules["/api/v1/errors"] == 10
+    assert settings.api.volume_cache_ttl_seconds == 3600
 
 
 def test_rate_limit_rules_normalize_path_prefix(
@@ -99,10 +100,12 @@ def test_env_overrides_deep_merge(
     monkeypatch.setenv("DIGITAL_EARTH_DB_USER", "app")
     monkeypatch.setenv("DIGITAL_EARTH_DB_PASSWORD", "secret")
     monkeypatch.setenv("DIGITAL_EARTH_API_PORT", "9000")
+    monkeypatch.setenv("DIGITAL_EARTH_API_VOLUME_CACHE_TTL_SECONDS", "120")
 
     settings = Settings()
     assert settings.api.port == 9000
     assert settings.api.host == "0.0.0.0"
+    assert settings.api.volume_cache_ttl_seconds == 120
 
 
 def test_pipeline_precip_type_threshold_loads_and_env_overrides(
