@@ -237,7 +237,9 @@ def _query_risk_pois(
                 if poi_ids:
                     dialect = session.bind.dialect.name if session.bind else ""
                     chunk_size = (
-                        LOOKUP_SQLITE_CHUNK_SIZE if dialect == "sqlite" else len(poi_ids)
+                        LOOKUP_SQLITE_CHUNK_SIZE
+                        if dialect == "sqlite"
+                        else len(poi_ids)
                     )
                     normalized_time = _normalize_time(valid_time)
 

@@ -10,7 +10,9 @@ def test_risk_poi_evaluation_model_creates_expected_indexes() -> None:
     Base.metadata.create_all(engine)
 
     inspector = inspect(engine)
-    indexes = {idx["name"]: idx for idx in inspector.get_indexes("risk_poi_evaluations")}
+    indexes = {
+        idx["name"]: idx for idx in inspector.get_indexes("risk_poi_evaluations")
+    }
 
     assert "ix_risk_poi_evaluations_poi_id" in indexes
     assert indexes["ix_risk_poi_evaluations_poi_id"]["column_names"] == ["poi_id"]
@@ -29,5 +31,6 @@ def test_risk_poi_evaluation_model_creates_expected_indexes() -> None:
     ]
 
     assert "ix_risk_poi_evaluations_valid_time" in indexes
-    assert indexes["ix_risk_poi_evaluations_valid_time"]["column_names"] == ["valid_time"]
-
+    assert indexes["ix_risk_poi_evaluations_valid_time"]["column_names"] == [
+        "valid_time"
+    ]
