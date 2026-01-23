@@ -2,6 +2,7 @@ import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 
+import { useAircraftDemoStore } from '../../state/aircraftDemo';
 import { DEFAULT_CAMERA_PERSPECTIVE_ID, useCameraPerspectiveStore } from '../../state/cameraPerspective';
 import { LocalInfoPanel } from './LocalInfoPanel';
 
@@ -9,6 +10,8 @@ describe('LocalInfoPanel', () => {
   it('renders location, height, time key, and active layer', () => {
     localStorage.removeItem('digital-earth.cameraPerspective');
     useCameraPerspectiveStore.setState({ cameraPerspectiveId: DEFAULT_CAMERA_PERSPECTIVE_ID });
+    localStorage.removeItem('digital-earth.aircraftDemo');
+    useAircraftDemoStore.setState({ enabled: false });
 
     render(
       <LocalInfoPanel
@@ -42,6 +45,8 @@ describe('LocalInfoPanel', () => {
 
     localStorage.removeItem('digital-earth.cameraPerspective');
     useCameraPerspectiveStore.setState({ cameraPerspectiveId: DEFAULT_CAMERA_PERSPECTIVE_ID });
+    localStorage.removeItem('digital-earth.aircraftDemo');
+    useAircraftDemoStore.setState({ enabled: false });
 
     render(
       <LocalInfoPanel
@@ -63,6 +68,8 @@ describe('LocalInfoPanel', () => {
   it('disables back button when canGoBack is false', () => {
     localStorage.removeItem('digital-earth.cameraPerspective');
     useCameraPerspectiveStore.setState({ cameraPerspectiveId: DEFAULT_CAMERA_PERSPECTIVE_ID });
+    localStorage.removeItem('digital-earth.aircraftDemo');
+    useAircraftDemoStore.setState({ enabled: false });
 
     render(
       <LocalInfoPanel
@@ -84,6 +91,8 @@ describe('LocalInfoPanel', () => {
 
     localStorage.removeItem('digital-earth.cameraPerspective');
     useCameraPerspectiveStore.setState({ cameraPerspectiveId: DEFAULT_CAMERA_PERSPECTIVE_ID });
+    localStorage.removeItem('digital-earth.aircraftDemo');
+    useAircraftDemoStore.setState({ enabled: false });
 
     render(
       <LocalInfoPanel
@@ -111,6 +120,8 @@ describe('LocalInfoPanel', () => {
   it('hides lock button when there is no active layer', () => {
     localStorage.removeItem('digital-earth.cameraPerspective');
     useCameraPerspectiveStore.setState({ cameraPerspectiveId: DEFAULT_CAMERA_PERSPECTIVE_ID });
+    localStorage.removeItem('digital-earth.aircraftDemo');
+    useAircraftDemoStore.setState({ enabled: false });
 
     render(
       <LocalInfoPanel
@@ -133,6 +144,8 @@ describe('LocalInfoPanel', () => {
 
     localStorage.removeItem('digital-earth.cameraPerspective');
     useCameraPerspectiveStore.setState({ cameraPerspectiveId: DEFAULT_CAMERA_PERSPECTIVE_ID });
+    localStorage.removeItem('digital-earth.aircraftDemo');
+    useAircraftDemoStore.setState({ enabled: false });
 
     render(
       <LocalInfoPanel
@@ -155,5 +168,32 @@ describe('LocalInfoPanel', () => {
 
     await user.click(screen.getByRole('button', { name: '锁定当前层' }));
     expect(onLockLayer).toHaveBeenCalledTimes(1);
+  });
+
+  it('toggles aircraft demo checkbox', async () => {
+    const user = userEvent.setup();
+
+    localStorage.removeItem('digital-earth.cameraPerspective');
+    useCameraPerspectiveStore.setState({ cameraPerspectiveId: DEFAULT_CAMERA_PERSPECTIVE_ID });
+    localStorage.removeItem('digital-earth.aircraftDemo');
+    useAircraftDemoStore.setState({ enabled: false });
+
+    render(
+      <LocalInfoPanel
+        lat={30}
+        lon={120}
+        timeKey={null}
+        activeLayer={null}
+        canGoBack={false}
+        onBack={() => {}}
+        onLockLayer={() => {}}
+      />,
+    );
+
+    const checkbox = screen.getByRole('checkbox', { name: '显示飞行器' });
+    expect(checkbox).not.toBeChecked();
+
+    await user.click(checkbox);
+    expect(useAircraftDemoStore.getState().enabled).toBe(true);
   });
 });

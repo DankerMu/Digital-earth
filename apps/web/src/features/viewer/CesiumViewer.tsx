@@ -46,6 +46,7 @@ import { useSceneModeStore } from '../../state/sceneMode';
 import { useTimeStore } from '../../state/time';
 import { useViewerStatsStore } from '../../state/viewerStats';
 import { useViewModeStore, type ViewModeRoute } from '../../state/viewMode';
+import { AircraftDemoLayer } from '../aircraft/AircraftDemoLayer';
 import { PrecipitationParticles } from '../effects/PrecipitationParticles';
 import { DisasterDemo } from '../effects/DisasterDemo';
 import { WindArrows, windArrowDensityForCameraHeight } from '../effects/WindArrows';
@@ -3162,6 +3163,13 @@ export function CesiumViewer() {
     <div className="viewerRoot">
       <div ref={containerRef} className="viewerCanvas" data-testid="cesium-container" />
       <div id="effect-stage" className="absolute inset-0 z-0 pointer-events-none" />
+      {viewer ? (
+        <AircraftDemoLayer
+          viewer={viewer}
+          viewModeRoute={viewModeRoute}
+          cameraPerspectiveId={cameraPerspectiveId}
+        />
+      ) : null}
       <div className="viewerOverlay">
         {viewer ? <CompassControl viewer={viewer} /> : null}
         <SceneModeToggle />
