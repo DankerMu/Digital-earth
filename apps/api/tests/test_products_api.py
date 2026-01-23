@@ -390,6 +390,158 @@ def test_products_endpoint_etag_returns_304_on_match(
     assert cached.status_code == 304
 
 
+def test_product_detail_endpoint_is_cached_between_requests(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    db_url = f"sqlite+pysqlite:///{tmp_path / 'products.db'}"
+    _seed_products(db_url)
+
+    client = _make_client(monkeypatch, tmp_path, db_url=db_url)
+    products = client.get("/api/v1/products").json()["items"]
+    product_id = next(item["id"] for item in products if item["title"] == "降雪")
+
+    first = client.get(f"/api/v1/products/{product_id}")
+    assert first.status_code == 200
+    assert first.json()["title"] == "降雪"
+
+    from routers import products as products_router
+
+    def _boom(*_args: object, **_kwargs: object) -> None:
+        raise RuntimeError("db should not be hit on cache")
+
+    monkeypatch.setattr(products_router, "_query_product_detail", _boom)
+
+    second = client.get(f"/api/v1/products/{product_id}")
+    assert second.status_code == 200
+    assert second.json()["title"] == "降雪"
+
+
+def test_product_detail_endpoint_etag_returns_304_on_match(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    db_url = f"sqlite+pysqlite:///{tmp_path / 'products.db'}"
+    _seed_products(db_url)
+
+    client = _make_client(monkeypatch, tmp_path, db_url=db_url)
+    products = client.get("/api/v1/products").json()["items"]
+    product_id = next(item["id"] for item in products if item["title"] == "降雪")
+
+    response = client.get(f"/api/v1/products/{product_id}")
+    assert response.status_code == 200
+    etag = response.headers.get("etag")
+    assert etag
+
+    cached = client.get(f"/api/v1/products/{product_id}", headers={"if-none-match": etag})
+    assert cached.status_code == 304
+
+
+def test_products_snapshot_helpers_support_non_utc_isoformat_and_memoryview_geometry() -> None:
+    from routers import products as products_router
+
+    dt = datetime(2026, 1, 1, tzinfo=timezone(timedelta(hours=9)))
+    assert products_router._isoformat(dt) == "2025-12-31T15:00:00Z"
+
+    encoded = products_router._serialize_geometry_for_snapshot(memoryview(b"\x01"))
+    assert isinstance(encoded, dict)
+    assert encoded["encoding"] == "base64"
+    assert encoded["data"]
+
+
+@pytest.mark.anyio
+async def test_products_cache_epoch_helpers_return_defaults_when_redis_unavailable() -> None:
+    from routers import products as products_router
+
+    class _BoomRedis:
+        async def get(self, _key: str) -> bytes | None:
+            raise RuntimeError("boom")
+
+        async def set(self, *_args: object, **_kwargs: object) -> object:
+            raise RuntimeError("boom")
+
+    assert await products_router._get_products_list_cache_epoch(_BoomRedis()) == "0"
+    assert await products_router._get_product_detail_cache_epoch(_BoomRedis(), 123) == "0"
+    await products_router._bump_products_list_cache_epoch(None)
+    await products_router._bump_product_detail_cache_epoch(None, 123)
+
+
+def test_product_detail_cache_is_invalidated_on_update(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    db_url = f"sqlite+pysqlite:///{tmp_path / 'products.db'}"
+    _seed_products(db_url)
+    monkeypatch.setenv("ENABLE_EDITOR", "1")
+
+    client = _make_client(monkeypatch, tmp_path, db_url=db_url)
+    products = client.get("/api/v1/products").json()["items"]
+    product_id = next(item["id"] for item in products if item["title"] == "降雪")
+
+    cached = client.get(f"/api/v1/products/{product_id}")
+    assert cached.status_code == 200
+    assert cached.json()["text"] == "seeded 降雪"
+    assert cached.json()["status"] == "published"
+
+    updated = client.put(f"/api/v1/products/{product_id}", json={"text": "updated text"})
+    assert updated.status_code == 200
+    assert updated.json()["text"] == "updated text"
+    assert updated.json()["status"] == "draft"
+
+    refreshed = client.get(f"/api/v1/products/{product_id}")
+    assert refreshed.status_code == 200
+    assert refreshed.json()["text"] == "updated text"
+    assert refreshed.json()["status"] == "draft"
+
+
+def test_product_detail_cache_is_invalidated_on_publish(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    db_url = f"sqlite+pysqlite:///{tmp_path / 'products-edit.db'}"
+    from models import Base
+
+    Base.metadata.create_all(create_engine(db_url))
+    monkeypatch.setenv("ENABLE_EDITOR", "1")
+
+    client = _make_client(monkeypatch, tmp_path, db_url=db_url)
+
+    create_payload = {
+        "title": "My product",
+        "text": "draft v1",
+        "issued_at": "2026-01-01T00:00:00Z",
+        "valid_from": "2026-01-01T00:00:00Z",
+        "valid_to": "2026-01-02T00:00:00Z",
+        "hazards": [],
+    }
+    created = client.post("/api/v1/products", json=create_payload)
+    assert created.status_code == 201
+    product_id = created.json()["id"]
+
+    published_v1 = client.post(f"/api/v1/products/{product_id}/publish")
+    assert published_v1.status_code == 200
+
+    cached_published = client.get(f"/api/v1/products/{product_id}")
+    assert cached_published.status_code == 200
+    assert cached_published.json()["text"] == "draft v1"
+    assert cached_published.json()["status"] == "published"
+    assert cached_published.json()["version"] == 1
+
+    updated = client.put(f"/api/v1/products/{product_id}", json={"text": "draft v2"})
+    assert updated.status_code == 200
+
+    cached_draft = client.get(f"/api/v1/products/{product_id}")
+    assert cached_draft.status_code == 200
+    assert cached_draft.json()["text"] == "draft v2"
+    assert cached_draft.json()["status"] == "draft"
+    assert cached_draft.json()["version"] == 1
+
+    published_v2 = client.post(f"/api/v1/products/{product_id}/publish")
+    assert published_v2.status_code == 200
+
+    refreshed = client.get(f"/api/v1/products/{product_id}")
+    assert refreshed.status_code == 200
+    assert refreshed.json()["text"] == "draft v2"
+    assert refreshed.json()["status"] == "published"
+    assert refreshed.json()["version"] == 2
+
+
 def test_products_hazards_time_filter_applies_to_query(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
