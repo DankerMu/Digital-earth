@@ -52,6 +52,22 @@ describe('riskTypes', () => {
     expect(() => parseRiskPoisQueryResponse({ page: 1 })).toThrow(/Invalid risk POIs response/);
   });
 
+  it('normalizes unknown risk levels to null', () => {
+    const parsed = parseRiskPoisQueryResponse({
+      page: 1,
+      page_size: 100,
+      total: 2,
+      items: [
+        { id: 1, name: 'poi-a', type: 'fire', lon: 120, lat: 30, alt: null, weight: 1, tags: null, risk_level: 'unknown' },
+        { id: 2, name: 'poi-b', type: 'fire', lon: 121, lat: 31, alt: null, weight: 1, tags: null, risk_level: null },
+      ],
+    });
+
+    expect(parsed.items).toHaveLength(2);
+    expect(parsed.items[0]?.risk_level).toBeNull();
+    expect(parsed.items[1]?.risk_level).toBeNull();
+  });
+
   it('parses risk evaluate responses and filters invalid results', () => {
     const parsed = parseRiskEvaluateResponse({
       summary: {
@@ -107,13 +123,13 @@ describe('riskTypes', () => {
 
   it('maps risk levels to severities and formats labels', () => {
     expect(riskSeverityForLevel(null)).toBe('unknown');
-    expect(riskSeverityForLevel('unknown')).toBe('unknown');
+    expect(riskSeverityForLevel(undefined)).toBe('unknown');
     expect(riskSeverityForLevel(1)).toBe('low');
     expect(riskSeverityForLevel(3)).toBe('medium');
     expect(riskSeverityForLevel(5)).toBe('high');
 
     expect(formatRiskLevel(null)).toBe('--');
-    expect(formatRiskLevel('unknown')).toBe('--');
+    expect(formatRiskLevel(undefined)).toBe('--');
     expect(formatRiskLevel(3.2)).toBe('3');
   });
 

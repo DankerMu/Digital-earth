@@ -9,7 +9,7 @@ export type RiskPOI = {
   alt: number | null;
   weight: number;
   tags: string[] | null;
-  risk_level: number | 'unknown';
+  risk_level: number | null;
 };
 
 export type RiskPOIQueryResponse = {
@@ -109,12 +109,7 @@ function parseRiskPoiItem(value: unknown): RiskPOI | null {
   }
 
   const alt = parseOptionalNumber(value.alt);
-  const risk_level =
-    typeof value.risk_level === 'string' && value.risk_level.trim().toLowerCase() === 'unknown'
-      ? 'unknown'
-      : isFiniteNumber(value.risk_level)
-        ? value.risk_level
-        : 'unknown';
+  const risk_level = isFiniteNumber(value.risk_level) ? value.risk_level : null;
 
   return {
     id,
@@ -294,8 +289,7 @@ export function parseRiskEvaluateResponse(value: unknown): RiskEvaluateResponse 
 
 export type RiskSeverity = 'high' | 'medium' | 'low' | 'unknown';
 
-export function riskSeverityForLevel(level: number | 'unknown' | null | undefined): RiskSeverity {
-  if (level === 'unknown') return 'unknown';
+export function riskSeverityForLevel(level: number | null | undefined): RiskSeverity {
   if (level == null || !Number.isFinite(level)) return 'unknown';
   const normalized = Math.round(level);
   if (normalized >= 4) return 'high';
@@ -304,8 +298,7 @@ export function riskSeverityForLevel(level: number | 'unknown' | null | undefine
   return 'unknown';
 }
 
-export function formatRiskLevel(level: number | 'unknown' | null | undefined): string {
-  if (level === 'unknown') return '--';
+export function formatRiskLevel(level: number | null | undefined): string {
   if (level == null || !Number.isFinite(level)) return '--';
   return String(Math.round(level));
 }

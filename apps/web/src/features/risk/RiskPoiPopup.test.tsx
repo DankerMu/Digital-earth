@@ -21,7 +21,7 @@ describe('RiskPoiPopup', () => {
           alt: null,
           weight: 1,
           tags: null,
-          risk_level: 'unknown',
+          risk_level: null,
         }}
         evaluation={null}
         status="loading"
@@ -53,7 +53,7 @@ describe('RiskPoiPopup', () => {
           alt: null,
           weight: 1,
           tags: null,
-          risk_level: 'unknown',
+          risk_level: null,
         }}
         evaluation={null}
         status="error"

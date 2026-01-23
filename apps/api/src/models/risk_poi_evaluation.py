@@ -19,6 +19,12 @@ class RiskPOIEvaluation(Base):
         ),
         Index("ix_risk_poi_evaluations_poi_id", "poi_id"),
         Index("ix_risk_poi_evaluations_product_time", "product_id", "valid_time"),
+        Index(
+            "ix_risk_poi_evaluations_product_time_poi",
+            "product_id",
+            "valid_time",
+            "poi_id",
+        ),
         Index("ix_risk_poi_evaluations_valid_time", "valid_time"),
     )
 

@@ -1,5 +1,9 @@
 """[ST-0078] Risk POI evaluations
 
+Deployment note:
+    Apply this migration before deploying API code that reads/writes
+    `risk_poi_evaluations`.
+
 Revision ID: 0f12a9b6c3d4
 Revises: c770cb4c3220
 Create Date: 2026-01-23 00:00:00.000000
@@ -59,6 +63,11 @@ def upgrade() -> None:
         ["product_id", "valid_time"],
     )
     op.create_index(
+        "ix_risk_poi_evaluations_product_time_poi",
+        "risk_poi_evaluations",
+        ["product_id", "valid_time", "poi_id"],
+    )
+    op.create_index(
         "ix_risk_poi_evaluations_valid_time", "risk_poi_evaluations", ["valid_time"]
     )
 
@@ -66,6 +75,9 @@ def upgrade() -> None:
 def downgrade() -> None:
     op.drop_index(
         "ix_risk_poi_evaluations_valid_time", table_name="risk_poi_evaluations"
+    )
+    op.drop_index(
+        "ix_risk_poi_evaluations_product_time_poi", table_name="risk_poi_evaluations"
     )
     op.drop_index(
         "ix_risk_poi_evaluations_product_time", table_name="risk_poi_evaluations"

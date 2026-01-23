@@ -1856,15 +1856,13 @@
           "risk_level": {
             "anyOf": [
               {
-                "const": "unknown",
-                "type": "string"
+                "type": "integer"
               },
               {
-                "type": "integer"
+                "type": "null"
               }
             ],
-            "default": "unknown",
-            "description": "Risk level (1-5) when evaluated, otherwise 'unknown'",
+            "description": "Risk level (1-5) when evaluated; null when unavailable",
             "title": "Risk Level"
           },
           "tags": {
@@ -3858,7 +3856,7 @@
             }
           },
           {
-            "description": "Product id for risk evaluation lookup",
+            "description": "Product id for risk evaluation lookup (must be provided together with valid_time)",
             "in": "query",
             "name": "product_id",
             "required": false,
@@ -3872,12 +3870,12 @@
                   "type": "null"
                 }
               ],
-              "description": "Product id for risk evaluation lookup",
+              "description": "Product id for risk evaluation lookup (must be provided together with valid_time)",
               "title": "Product Id"
             }
           },
           {
-            "description": "Valid time (ISO8601) for risk evaluation lookup",
+            "description": "Valid time (ISO8601) for risk evaluation lookup (must be provided together with product_id)",
             "in": "query",
             "name": "valid_time",
             "required": false,
@@ -3891,7 +3889,7 @@
                   "type": "null"
                 }
               ],
-              "description": "Valid time (ISO8601) for risk evaluation lookup",
+              "description": "Valid time (ISO8601) for risk evaluation lookup (must be provided together with product_id)",
               "title": "Valid Time"
             }
           }
