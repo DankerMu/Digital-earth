@@ -10,10 +10,17 @@ import {
 
 import { type BasemapConfig, type IonBasemap, type UrlTemplateBasemap, type WmtsBasemap } from '../../config/basemaps';
 
+export function normalizeTmsTemplate(
+  urlTemplate: string,
+  scheme: 'xyz' | 'tms',
+): string {
+  if (scheme !== 'tms') return urlTemplate;
+  if (urlTemplate.includes('{reverseY}')) return urlTemplate;
+  return urlTemplate.replaceAll('{y}', '{reverseY}');
+}
+
 function toCesiumUrlTemplate(basemap: UrlTemplateBasemap): string {
-  if (basemap.scheme === 'xyz') return basemap.urlTemplate;
-  if (basemap.urlTemplate.includes('{reverseY}')) return basemap.urlTemplate;
-  return basemap.urlTemplate.replaceAll('{y}', '{reverseY}');
+  return normalizeTmsTemplate(basemap.urlTemplate, basemap.scheme);
 }
 
 function toIonWorldImageryStyle(style: IonBasemap['style']): IonWorldImageryStyle | undefined {

@@ -73,7 +73,12 @@ import { CompassControl } from './CompassControl';
 import { EventLayersToggle, type EventLayerModeStatus } from './EventLayersToggle';
 import { SceneModeToggle } from './SceneModeToggle';
 import { createFpsMonitor, createLowFpsDetector } from './fpsMonitor';
-import { createImageryProviderForBasemap, createImageryProviderForBasemapAsync, setViewerImageryProvider } from './cesiumBasemap';
+import {
+  createImageryProviderForBasemap,
+  createImageryProviderForBasemapAsync,
+  normalizeTmsTemplate,
+  setViewerImageryProvider,
+} from './cesiumBasemap';
 import { switchViewerSceneMode } from './cesiumSceneMode';
 import 'cesium/Build/Cesium/Widgets/widgets.css';
 import { getProductDetail } from '../products/productsApi';
@@ -585,15 +590,6 @@ function useEventAnalyticsTileLayer(options: {
   }, [active, apiBaseUrl, layerRef, load, logLabel, setStatus, viewer]);
 }
 
-function normalizeSelfHostedBasemapTemplate(
-  urlTemplate: string,
-  scheme: 'xyz' | 'tms',
-): string {
-  if (scheme !== 'tms') return urlTemplate;
-  if (urlTemplate.includes('{reverseY}')) return urlTemplate;
-  return urlTemplate.replaceAll('{y}', '{reverseY}');
-}
-
 type SavedCameraState = {
   lon: number;
   lat: number;
@@ -653,6 +649,7 @@ export function CesiumViewer() {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [viewer, setViewer] = useState<CesiumViewerInstance | null>(null);
   const [mapConfig, setMapConfig] = useState<MapConfig | undefined>(undefined);
+  const [mapConfigLoaded, setMapConfigLoaded] = useState(false);
   const [apiBaseUrl, setApiBaseUrl] = useState<string | null>(null);
   const [terrainNotice, setTerrainNotice] = useState<string | null>(null);
   const [monitoringNotice, setMonitoringNotice] = useState<string | null>(null);
@@ -1045,6 +1042,10 @@ export function CesiumViewer() {
         if (cancelled) return;
         setMapConfig(undefined);
         setApiBaseUrl(null);
+      })
+      .finally(() => {
+        if (cancelled) return;
+        setMapConfigLoaded(true);
       });
     return () => {
       cancelled = true;
@@ -1139,25 +1140,48 @@ export function CesiumViewer() {
     if (appliedBasemapIdRef.current === basemapId) return;
     const basemap = getBasemapById(basemapId);
     if (!basemap) return;
-    if (basemap.kind === 'ion' && !mapConfig?.cesiumIonAccessToken) return;
+    if (basemap.kind === 'ion' && !mapConfig?.cesiumIonAccessToken) {
+      if (!mapConfigLoaded) return;
+      const fallbackBasemapId = appliedBasemapIdRef.current ?? DEFAULT_BASEMAP_ID;
+      console.warn('[Digital Earth] Cesium ion basemap selected without token; reverting', {
+        basemapId,
+        fallbackBasemapId,
+      });
+      if (fallbackBasemapId !== basemapId) {
+        useBasemapStore.getState().setBasemapId(fallbackBasemapId);
+      }
+      return;
+    }
 
     const controller = new AbortController();
 
     void (async () => {
-      const provider = await createImageryProviderForBasemapAsync(basemap);
-      if (controller.signal.aborted) return;
-      if (useBasemapStore.getState().basemapId !== basemapId) return;
-      setViewerImageryProvider(viewer, provider);
-      appliedBasemapIdRef.current = basemapId;
-    })().catch((error: unknown) => {
-      if (controller.signal.aborted) return;
-      console.warn('[Digital Earth] failed to apply basemap', { basemapId, error });
-    });
+      try {
+        const provider = await createImageryProviderForBasemapAsync(basemap);
+        if (controller.signal.aborted) return;
+        if (useBasemapStore.getState().basemapId !== basemapId) return;
+        setViewerImageryProvider(viewer, provider);
+        appliedBasemapIdRef.current = basemapId;
+      } catch (error: unknown) {
+        if (controller.signal.aborted) return;
+        if (useBasemapStore.getState().basemapId !== basemapId) return;
+
+        const fallbackBasemapId = appliedBasemapIdRef.current ?? DEFAULT_BASEMAP_ID;
+        console.warn('[Digital Earth] failed to apply basemap; reverting', {
+          basemapId,
+          fallbackBasemapId,
+          error,
+        });
+        if (fallbackBasemapId !== basemapId) {
+          useBasemapStore.getState().setBasemapId(fallbackBasemapId);
+        }
+      }
+    })();
 
     return () => {
       controller.abort();
     };
-  }, [basemapId, basemapProvider, mapConfig?.cesiumIonAccessToken, viewer]);
+  }, [basemapId, basemapProvider, mapConfig?.cesiumIonAccessToken, mapConfigLoaded, viewer]);
 
   useEffect(() => {
     if (!viewer) return;
@@ -1348,7 +1372,7 @@ export function CesiumViewer() {
       } else {
         const scheme = mapConfig.selfHosted?.basemapScheme ?? 'xyz';
         const provider = new UrlTemplateImageryProvider({
-          url: normalizeSelfHostedBasemapTemplate(urlTemplate, scheme),
+          url: normalizeTmsTemplate(urlTemplate, scheme),
           tilingScheme: new WebMercatorTilingScheme(),
           credit: 'Self-hosted basemap',
         });
@@ -3147,7 +3171,9 @@ export function CesiumViewer() {
             differenceStatus={eventBiasLayerStatus}
           />
         ) : null}
-        {basemapProvider === 'open' ? <BasemapSelector /> : null}
+        {mapConfigLoaded && basemapProvider === 'open' ? (
+          <BasemapSelector ionEnabled={Boolean(mapConfig?.cesiumIonAccessToken)} />
+        ) : null}
         {terrainNotice ? (
           <div className="terrainNoticePanel" role="alert" aria-label="terrain-notice">
             <div className="terrainNoticeTitle">地形</div>

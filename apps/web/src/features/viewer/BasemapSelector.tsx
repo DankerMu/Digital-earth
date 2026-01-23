@@ -1,10 +1,15 @@
 import { BASEMAPS, getBasemapById, isBasemapId } from '../../config/basemaps';
 import { useBasemapStore } from '../../state/basemap';
 
-export function BasemapSelector() {
+type BasemapSelectorProps = {
+  ionEnabled: boolean;
+};
+
+export function BasemapSelector({ ionEnabled }: BasemapSelectorProps) {
   const basemapId = useBasemapStore((state) => state.basemapId);
   const setBasemapId = useBasemapStore((state) => state.setBasemapId);
   const basemap = getBasemapById(basemapId);
+  const descriptionId = basemap?.description ? 'basemap-select-description' : undefined;
 
   return (
     <div className="basemapPanel">
@@ -14,6 +19,7 @@ export function BasemapSelector() {
       <select
         id="basemap-select"
         className="basemapSelect"
+        aria-describedby={descriptionId}
         value={basemapId}
         onChange={(event) => {
           const next = event.target.value;
@@ -21,17 +27,20 @@ export function BasemapSelector() {
         }}
       >
         {BASEMAPS.map((option) => (
-          <option key={option.id} value={option.id}>
+          <option
+            key={option.id}
+            value={option.id}
+            disabled={option.kind === 'ion' && !ionEnabled}
+          >
             {option.label}
           </option>
         ))}
       </select>
       {basemap?.description ? (
-        <div className="basemapHelp" aria-label="Basemap description">
+        <div id="basemap-select-description" className="basemapHelp">
           {basemap.description}
         </div>
       ) : null}
     </div>
   );
 }
-
