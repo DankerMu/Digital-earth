@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import math
 import uuid
@@ -25,7 +26,8 @@ logger = logging.getLogger("api.error")
 
 router = APIRouter(prefix="/products", tags=["products"])
 
-CACHE_CONTROL_HEADER = "public, max-age=60"
+CACHE_CONTROL_PUBLIC_HEADER = "public, max-age=60"
+CACHE_CONTROL_PRIVATE_HEADER = "private, max-age=60"
 CACHE_FRESH_TTL_SECONDS = 60
 CACHE_STALE_TTL_SECONDS = 60 * 60
 CACHE_LOCK_TTL_MS = 30_000
@@ -34,6 +36,63 @@ CACHE_COOLDOWN_TTL_SECONDS: tuple[int, int] = (5, 30)
 
 PRODUCTS_LIST_CACHE_EPOCH_KEY = "products:list:epoch"
 PRODUCTS_LIST_CACHE_EPOCH_TTL_SECONDS = 60 * 60 * 24
+
+PRODUCT_DETAIL_CACHE_EPOCH_KEY_PREFIX = "products:detail:epoch"
+PRODUCT_DETAIL_CACHE_EPOCH_TTL_SECONDS = 60 * 60 * 24
+
+
+def _cache_control_for_product_status(status: str | None) -> str:
+    if status == "published":
+        return CACHE_CONTROL_PUBLIC_HEADER
+    return CACHE_CONTROL_PRIVATE_HEADER
+
+
+def _parse_status_from_detail_body(body: bytes) -> str | None:
+    try:
+        payload = json.loads(body)
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    status = payload.get("status")
+    if not isinstance(status, str):
+        return None
+    return status
+
+
+def _make_etag(body: bytes) -> str:
+    return f'"sha256-{hashlib.sha256(body).hexdigest()}"'
+
+
+def _pack_cached_http_response(*, body: bytes, etag: str, cache_control: str) -> bytes:
+    etag_text = etag.replace("\n", "").strip()
+    cache_control_text = cache_control.replace("\n", "").strip()
+    return (
+        etag_text.encode("utf-8")
+        + b"\n"
+        + cache_control_text.encode("utf-8")
+        + b"\n"
+        + body
+    )
+
+
+def _unpack_cached_http_response(
+    payload: bytes,
+) -> tuple[bytes, str | None, str | None]:
+    if not payload.startswith(b'"sha256-'):
+        return payload, None, None
+
+    etag_line, sep, remainder = payload.partition(b"\n")
+    if not sep:
+        return payload, None, None
+    etag = etag_line.decode("utf-8", errors="ignore").strip() or None
+
+    cache_control_line, sep2, body = remainder.partition(b"\n")
+    if not sep2:
+        return remainder, etag, None
+
+    cache_control = cache_control_line.decode("utf-8", errors="ignore").strip() or None
+    return body, etag, cache_control
 
 
 def _normalize_time(value: datetime) -> datetime:
@@ -125,6 +184,55 @@ async def _bump_products_list_cache_epoch(redis: RedisLike | None) -> None:
         )
     except Exception:  # noqa: BLE001
         logger.warning("products_cache_epoch_bump_failed")
+
+
+def _product_detail_cache_epoch_key(product_id: int) -> str:
+    return f"{PRODUCT_DETAIL_CACHE_EPOCH_KEY_PREFIX}:{int(product_id)}"
+
+
+async def _get_product_detail_cache_epoch(redis: RedisLike, product_id: int) -> str:
+    key = _product_detail_cache_epoch_key(product_id)
+    try:
+        cached = await redis.get(key)
+    except Exception:  # noqa: BLE001
+        return "0"
+
+    if cached:
+        decoded = cached.decode("utf-8", errors="ignore").strip()
+        return decoded or "0"
+
+    token = uuid.uuid4().hex
+    try:
+        await redis.set(
+            key,
+            token.encode("utf-8"),
+            ex=PRODUCT_DETAIL_CACHE_EPOCH_TTL_SECONDS,
+        )
+    except Exception:  # noqa: BLE001
+        return token
+
+    return token
+
+
+async def _bump_product_detail_cache_epoch(
+    redis: RedisLike | None, product_id: int
+) -> None:
+    if redis is None:
+        return
+
+    token = uuid.uuid4().hex
+    key = _product_detail_cache_epoch_key(product_id)
+    try:
+        await redis.set(
+            key,
+            token.encode("utf-8"),
+            ex=PRODUCT_DETAIL_CACHE_EPOCH_TTL_SECONDS,
+        )
+    except Exception:  # noqa: BLE001
+        logger.warning(
+            "product_detail_cache_epoch_bump_failed",
+            extra={"product_id": int(product_id)},
+        )
 
 
 def _parse_bbox(value: Optional[str]) -> Optional[tuple[float, float, float, float]]:
@@ -472,6 +580,24 @@ def _query_product_summaries(
     )
 
 
+def _query_product_detail(product_id: int) -> ProductDetailResponse:
+    try:
+        with Session(db.get_engine()) as session:
+            product = session.execute(
+                select(Product)
+                .options(selectinload(Product.hazards))
+                .where(Product.id == product_id)
+            ).scalar_one_or_none()
+            if product is None:
+                raise HTTPException(status_code=404, detail="Product not found")
+            return _product_detail_response(product)
+    except HTTPException:
+        raise
+    except SQLAlchemyError as exc:
+        logger.error("products_db_error", extra={"error": str(exc)})
+        raise HTTPException(status_code=500, detail="Internal Server Error") from exc
+
+
 @router.get("", response_model=ProductsQueryResponse)
 async def list_products(
     request: Request,
@@ -497,12 +623,17 @@ async def list_products(
                 page=page,
                 page_size=page_size,
             )
-            return payload.model_dump_json().encode("utf-8")
+            body = payload.model_dump_json().encode("utf-8")
+            cache_control = _cache_control_for_product_status(status)
+            etag = _make_etag(body)
+            return _pack_cached_http_response(
+                body=body, etag=etag, cache_control=cache_control
+            )
 
         return await to_thread(_sync)
 
     if redis is None:
-        body = await _compute()
+        cached_payload = await _compute()
     else:
         epoch = await _get_products_list_cache_epoch(redis)
         status_identity = status or "all"
@@ -536,7 +667,7 @@ async def list_products(
                 compute=_compute,
                 cooldown_ttl_seconds=CACHE_COOLDOWN_TTL_SECONDS,
             )
-            body = result.body
+            cached_payload = result.body
         except TimeoutError as exc:
             raise HTTPException(
                 status_code=503, detail="Products cache warming timed out"
@@ -545,10 +676,14 @@ async def list_products(
             raise
         except Exception as exc:  # noqa: BLE001
             logger.warning("products_cache_unavailable", extra={"error": str(exc)})
-            body = await _compute()
+            cached_payload = await _compute()
 
-    etag = f'"sha256-{hashlib.sha256(body).hexdigest()}"'
-    headers = {"Cache-Control": CACHE_CONTROL_HEADER, "ETag": etag}
+    body, etag, cache_control = _unpack_cached_http_response(cached_payload)
+    if etag is None:
+        etag = _make_etag(body)
+    if cache_control is None:
+        cache_control = _cache_control_for_product_status(status)
+    headers = {"Cache-Control": cache_control, "ETag": etag}
 
     if if_none_match_matches(request.headers.get("if-none-match"), etag):
         return Response(status_code=304, headers=headers)
@@ -697,6 +832,7 @@ async def create_product(
         raise HTTPException(status_code=500, detail="Internal Server Error") from exc
 
     await _bump_products_list_cache_epoch(redis)
+    await _bump_product_detail_cache_epoch(redis, response.id)
     return response
 
 
@@ -774,6 +910,7 @@ async def update_product(
         raise HTTPException(status_code=500, detail="Internal Server Error") from exc
 
     await _bump_products_list_cache_epoch(redis)
+    await _bump_product_detail_cache_epoch(redis, product_id)
     return response
 
 
@@ -823,26 +960,73 @@ async def publish_product(
         raise HTTPException(status_code=500, detail="Internal Server Error") from exc
 
     await _bump_products_list_cache_epoch(redis)
+    await _bump_product_detail_cache_epoch(redis, product_id)
     return response
 
 
 @router.get("/{product_id}", response_model=ProductDetailResponse)
-def get_product(product_id: int) -> ProductDetailResponse:
-    try:
-        with Session(db.get_engine()) as session:
-            product = session.execute(
-                select(Product)
-                .options(selectinload(Product.hazards))
-                .where(Product.id == product_id)
-            ).scalar_one_or_none()
-            if product is None:
-                raise HTTPException(status_code=404, detail="Product not found")
-            return _product_detail_response(product)
-    except HTTPException:
-        raise
-    except SQLAlchemyError as exc:
-        logger.error("products_db_error", extra={"error": str(exc)})
-        raise HTTPException(status_code=500, detail="Internal Server Error") from exc
+async def get_product(request: Request, product_id: int) -> Response:
+    redis: RedisLike | None = getattr(request.app.state, "redis_client", None)
+
+    async def _compute() -> bytes:
+        def _sync() -> bytes:
+            payload = _query_product_detail(product_id)
+            body = payload.model_dump_json().encode("utf-8")
+            cache_control = _cache_control_for_product_status(payload.status)
+            etag = _make_etag(body)
+            return _pack_cached_http_response(
+                body=body, etag=etag, cache_control=cache_control
+            )
+
+        return await to_thread(_sync)
+
+    if redis is None:
+        cached_payload = await _compute()
+    else:
+        epoch = await _get_product_detail_cache_epoch(redis, product_id)
+        identity = f"epoch={epoch}:product={int(product_id)}"
+        identity_hash = hashlib.sha256(identity.encode("utf-8")).hexdigest()
+
+        fresh_key = f"products:detail:fresh:{identity_hash}"
+        stale_key = f"products:detail:stale:{identity_hash}"
+        lock_key = f"products:detail:lock:{identity_hash}"
+
+        try:
+            result = await get_or_compute_cached_bytes(
+                redis,
+                fresh_key=fresh_key,
+                stale_key=stale_key,
+                lock_key=lock_key,
+                fresh_ttl_seconds=CACHE_FRESH_TTL_SECONDS,
+                stale_ttl_seconds=CACHE_STALE_TTL_SECONDS,
+                lock_ttl_ms=CACHE_LOCK_TTL_MS,
+                wait_timeout_ms=CACHE_WAIT_TIMEOUT_MS,
+                compute=_compute,
+                cooldown_ttl_seconds=CACHE_COOLDOWN_TTL_SECONDS,
+            )
+            cached_payload = result.body
+        except TimeoutError as exc:
+            raise HTTPException(
+                status_code=503, detail="Product cache warming timed out"
+            ) from exc
+        except HTTPException:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("product_cache_unavailable", extra={"error": str(exc)})
+            cached_payload = await _compute()
+
+    body, etag, cache_control = _unpack_cached_http_response(cached_payload)
+    if etag is None:
+        etag = _make_etag(body)
+    if cache_control is None:
+        product_status = _parse_status_from_detail_body(body)
+        cache_control = _cache_control_for_product_status(product_status)
+    headers = {"Cache-Control": cache_control, "ETag": etag}
+
+    if if_none_match_matches(request.headers.get("if-none-match"), etag):
+        return Response(status_code=304, headers=headers)
+
+    return Response(content=body, media_type="application/json", headers=headers)
 
 
 @router.get("/{product_id}/versions", response_model=ProductVersionsResponse)
