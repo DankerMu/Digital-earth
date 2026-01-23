@@ -19,9 +19,24 @@ export type BasemapConfig = {
   urlTemplate: string;
   maximumLevel?: number;
   scheme: 'xyz' | 'tms';
+} | {
+  kind: 'ion';
+  id: string;
+  label: string;
+  description?: string;
+  credit: string;
+  style?: 'aerial' | 'aerial-with-labels' | 'road';
 };
 
 export const BASEMAPS = [
+  {
+    kind: 'ion',
+    id: 'ion-world-imagery',
+    label: 'Bing Maps (Cesium ion)',
+    description: 'Cesium Ion World Imagery（asset 2，需要 Ion token）',
+    credit: 'Cesium ion / Bing Maps',
+    style: 'aerial-with-labels',
+  },
   {
     kind: 'wmts',
     id: 'nasa-gibs-blue-marble',
@@ -54,6 +69,7 @@ export const DEFAULT_BASEMAP_ID: BasemapId = 's2cloudless-2021';
 
 export type WmtsBasemap = Extract<BasemapConfig, { kind: 'wmts' }>;
 export type UrlTemplateBasemap = Extract<BasemapConfig, { kind: 'url-template' }>;
+export type IonBasemap = Extract<BasemapConfig, { kind: 'ion' }>;
 
 export function isBasemapId(value: string): value is BasemapId {
   return BASEMAPS.some((basemap) => basemap.id === value);

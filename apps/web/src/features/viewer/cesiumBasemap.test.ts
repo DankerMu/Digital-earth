@@ -5,28 +5,36 @@ vi.mock('cesium', () => {
     WebMapTileServiceImageryProvider: vi.fn((options) => ({ kind: 'wmts', options })),
     UrlTemplateImageryProvider: vi.fn((options) => ({ kind: 'url-template', options })),
     WebMercatorTilingScheme: vi.fn(() => ({ kind: 'web-mercator' })),
+    IonWorldImageryStyle: {
+      AERIAL: 'AERIAL',
+      AERIAL_WITH_LABELS: 'AERIAL_WITH_LABELS',
+      ROAD: 'ROAD',
+    },
+    createWorldImageryAsync: vi.fn(async (options) => ({ kind: 'ion-world-imagery', options })),
   };
 });
 
 import {
+  IonWorldImageryStyle,
   UrlTemplateImageryProvider,
   WebMapTileServiceImageryProvider,
   WebMercatorTilingScheme,
+  createWorldImageryAsync,
 } from 'cesium';
 
 import { getBasemapById } from '../../config/basemaps';
-import { createImageryProviderForBasemap, setViewerBasemap } from './cesiumBasemap';
+import { createImageryProviderForBasemapAsync, setViewerBasemap } from './cesiumBasemap';
 
 describe('cesiumBasemap', () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
-  it('creates a WMTS imagery provider for the NASA basemap', () => {
+  it('creates a WMTS imagery provider for the NASA basemap', async () => {
     const basemap = getBasemapById('nasa-gibs-blue-marble');
     expect(basemap).toBeTruthy();
 
-    createImageryProviderForBasemap(basemap!);
+    await createImageryProviderForBasemapAsync(basemap!);
 
     expect(vi.mocked(WebMapTileServiceImageryProvider)).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -37,8 +45,8 @@ describe('cesiumBasemap', () => {
     );
   });
 
-  it('normalizes TMS templates to use reverseY', () => {
-    createImageryProviderForBasemap({
+  it('normalizes TMS templates to use reverseY', async () => {
+    await createImageryProviderForBasemapAsync({
       kind: 'url-template',
       id: 'test',
       label: 'test',
@@ -57,7 +65,21 @@ describe('cesiumBasemap', () => {
     );
   });
 
-  it('replaces the viewer base layer and requests render', () => {
+  it('creates a Cesium ion world imagery provider', async () => {
+    await createImageryProviderForBasemapAsync({
+      kind: 'ion',
+      id: 'ion-world-imagery',
+      label: 'Bing Maps (Cesium ion)',
+      credit: 'Cesium ion / Bing Maps',
+      style: 'aerial-with-labels',
+    });
+
+    expect(vi.mocked(createWorldImageryAsync)).toHaveBeenCalledWith({
+      style: IonWorldImageryStyle.AERIAL_WITH_LABELS,
+    });
+  });
+
+  it('replaces the viewer base layer and requests render', async () => {
     const basemap = getBasemapById('s2cloudless-2021');
     expect(basemap).toBeTruthy();
 
@@ -73,7 +95,7 @@ describe('cesiumBasemap', () => {
       },
     };
 
-    setViewerBasemap(viewer as unknown as never, basemap!);
+    await expect(setViewerBasemap(viewer as unknown as never, basemap!)).resolves.toBe(true);
 
     expect(viewer.imageryLayers.get).toHaveBeenCalledWith(0);
     expect(viewer.imageryLayers.remove).toHaveBeenCalledWith(baseLayer, true);
@@ -82,5 +104,36 @@ describe('cesiumBasemap', () => {
       0,
     );
     expect(viewer.scene.requestRender).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps the current viewer base layer when an ion provider fails to load', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.mocked(createWorldImageryAsync).mockRejectedValueOnce(new Error('boom'));
+
+    const baseLayer = { layer: true };
+    const viewer = {
+      imageryLayers: {
+        get: vi.fn(() => baseLayer),
+        remove: vi.fn(),
+        addImageryProvider: vi.fn(),
+      },
+      scene: {
+        requestRender: vi.fn(),
+      },
+    };
+
+    await expect(
+      setViewerBasemap(viewer as unknown as never, {
+        kind: 'ion',
+        id: 'ion-world-imagery',
+        label: 'Bing Maps (Cesium ion)',
+        credit: 'Cesium ion / Bing Maps',
+      }),
+    ).resolves.toBe(false);
+
+    expect(viewer.imageryLayers.remove).not.toHaveBeenCalled();
+    expect(viewer.imageryLayers.addImageryProvider).not.toHaveBeenCalled();
+
+    warn.mockRestore();
   });
 });

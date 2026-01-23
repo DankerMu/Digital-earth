@@ -1,20 +1,36 @@
 import {
+  IonWorldImageryStyle,
   UrlTemplateImageryProvider,
   WebMapTileServiceImageryProvider,
   WebMercatorTilingScheme,
+  createWorldImageryAsync,
   type ImageryProvider,
   type Viewer,
 } from 'cesium';
 
-import { type BasemapConfig, type UrlTemplateBasemap } from '../../config/basemaps';
+import { type BasemapConfig, type IonBasemap, type UrlTemplateBasemap, type WmtsBasemap } from '../../config/basemaps';
 
-function toCesiumUrlTemplate(basemap: UrlTemplateBasemap): string {
-  if (basemap.scheme === 'xyz') return basemap.urlTemplate;
-  if (basemap.urlTemplate.includes('{reverseY}')) return basemap.urlTemplate;
-  return basemap.urlTemplate.replaceAll('{y}', '{reverseY}');
+export function normalizeTmsTemplate(
+  urlTemplate: string,
+  scheme: 'xyz' | 'tms',
+): string {
+  if (scheme !== 'tms') return urlTemplate;
+  if (urlTemplate.includes('{reverseY}')) return urlTemplate;
+  return urlTemplate.replaceAll('{y}', '{reverseY}');
 }
 
-export function createImageryProviderForBasemap(basemap: BasemapConfig): ImageryProvider {
+function toCesiumUrlTemplate(basemap: UrlTemplateBasemap): string {
+  return normalizeTmsTemplate(basemap.urlTemplate, basemap.scheme);
+}
+
+function toIonWorldImageryStyle(style: IonBasemap['style']): IonWorldImageryStyle | undefined {
+  if (style === 'aerial') return IonWorldImageryStyle.AERIAL;
+  if (style === 'aerial-with-labels') return IonWorldImageryStyle.AERIAL_WITH_LABELS;
+  if (style === 'road') return IonWorldImageryStyle.ROAD;
+  return undefined;
+}
+
+export function createImageryProviderForBasemap(basemap: WmtsBasemap | UrlTemplateBasemap): ImageryProvider {
   if (basemap.kind === 'wmts') {
     return new WebMapTileServiceImageryProvider({
       url: basemap.url,
@@ -35,6 +51,17 @@ export function createImageryProviderForBasemap(basemap: BasemapConfig): Imagery
   });
 }
 
+export async function createImageryProviderForBasemapAsync(
+  basemap: BasemapConfig,
+): Promise<ImageryProvider> {
+  if (basemap.kind === 'ion') {
+    const style = toIonWorldImageryStyle(basemap.style);
+    return createWorldImageryAsync(style ? { style } : undefined);
+  }
+
+  return createImageryProviderForBasemap(basemap);
+}
+
 export function setViewerImageryProvider(viewer: Viewer, provider: ImageryProvider): void {
   const baseLayer = viewer.imageryLayers.get(0);
   if (baseLayer) {
@@ -45,7 +72,13 @@ export function setViewerImageryProvider(viewer: Viewer, provider: ImageryProvid
   viewer.scene.requestRender();
 }
 
-export function setViewerBasemap(viewer: Viewer, basemap: BasemapConfig): void {
-  const provider = createImageryProviderForBasemap(basemap);
-  setViewerImageryProvider(viewer, provider);
+export async function setViewerBasemap(viewer: Viewer, basemap: BasemapConfig): Promise<boolean> {
+  try {
+    const provider = await createImageryProviderForBasemapAsync(basemap);
+    setViewerImageryProvider(viewer, provider);
+    return true;
+  } catch (error: unknown) {
+    console.warn('[Digital Earth] failed to set basemap', { basemapId: basemap.id, error });
+    return false;
+  }
 }
