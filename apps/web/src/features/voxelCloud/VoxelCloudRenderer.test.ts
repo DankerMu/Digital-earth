@@ -154,6 +154,40 @@ describe('VoxelCloudRenderer', () => {
     expect(viewer.scene.postProcessStages.remove).toHaveBeenCalledTimes(1);
   });
 
+  it('loads a volume pack from an ArrayBuffer without fetching', async () => {
+    const getContext = vi.fn(() => ({ putImageData: vi.fn() }));
+    (HTMLCanvasElement.prototype.getContext as unknown as ReturnType<typeof vi.fn>).mockImplementation(
+      getContext as unknown as HTMLCanvasElement['getContext'],
+    );
+
+    const shape: [number, number, number] = [2, 2, 2];
+    const header = {
+      version: 1,
+      bbox: { west: 0, south: 0, east: 1, north: 1, bottom: 0, top: 10 },
+      shape,
+      dtype: 'uint8',
+      scale: 1 / 255,
+      offset: 0,
+      compression: 'zstd',
+    };
+
+    const bodyRaw = Uint8Array.from([0, 10, 20, 30, 40, 50, 60, 70]);
+    const pack = await buildPack(header, bodyRaw);
+
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+
+    const viewer = makeViewer();
+    const renderer = new VoxelCloudRenderer(viewer as never, { enabled: true });
+
+    const buffer = pack.buffer.slice(pack.byteOffset, pack.byteOffset + pack.byteLength) as ArrayBuffer;
+    await renderer.loadFromArrayBuffer(buffer);
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(renderer.getSnapshot().ready).toBe(true);
+    expect(renderer.getSnapshot().metrics?.bytes).toBe(pack.byteLength);
+  });
+
   it('supports AbortSignal cancellation without setting lastError', async () => {
     const fetchMock = vi.fn(async () => ({
       ok: true,
