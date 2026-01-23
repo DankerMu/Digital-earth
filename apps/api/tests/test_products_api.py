@@ -431,11 +431,15 @@ def test_product_detail_endpoint_etag_returns_304_on_match(
     etag = response.headers.get("etag")
     assert etag
 
-    cached = client.get(f"/api/v1/products/{product_id}", headers={"if-none-match": etag})
+    cached = client.get(
+        f"/api/v1/products/{product_id}", headers={"if-none-match": etag}
+    )
     assert cached.status_code == 304
 
 
-def test_products_snapshot_helpers_support_non_utc_isoformat_and_memoryview_geometry() -> None:
+def test_products_snapshot_helpers_support_non_utc_isoformat_and_memoryview_geometry() -> (
+    None
+):
     from routers import products as products_router
 
     dt = datetime(2026, 1, 1, tzinfo=timezone(timedelta(hours=9)))
@@ -448,7 +452,9 @@ def test_products_snapshot_helpers_support_non_utc_isoformat_and_memoryview_geom
 
 
 @pytest.mark.anyio
-async def test_products_cache_epoch_helpers_return_defaults_when_redis_unavailable() -> None:
+async def test_products_cache_epoch_helpers_return_defaults_when_redis_unavailable() -> (
+    None
+):
     from routers import products as products_router
 
     class _BoomRedis:
@@ -459,7 +465,9 @@ async def test_products_cache_epoch_helpers_return_defaults_when_redis_unavailab
             raise RuntimeError("boom")
 
     assert await products_router._get_products_list_cache_epoch(_BoomRedis()) == "0"
-    assert await products_router._get_product_detail_cache_epoch(_BoomRedis(), 123) == "0"
+    assert (
+        await products_router._get_product_detail_cache_epoch(_BoomRedis(), 123) == "0"
+    )
     await products_router._bump_products_list_cache_epoch(None)
     await products_router._bump_product_detail_cache_epoch(None, 123)
 
@@ -480,7 +488,9 @@ def test_product_detail_cache_is_invalidated_on_update(
     assert cached.json()["text"] == "seeded 降雪"
     assert cached.json()["status"] == "published"
 
-    updated = client.put(f"/api/v1/products/{product_id}", json={"text": "updated text"})
+    updated = client.put(
+        f"/api/v1/products/{product_id}", json={"text": "updated text"}
+    )
     assert updated.status_code == 200
     assert updated.json()["text"] == "updated text"
     assert updated.json()["status"] == "draft"
