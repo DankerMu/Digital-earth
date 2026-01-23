@@ -187,3 +187,154 @@ def test_volume_returns_volume_pack_for_cloud_density_slices(
     assert array.shape == (2, 3, 3)
     assert np.allclose(array[0], values_300)
     assert np.allclose(array[1], values_500)
+
+
+def test_volume_returns_503_when_data_dir_not_configured(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    client = _make_client(monkeypatch, tmp_path, volume_data_dir=None)
+    response = client.get(
+        "/api/v1/volume",
+        params={"bbox": "0,0,0.1,0.1,0,1", "levels": "300", "res": "1000"},
+    )
+    assert response.status_code == 503
+
+
+def test_volume_returns_404_when_data_dir_not_found(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    client = _make_client(
+        monkeypatch, tmp_path, volume_data_dir=tmp_path / "nonexistent"
+    )
+    response = client.get(
+        "/api/v1/volume",
+        params={"bbox": "0,0,0.1,0.1,0,1", "levels": "300", "res": "1000"},
+    )
+    assert response.status_code == 404
+
+
+def test_volume_returns_404_when_layer_not_found(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    base_dir = tmp_path / "volume-data"
+    base_dir.mkdir(parents=True)
+    client = _make_client(monkeypatch, tmp_path, volume_data_dir=base_dir)
+    response = client.get(
+        "/api/v1/volume",
+        params={"bbox": "0,0,0.1,0.1,0,1", "levels": "300", "res": "1000"},
+    )
+    assert response.status_code == 404
+
+
+def test_volume_returns_404_when_level_not_found(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    base_dir = tmp_path / "volume-data"
+    time_key = "20260101T000000Z"
+    time_dir = base_dir / DEFAULT_CLOUD_DENSITY_LAYER / time_key
+    time_dir.mkdir(parents=True)
+    client = _make_client(monkeypatch, tmp_path, volume_data_dir=base_dir)
+    response = client.get(
+        "/api/v1/volume",
+        params={
+            "bbox": "0,0,0.1,0.1,0,1",
+            "levels": "999",
+            "res": "1000",
+            "valid_time": "2026-01-01T00:00:00Z",
+        },
+    )
+    assert response.status_code == 404
+
+
+def test_volume_returns_400_for_invalid_bbox_format(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    client = _make_client(monkeypatch, tmp_path)
+    response = client.get(
+        "/api/v1/volume",
+        params={"bbox": "invalid", "levels": "300", "res": "1000"},
+    )
+    assert response.status_code == 400
+
+
+def test_volume_returns_400_for_invalid_levels_format(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    client = _make_client(monkeypatch, tmp_path)
+    response = client.get(
+        "/api/v1/volume",
+        params={"bbox": "0,0,0.1,0.1,0,1", "levels": "abc", "res": "1000"},
+    )
+    assert response.status_code == 400
+
+
+def test_volume_returns_400_for_invalid_valid_time_format(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    base_dir = tmp_path / "volume-data"
+    base_dir.mkdir(parents=True)
+    client = _make_client(monkeypatch, tmp_path, volume_data_dir=base_dir)
+    response = client.get(
+        "/api/v1/volume",
+        params={
+            "bbox": "0,0,0.1,0.1,0,1",
+            "levels": "300",
+            "res": "1000",
+            "valid_time": "not-a-date",
+        },
+    )
+    assert response.status_code == 400
+
+
+def test_volume_uses_latest_time_when_valid_time_not_provided(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    base_dir = tmp_path / "volume-data"
+    time_key = "20260115T120000Z"
+    valid_time = "2026-01-15T12:00:00"
+
+    time_dir = base_dir / DEFAULT_CLOUD_DENSITY_LAYER / time_key
+    lat = [0.0, 0.1, 0.2]
+    lon = [0.0, 0.1, 0.2]
+    values = np.ones((3, 3), dtype=np.float32)
+
+    _write_cloud_density_slice(
+        time_dir / "300.nc",
+        valid_time=valid_time,
+        level=300,
+        lat=lat,
+        lon=lon,
+        values=values,
+    )
+
+    client = _make_client(monkeypatch, tmp_path, volume_data_dir=base_dir)
+    response = client.get(
+        "/api/v1/volume",
+        params={"bbox": "0,0,0.2,0.2,0,12000", "levels": "300", "res": "11132"},
+    )
+    assert response.status_code == 200
+
+    header, _ = decode_volume_pack(response.content)
+    assert header["valid_time"] == "2026-01-15T12:00:00Z"
+
+
+def test_volume_returns_400_for_bbox_east_less_than_west(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    client = _make_client(monkeypatch, tmp_path)
+    response = client.get(
+        "/api/v1/volume",
+        params={"bbox": "10,0,5,0.1,0,1", "levels": "300", "res": "1000"},
+    )
+    assert response.status_code == 400
+
+
+def test_volume_returns_400_for_non_finite_res(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    client = _make_client(monkeypatch, tmp_path)
+    response = client.get(
+        "/api/v1/volume",
+        params={"bbox": "0,0,0.1,0.1,0,1", "levels": "300", "res": "inf"},
+    )
+    assert response.status_code == 400
