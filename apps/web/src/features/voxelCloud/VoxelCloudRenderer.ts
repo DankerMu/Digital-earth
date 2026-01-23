@@ -189,7 +189,80 @@ export class VoxelCloudRenderer {
     this.viewer.scene.requestRender();
   }
 
+  async loadFromArrayBuffer(buffer: ArrayBuffer, options: { signal?: AbortSignal } = {}): Promise<void> {
+    await this.loadFromProvider(
+      async () => ({
+        url: '(buffer)',
+        bytes: buffer,
+        fetchMs: 0,
+      }),
+      options,
+    );
+  }
+
   async loadFromUrl(url: string, options: { signal?: AbortSignal } = {}): Promise<void> {
+    await this.loadFromProvider(
+      async (signal) => {
+        const fetchStartedAt = nowMs();
+        const response = await fetch(url, { signal });
+        if (!response.ok) {
+          throw new Error(`Failed to fetch volume pack (${response.status})`);
+        }
+        const bytes = await response.arrayBuffer();
+        return { url, bytes, fetchMs: nowMs() - fetchStartedAt };
+      },
+      options,
+    );
+  }
+
+  destroy(): void {
+    const stages = (this.viewer.scene as unknown as { postProcessStages?: PostProcessStagesLike })
+      .postProcessStages;
+    if (stages?.remove && this.stage) {
+      stages.remove(this.stage);
+    }
+    this.stage?.destroy();
+    this.stage = null;
+    this.atlasCanvas = null;
+    this.atlasInfo = null;
+    this.bbox = null;
+    this.centerWorld = null;
+    this.eastWorld = null;
+    this.northWorld = null;
+    this.upWorld = null;
+    this.dimensionsMeters = null;
+    this.viewer.scene.requestRender();
+  }
+
+  private computeVolumeDimensionsMeters(bbox: VolumePackBBox): { width: number; height: number; depth: number } {
+    const center = bboxCenterDegrees(bbox);
+
+    const midHeight = center.height;
+    const midLat = center.lat;
+    const midLon = center.lon;
+
+    const westPoint = Cartesian3.fromDegrees(bbox.west, midLat, midHeight);
+    const eastPoint = Cartesian3.fromDegrees(bbox.east, midLat, midHeight);
+    const southPoint = Cartesian3.fromDegrees(midLon, bbox.south, midHeight);
+    const northPoint = Cartesian3.fromDegrees(midLon, bbox.north, midHeight);
+    const bottomPoint = Cartesian3.fromDegrees(midLon, midLat, bbox.bottom);
+    const topPoint = Cartesian3.fromDegrees(midLon, midLat, bbox.top);
+
+    const width = Cartesian3.distance(westPoint, eastPoint);
+    const height = Cartesian3.distance(southPoint, northPoint);
+    const depth = Cartesian3.distance(bottomPoint, topPoint);
+
+    const normalizedWidth = safePositive(width) ?? 1;
+    const normalizedHeight = safePositive(height) ?? 1;
+    const normalizedDepth = safePositive(depth) ?? 1;
+
+    return { width: normalizedWidth, height: normalizedHeight, depth: normalizedDepth };
+  }
+
+  private async loadFromProvider(
+    provider: (signal: AbortSignal | undefined) => Promise<{ url: string; bytes: ArrayBuffer; fetchMs: number }>,
+    options: { signal?: AbortSignal } = {},
+  ): Promise<void> {
     const startedAt = nowMs();
     this.lastError = null;
     const signal = options.signal;
@@ -197,13 +270,7 @@ export class VoxelCloudRenderer {
     try {
       throwIfAborted(signal);
 
-      const fetchStartedAt = nowMs();
-      const response = await fetch(url, { signal });
-      if (!response.ok) {
-        throw new Error(`Failed to fetch volume pack (${response.status})`);
-      }
-      const bytes = await response.arrayBuffer();
-      const fetchMs = nowMs() - fetchStartedAt;
+      const { url, bytes, fetchMs } = await provider(signal);
 
       throwIfAborted(signal);
 
@@ -284,50 +351,6 @@ export class VoxelCloudRenderer {
       this.lastError = error instanceof Error ? error.message : String(error);
       throw error;
     }
-  }
-
-  destroy(): void {
-    const stages = (this.viewer.scene as unknown as { postProcessStages?: PostProcessStagesLike })
-      .postProcessStages;
-    if (stages?.remove && this.stage) {
-      stages.remove(this.stage);
-    }
-    this.stage?.destroy();
-    this.stage = null;
-    this.atlasCanvas = null;
-    this.atlasInfo = null;
-    this.bbox = null;
-    this.centerWorld = null;
-    this.eastWorld = null;
-    this.northWorld = null;
-    this.upWorld = null;
-    this.dimensionsMeters = null;
-    this.viewer.scene.requestRender();
-  }
-
-  private computeVolumeDimensionsMeters(bbox: VolumePackBBox): { width: number; height: number; depth: number } {
-    const center = bboxCenterDegrees(bbox);
-
-    const midHeight = center.height;
-    const midLat = center.lat;
-    const midLon = center.lon;
-
-    const westPoint = Cartesian3.fromDegrees(bbox.west, midLat, midHeight);
-    const eastPoint = Cartesian3.fromDegrees(bbox.east, midLat, midHeight);
-    const southPoint = Cartesian3.fromDegrees(midLon, bbox.south, midHeight);
-    const northPoint = Cartesian3.fromDegrees(midLon, bbox.north, midHeight);
-    const bottomPoint = Cartesian3.fromDegrees(midLon, midLat, bbox.bottom);
-    const topPoint = Cartesian3.fromDegrees(midLon, midLat, bbox.top);
-
-    const width = Cartesian3.distance(westPoint, eastPoint);
-    const height = Cartesian3.distance(southPoint, northPoint);
-    const depth = Cartesian3.distance(bottomPoint, topPoint);
-
-    const normalizedWidth = safePositive(width) ?? 1;
-    const normalizedHeight = safePositive(height) ?? 1;
-    const normalizedDepth = safePositive(depth) ?? 1;
-
-    return { width: normalizedWidth, height: normalizedHeight, depth: normalizedDepth };
   }
 
   private ensureStage(): void {
