@@ -76,7 +76,9 @@ def _pack_cached_http_response(*, body: bytes, etag: str, cache_control: str) ->
     )
 
 
-def _unpack_cached_http_response(payload: bytes) -> tuple[bytes, str | None, str | None]:
+def _unpack_cached_http_response(
+    payload: bytes,
+) -> tuple[bytes, str | None, str | None]:
     if not payload.startswith(b'"sha256-'):
         return payload, None, None
 
