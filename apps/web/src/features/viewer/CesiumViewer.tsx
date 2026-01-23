@@ -30,7 +30,7 @@ import {
 } from 'cesium';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { loadConfig, type MapConfig } from '../../config';
-import { getBasemapById, type BasemapId } from '../../config/basemaps';
+import { DEFAULT_BASEMAP_ID, getBasemapById, type BasemapId } from '../../config/basemaps';
 import { useBasemapStore } from '../../state/basemap';
 import { useCameraPerspectiveStore, type CameraPerspectiveId } from '../../state/cameraPerspective';
 import {
@@ -73,7 +73,7 @@ import { CompassControl } from './CompassControl';
 import { EventLayersToggle, type EventLayerModeStatus } from './EventLayersToggle';
 import { SceneModeToggle } from './SceneModeToggle';
 import { createFpsMonitor, createLowFpsDetector } from './fpsMonitor';
-import { createImageryProviderForBasemap, setViewerBasemap, setViewerImageryProvider } from './cesiumBasemap';
+import { createImageryProviderForBasemap, createImageryProviderForBasemapAsync, setViewerImageryProvider } from './cesiumBasemap';
 import { switchViewerSceneMode } from './cesiumSceneMode';
 import 'cesium/Build/Cesium/Widgets/widgets.css';
 import { getProductDetail } from '../products/productsApi';
@@ -1059,20 +1059,33 @@ export function CesiumViewer() {
     );
 
     const initialBasemapId = useBasemapStore.getState().basemapId;
-    const initialBasemap = getBasemapById(initialBasemapId);
-    if (!initialBasemap) {
+    const selectedBasemap = getBasemapById(initialBasemapId);
+    if (!selectedBasemap) {
       throw new Error(`Unknown basemap id: ${initialBasemapId}`);
     }
-    appliedBasemapIdRef.current = initialBasemapId;
 
     const e2eMode = isE2eEnabled();
+    const fallbackBasemap = getBasemapById(DEFAULT_BASEMAP_ID);
+    if (!fallbackBasemap || fallbackBasemap.kind === 'ion') {
+      throw new Error(`Invalid default basemap config: ${DEFAULT_BASEMAP_ID}`);
+    }
+
+    const needsFallbackBasemap = selectedBasemap.kind === 'ion';
+    const initialBaseLayerBasemap = needsFallbackBasemap ? fallbackBasemap : selectedBasemap;
+
+    appliedBasemapIdRef.current = e2eMode
+      ? initialBasemapId
+      : needsFallbackBasemap
+        ? DEFAULT_BASEMAP_ID
+        : initialBasemapId;
+
     const imageryProvider = e2eMode
       ? new UrlTemplateImageryProvider({
           url: `${window.location.origin}/api/v1/tiles/e2e/{z}/{x}/{y}.png`,
           tilingScheme: new WebMercatorTilingScheme(),
           maximumLevel: 0,
         })
-      : createImageryProviderForBasemap(initialBasemap);
+      : createImageryProviderForBasemap(initialBaseLayerBasemap);
 
     const newViewer = new Viewer(containerRef.current!, {
       baseLayer: new ImageryLayer(
@@ -1115,21 +1128,36 @@ export function CesiumViewer() {
   }, []);
 
   useEffect(() => {
+    const token = mapConfig?.cesiumIonAccessToken;
+    if (!token) return;
+    Ion.defaultAccessToken = token;
+  }, [mapConfig?.cesiumIonAccessToken]);
+
+  useEffect(() => {
     if (!viewer) return;
     if (basemapProvider !== 'open') return;
     if (appliedBasemapIdRef.current === basemapId) return;
     const basemap = getBasemapById(basemapId);
     if (!basemap) return;
+    if (basemap.kind === 'ion' && !mapConfig?.cesiumIonAccessToken) return;
 
-    setViewerBasemap(viewer, basemap);
-    appliedBasemapIdRef.current = basemapId;
-  }, [basemapId, basemapProvider, viewer]);
+    const controller = new AbortController();
 
-  useEffect(() => {
-    const token = mapConfig?.cesiumIonAccessToken;
-    if (!token) return;
-    Ion.defaultAccessToken = token;
-  }, [mapConfig?.cesiumIonAccessToken]);
+    void (async () => {
+      const provider = await createImageryProviderForBasemapAsync(basemap);
+      if (controller.signal.aborted) return;
+      if (useBasemapStore.getState().basemapId !== basemapId) return;
+      setViewerImageryProvider(viewer, provider);
+      appliedBasemapIdRef.current = basemapId;
+    })().catch((error: unknown) => {
+      if (controller.signal.aborted) return;
+      console.warn('[Digital Earth] failed to apply basemap', { basemapId, error });
+    });
+
+    return () => {
+      controller.abort();
+    };
+  }, [basemapId, basemapProvider, mapConfig?.cesiumIonAccessToken, viewer]);
 
   useEffect(() => {
     if (!viewer) return;

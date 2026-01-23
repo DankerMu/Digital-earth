@@ -18,9 +18,16 @@ test('selects basemap and persists to localStorage', async () => {
   const select = screen.getByRole('combobox', { name: '底图' });
   expect(select).toHaveValue(DEFAULT_BASEMAP_ID);
 
+  expect(screen.getByRole('option', { name: 'Bing Maps (Cesium ion)' })).toBeInTheDocument();
+
   await user.selectOptions(select, 'nasa-gibs-blue-marble');
   expect(select).toHaveValue('nasa-gibs-blue-marble');
 
   expect(localStorage.getItem('digital-earth.basemap')).toMatch(/nasa-gibs-blue-marble/);
   expect(screen.getByLabelText('Basemap description')).toHaveTextContent('Blue Marble');
+
+  await user.selectOptions(select, 'ion-world-imagery');
+  expect(select).toHaveValue('ion-world-imagery');
+  expect(localStorage.getItem('digital-earth.basemap')).toMatch(/ion-world-imagery/);
+  expect(screen.getByLabelText('Basemap description')).toHaveTextContent('Cesium Ion');
 });

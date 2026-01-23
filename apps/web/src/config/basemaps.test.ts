@@ -16,6 +16,6 @@ describe('basemaps config', () => {
   it('includes at least one WMTS and one URL template option', () => {
     expect(BASEMAPS.some((basemap) => basemap.kind === 'wmts')).toBe(true);
     expect(BASEMAPS.some((basemap) => basemap.kind === 'url-template')).toBe(true);
+    expect(BASEMAPS.some((basemap) => basemap.kind === 'ion')).toBe(true);
   });
 });
-
