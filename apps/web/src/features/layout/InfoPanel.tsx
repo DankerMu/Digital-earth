@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 
+import { CollapsiblePanel } from '../../components/ui/CollapsiblePanel';
 import { useLayerManagerStore } from '../../state/layerManager';
 import { useViewerStatsStore } from '../../state/viewerStats';
 import { useViewModeStore } from '../../state/viewMode';
@@ -41,24 +42,21 @@ export function InfoPanel({ collapsed, onToggleCollapsed }: InfoPanelProps) {
   }, [layers, route]);
 
   return (
-    <aside
-      aria-label="Info panel"
-      className="h-full rounded-xl border border-slate-400/20 bg-slate-800/80 shadow-lg backdrop-blur-xl"
-    >
-      <header className="flex items-center justify-between gap-2 border-b border-slate-400/10 px-3 py-2">
-        <div className={collapsed ? 'sr-only' : 'min-w-0'}>
-          <div className="truncate text-sm font-semibold text-white">信息面板</div>
-          <div
-            className="text-xs text-slate-400"
-            data-testid="view-mode-indicator"
-            data-view-mode={route.viewModeId}
-          >
+    <aside aria-label="Info panel" className="h-full">
+      <CollapsiblePanel
+        title="信息面板"
+        description={
+          <span data-testid="view-mode-indicator" data-view-mode={route.viewModeId}>
             {routeSummary(route)}
-          </div>
-        </div>
-
-        <div className="flex items-center gap-2">
-          {collapsed ? null : (
+          </span>
+        }
+        collapsed={collapsed}
+        onToggleCollapsed={onToggleCollapsed}
+        collapsedLabel="展开信息面板"
+        expandedLabel="折叠信息面板"
+        toggleIcons={{ collapsed: '◀', expanded: '▶' }}
+        actions={
+          collapsed ? null : (
             <button
               type="button"
               className="rounded-lg border border-slate-400/20 bg-slate-700/30 px-2 py-1 text-xs text-slate-200 hover:bg-slate-700/50 disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-400"
@@ -68,20 +66,11 @@ export function InfoPanel({ collapsed, onToggleCollapsed }: InfoPanelProps) {
             >
               返回
             </button>
-          )}
-
-          <button
-            type="button"
-            className="rounded-lg border border-slate-400/20 bg-slate-700/30 px-2 py-1 text-xs text-slate-200 hover:bg-slate-700/50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-400"
-            aria-label={collapsed ? '展开信息面板' : '折叠信息面板'}
-            onClick={onToggleCollapsed}
-          >
-            {collapsed ? '◀' : '▶'}
-          </button>
-        </div>
-      </header>
-
-      {collapsed ? null : (
+          )
+        }
+        className="h-full"
+        contentClassName="p-0 overflow-hidden"
+      >
         <div className="flex h-full flex-col">
           <div className="flex border-b border-slate-400/10">
             <button
@@ -186,7 +175,7 @@ export function InfoPanel({ collapsed, onToggleCollapsed }: InfoPanelProps) {
             )}
           </div>
         </div>
-      )}
+      </CollapsiblePanel>
     </aside>
   );
 }

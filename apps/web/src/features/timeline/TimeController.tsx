@@ -39,6 +39,10 @@ function toTimeKey(date: Date): string {
   return date.toISOString().replace(/\.\d{3}Z$/, 'Z');
 }
 
+function cx(...parts: Array<string | false | null | undefined>) {
+  return parts.filter(Boolean).join(' ');
+}
+
 export function TimeController({
   frames,
   initialIndex = 0,
@@ -46,7 +50,7 @@ export function TimeController({
   dragDebounceMs = DEFAULT_DRAG_DEBOUNCE_MS,
   onTimeChange,
   onRefreshLayers,
-  loadFrame
+  loadFrame,
 }: TimeControllerProps) {
   const framesSignature = useMemo(() => {
     let hash = 0;
@@ -253,6 +257,7 @@ export function TimeController({
   const currentTime = frames[currentIndex];
   const canStepBackward = currentIndex > 0 && frames.length > 0;
   const canStepForward = currentIndex < frames.length - 1 && frames.length > 0;
+  const canPlay = frames.length > 1;
 
   const togglePlay = useCallback(() => {
     if (frames.length <= 1) return;
@@ -268,48 +273,32 @@ export function TimeController({
   }, [frames.length, goToIndex, isPlaying]);
 
   return (
-    <div
-      style={{
-        width: '100%',
-        background: 'rgba(15,23,42,0.8)',
-        border: '1px solid rgba(148,163,184,0.2)',
-        borderRadius: 12,
-        padding: 12,
-        backdropFilter: 'blur(10px)',
-        display: 'flex',
-        alignItems: 'center',
-        gap: 12
-      }}
-    >
-      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+    <div className="flex w-full items-center gap-4">
+      <div className="flex items-center gap-1">
         <button
           type="button"
           aria-label="上一帧"
           disabled={!canStepBackward}
           onClick={() => void goToIndex(currentIndexRef.current - 1)}
-          style={{
-            padding: '8px 10px',
-            borderRadius: 10,
-            border: '1px solid rgba(148,163,184,0.25)',
-            background: canStepBackward ? 'transparent' : 'rgba(148,163,184,0.1)',
-            color: '#cbd5e1',
-            cursor: canStepBackward ? 'pointer' : 'not-allowed'
-          }}
+          className={cx(
+            'rounded-lg border border-slate-400/20 p-2 text-slate-200 transition-colors',
+            'hover:bg-slate-700/50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-400',
+            !canStepBackward && 'cursor-not-allowed opacity-50',
+          )}
         >
           ◀
         </button>
         <button
           type="button"
           aria-label={isPlaying ? '暂停' : '播放'}
+          disabled={!canPlay}
           onClick={togglePlay}
-          style={{
-            padding: '8px 12px',
-            borderRadius: 10,
-            border: '1px solid rgba(59,130,246,0.6)',
-            background: isPlaying ? 'rgba(59,130,246,0.15)' : '#3b82f6',
-            color: '#fff',
-            cursor: frames.length > 1 ? 'pointer' : 'not-allowed'
-          }}
+          className={cx(
+            'rounded-lg border border-blue-500/40 p-2 text-white transition-colors',
+            'focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-400',
+            isPlaying ? 'bg-blue-500/15 hover:bg-blue-500/25' : 'bg-blue-500 hover:bg-blue-600',
+            !canPlay && 'cursor-not-allowed opacity-50',
+          )}
         >
           {isPlaying ? '⏸' : '▶'}
         </button>
@@ -318,27 +307,24 @@ export function TimeController({
           aria-label="下一帧"
           disabled={!canStepForward}
           onClick={() => void goToIndex(currentIndexRef.current + 1)}
-          style={{
-            padding: '8px 10px',
-            borderRadius: 10,
-            border: '1px solid rgba(148,163,184,0.25)',
-            background: canStepForward ? 'transparent' : 'rgba(148,163,184,0.1)',
-            color: '#cbd5e1',
-            cursor: canStepForward ? 'pointer' : 'not-allowed'
-          }}
+          className={cx(
+            'rounded-lg border border-slate-400/20 p-2 text-slate-200 transition-colors',
+            'hover:bg-slate-700/50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-400',
+            !canStepForward && 'cursor-not-allowed opacity-50',
+          )}
         >
           ▶
         </button>
       </div>
 
-      <div style={{ minWidth: 190, textAlign: 'center' }}>
-        <div style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}>
+      <div className="min-w-[190px] text-center">
+        <div className="font-mono text-sm text-slate-100">
           {currentTime ? formatUtc(currentTime) : '--'}
         </div>
-        <div style={{ fontSize: 12, color: '#94a3b8' }}>UTC</div>
+        <div className="text-xs text-slate-400">UTC</div>
       </div>
 
-      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 6 }}>
+      <div className="min-w-0 flex-1 flex flex-col gap-1">
         <input
           aria-label="时间轴"
           type="range"
@@ -362,36 +348,30 @@ export function TimeController({
             isPointerDownRef.current = false;
             didPointerMoveRef.current = false;
           }}
-          onChange={(e) => {
-            const next = Number(e.target.value);
+          onChange={(event) => {
+            const next = Number(event.target.value);
             const debounced = isPointerDownRef.current && didPointerMoveRef.current;
             void goToIndex(next, { debounced });
           }}
-          disabled={frames.length <= 1}
-          style={{ width: '100%' }}
+          disabled={!canPlay}
+          className="w-full accent-blue-500"
         />
-        <div style={{ fontSize: 12, color: '#94a3b8' }}>
+        <div className="text-xs text-slate-400">
           {frames.length > 0 ? `${currentIndex + 1}/${frames.length}` : '无可用时间帧'}
         </div>
       </div>
 
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-        <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-          <span style={{ fontSize: 12, color: '#94a3b8' }}>速度</span>
+      <div className="flex items-center gap-3">
+        <label className="flex items-center gap-2">
+          <span className="text-xs text-slate-400">速度</span>
           <select
             aria-label="播放速度"
             value={speed}
-            onChange={(e) => {
-              const next = Number(e.target.value) as PlaybackSpeed;
+            onChange={(event) => {
+              const next = Number(event.target.value) as PlaybackSpeed;
               setSpeed(next);
             }}
-            style={{
-              padding: '6px 8px',
-              borderRadius: 10,
-              border: '1px solid rgba(148,163,184,0.25)',
-              background: 'rgba(30,41,59,0.8)',
-              color: '#e2e8f0'
-            }}
+            className="rounded-lg border border-slate-400/20 bg-slate-900/40 px-2 py-1 text-sm text-slate-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-400"
           >
             <option value={1}>1x</option>
             <option value={2}>2x</option>
@@ -400,10 +380,7 @@ export function TimeController({
         </label>
 
         {isLoading ? (
-          <span
-            aria-label="加载中"
-            style={{ fontSize: 12, color: '#fbbf24', whiteSpace: 'nowrap' }}
-          >
+          <span aria-label="加载中" className="whitespace-nowrap text-xs text-amber-300">
             加载中…
           </span>
         ) : null}

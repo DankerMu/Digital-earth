@@ -39,7 +39,7 @@ type PersistedLayoutPanelsState = {
 const DEFAULT_PERSISTED: PersistedLayoutPanelsState = {
   timelineCollapsed: false,
   layerTreeCollapsed: false,
-  infoPanelCollapsed: false,
+  infoPanelCollapsed: true,
   legendCollapsed: false,
 };
 
@@ -194,4 +194,3 @@ export const useLayoutPanelsStore: StoreHook = Object.assign(useLayoutPanelsStor
   getState,
   setState,
 });
-

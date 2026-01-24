@@ -12,13 +12,13 @@ export function BasemapSelector({ ionEnabled }: BasemapSelectorProps) {
   const descriptionId = basemap?.description ? 'basemap-select-description' : undefined;
 
   return (
-    <div className="basemapPanel">
-      <label htmlFor="basemap-select" className="basemapLabel">
+    <div className="grid gap-2">
+      <label htmlFor="basemap-select" className="text-xs font-semibold tracking-wide text-slate-200">
         底图
       </label>
       <select
         id="basemap-select"
-        className="basemapSelect"
+        className="w-full rounded-lg border border-slate-400/20 bg-slate-900/40 px-3 py-2 text-sm text-slate-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-400"
         aria-describedby={descriptionId}
         value={basemapId}
         onChange={(event) => {
@@ -37,7 +37,7 @@ export function BasemapSelector({ ionEnabled }: BasemapSelectorProps) {
         ))}
       </select>
       {basemap?.description ? (
-        <div id="basemap-select-description" className="basemapHelp">
+        <div id="basemap-select-description" className="text-xs leading-snug text-slate-400">
           {basemap.description}
         </div>
       ) : null}
