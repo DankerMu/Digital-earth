@@ -1,5 +1,5 @@
 # Stage 1: Build
-FROM node:20-alpine AS builder
+FROM node:20.11-alpine3.19 AS builder
 WORKDIR /app
 
 # 安装 pnpm
@@ -17,7 +17,7 @@ RUN pnpm install --offline --frozen-lockfile
 RUN pnpm --filter web build
 
 # Stage 2: Serve
-FROM nginx:1.25-alpine
+FROM nginx:1.25.4-alpine
 COPY --from=builder /app/apps/web/dist /usr/share/nginx/html
 EXPOSE 80
 CMD ["nginx", "-g", "daemon off;"]
