@@ -12,7 +12,17 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_valida
 
 DEFAULT_LEGENDS_DIR_ENV: Final[str] = "DIGITAL_EARTH_LEGENDS_DIR"
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
+
+def _get_repo_root() -> Path:
+    """Get repository root, handling both local dev and container environments."""
+    try:
+        return Path(__file__).resolve().parents[3]
+    except IndexError:
+        # In container, use a fallback path
+        return Path("/app")
+
+
+REPO_ROOT = _get_repo_root()
 DEFAULT_LEGENDS_DIR = REPO_ROOT / "packages" / "config" / "src" / "legends"
 
 SUPPORTED_LAYER_TYPES: Final[tuple[str, ...]] = (

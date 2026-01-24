@@ -1,5 +1,5 @@
 # Stage 1: Build
-FROM python:3.11-slim AS builder
+FROM python:3.11.9-slim AS builder
 WORKDIR /repo
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -15,15 +15,17 @@ COPY packages/shared/src ./packages/shared/src
 COPY apps/api/pyproject.toml ./apps/api/
 WORKDIR /repo/apps/api
 RUN poetry config virtualenvs.create false \
-    && poetry install --no-dev --no-root --no-interaction
+    && poetry install --only main --no-root --no-interaction
 
 # Stage 2: Runtime
-FROM python:3.11-slim
+FROM python:3.11.9-slim
 WORKDIR /app
 
 COPY --from=builder /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
 COPY --from=builder /usr/local/bin /usr/local/bin
 COPY apps/api/src ./src
+COPY apps/api/alembic.ini ./
+COPY apps/api/migrations ./migrations
 COPY services/data-pipeline/src ./pipeline_src
 COPY packages/config/src ./packages/config/src
 COPY packages/shared/src ./packages/shared/src
