@@ -69,10 +69,8 @@ import {
 import { LocalInfoPanel } from '../local/LocalInfoPanel';
 import { SamplingCard } from '../sampling/SamplingCard';
 import { useSamplingCard } from '../sampling/useSamplingCard';
-import { BasemapSelector } from './BasemapSelector';
 import { CompassControl } from './CompassControl';
 import { EventLayersToggle, type EventLayerModeStatus } from './EventLayersToggle';
-import { SceneModeToggle } from './SceneModeToggle';
 import { createFpsMonitor, createLowFpsDetector } from './fpsMonitor';
 import {
   createImageryProviderForBasemap,
@@ -3172,15 +3170,11 @@ export function CesiumViewer() {
       ) : null}
       <div className="viewerOverlay">
         {viewer ? <CompassControl viewer={viewer} /> : null}
-        <SceneModeToggle />
         {viewModeRoute.viewModeId === 'event' ? (
           <EventLayersToggle
             historyStatus={eventHistoricalLayerStatus}
             differenceStatus={eventBiasLayerStatus}
           />
-        ) : null}
-        {mapConfigLoaded && basemapProvider === 'open' ? (
-          <BasemapSelector ionEnabled={Boolean(mapConfig?.cesiumIonAccessToken)} />
         ) : null}
         {terrainNotice ? (
           <div className="terrainNoticePanel" role="alert" aria-label="terrain-notice">

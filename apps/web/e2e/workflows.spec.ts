@@ -66,6 +66,7 @@ test.describe('Core workflows', () => {
     });
 
     await test.step('Select event', async () => {
+      await page.getByRole('button', { name: '展开信息面板' }).click();
       const eventItem = page.getByTestId(`event-item-${E2E_PRODUCT_ID}`);
       await expect(eventItem).toBeVisible();
       await eventItem.click();

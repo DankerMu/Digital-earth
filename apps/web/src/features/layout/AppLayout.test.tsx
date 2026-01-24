@@ -12,11 +12,22 @@ function jsonResponse(payload: unknown) {
   });
 }
 
+function textResponse(payload: string) {
+  return new Response(payload, {
+    status: 200,
+    headers: { 'Content-Type': 'text/plain' },
+  });
+}
+
 function stubLegendApi(fetchMock: ReturnType<typeof vi.fn>) {
   fetchMock.mockImplementation(async (input: RequestInfo | URL) => {
     const url = typeof input === 'string' ? input : input.toString();
     if (url === '/config.json') {
       return jsonResponse({ apiBaseUrl: 'http://api.test' });
+    }
+
+    if (url === 'http://api.test/api/v1/attribution') {
+      return textResponse('© Cesium · © ECMWF / CLDAS');
     }
 
     if (url === 'http://api.test/api/v1/legends?layer_type=temperature') {
@@ -53,25 +64,19 @@ describe('AppLayout', () => {
     const { AppLayout } = await import('./AppLayout');
     render(<AppLayout />);
 
-    fireEvent.click(screen.getByRole('button', { name: '折叠时间轴' }));
-    expect(screen.getByRole('button', { name: '展开时间轴' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '折叠图层面板' }));
+    expect(screen.getByRole('button', { name: '展开图层面板' })).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('button', { name: '折叠图层树' }));
-    expect(screen.getByRole('button', { name: '展开图层树' })).toBeInTheDocument();
-
+    fireEvent.click(screen.getByRole('button', { name: '展开信息面板' }));
+    expect(screen.getByRole('button', { name: '折叠信息面板' })).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: '折叠信息面板' }));
     expect(screen.getByRole('button', { name: '展开信息面板' })).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole('button', { name: '折叠图例' }));
-    expect(screen.getByRole('button', { name: '展开图例' })).toBeInTheDocument();
 
     const persisted = JSON.parse(
       localStorage.getItem('digital-earth.layoutPanels') ?? 'null',
     ) as Record<string, unknown>;
-    expect(persisted.timelineCollapsed).toBe(true);
     expect(persisted.layerTreeCollapsed).toBe(true);
     expect(persisted.infoPanelCollapsed).toBe(true);
-    expect(persisted.legendCollapsed).toBe(true);
   });
 
   it('selects a layer via viewMode and updates legend + info panel', async () => {
@@ -86,6 +91,8 @@ describe('AppLayout', () => {
 
     const { AppLayout } = await import('./AppLayout');
     render(<AppLayout />);
+
+    fireEvent.click(screen.getByRole('button', { name: '展开信息面板' }));
 
     expect(await screen.findByText('温度')).toBeInTheDocument();
 
@@ -110,31 +117,5 @@ describe('AppLayout', () => {
 
     fireEvent.click(screen.getByRole('button', { name: '返回上一视图' }));
     expect(await screen.findByText('全局')).toBeInTheDocument();
-  });
-
-  it('adds a bottom offset for the disclaimer FAB when Cesium credits are present', async () => {
-    vi.resetModules();
-    localStorage.removeItem('digital-earth.layers');
-    localStorage.removeItem('digital-earth.viewMode');
-    localStorage.removeItem('digital-earth.layoutPanels');
-
-    const fetchMock = vi.fn();
-    stubLegendApi(fetchMock);
-    vi.stubGlobal('fetch', fetchMock);
-
-    const credits = document.createElement('div');
-    credits.className = 'cesium-widget-credits';
-    document.body.appendChild(credits);
-
-    const { AppLayout } = await import('./AppLayout');
-    const { container } = render(<AppLayout />);
-
-    const appRoot = container.firstElementChild as HTMLElement;
-    await waitFor(() => {
-      expect(appRoot.style.getPropertyValue('--disclaimer-fab-offset-bottom')).not.toBe('');
-    });
-    expect(appRoot.style.getPropertyValue('--disclaimer-fab-offset-bottom')).toBe('368px');
-
-    credits.remove();
   });
 });

@@ -640,16 +640,16 @@ describe('CesiumViewer', () => {
     );
   });
 
-  it('switches basemap when selector changes', async () => {
-    const user = userEvent.setup();
+  it('switches basemap when basemapId changes', async () => {
     render(<CesiumViewer />);
 
     await waitFor(() => expect(vi.mocked(Viewer)).toHaveBeenCalledTimes(1));
 
     const viewer = vi.mocked(Viewer).mock.results[0].value;
-    const select = screen.getByRole('combobox', { name: '底图' });
 
-    await user.selectOptions(select, 'nasa-gibs-blue-marble');
+    act(() => {
+      useBasemapStore.getState().setBasemapId('nasa-gibs-blue-marble');
+    });
 
     await waitFor(() => {
       expect(viewer.imageryLayers.addImageryProvider).toHaveBeenCalledTimes(1);
@@ -663,7 +663,7 @@ describe('CesiumViewer', () => {
     expect(viewer.scene.requestRender).toHaveBeenCalledTimes(1);
   });
 
-  it('hides basemap selector when basemapProvider is not open', async () => {
+  it('does not switch basemap when basemapProvider is not open', async () => {
     vi.stubGlobal(
       'fetch',
       vi.fn(async () =>
@@ -684,9 +684,18 @@ describe('CesiumViewer', () => {
 
     await waitFor(() => expect(vi.mocked(Viewer)).toHaveBeenCalledTimes(1));
 
+    const viewer = vi.mocked(Viewer).mock.results[0].value;
+
     await waitFor(() => {
-      expect(screen.queryByRole('combobox', { name: '底图' })).toBeNull();
+      expect(viewer.imageryLayers.addImageryProvider).toHaveBeenCalledTimes(1);
     });
+
+    act(() => {
+      useBasemapStore.getState().setBasemapId('nasa-gibs-blue-marble');
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(viewer.imageryLayers.addImageryProvider).toHaveBeenCalledTimes(1);
   });
 
   it('falls back to ellipsoid terrain and shows a notice when ion token is missing', async () => {
@@ -837,7 +846,6 @@ describe('CesiumViewer', () => {
   });
 
   it('switches scene mode and restores camera view after morph completes', async () => {
-    const user = userEvent.setup();
     render(<CesiumViewer />);
 
     await waitFor(() => expect(vi.mocked(Viewer)).toHaveBeenCalledTimes(1));
@@ -845,7 +853,9 @@ describe('CesiumViewer', () => {
     const cesium = await import('cesium');
     const viewer = vi.mocked(Viewer).mock.results[0].value;
 
-    await user.click(screen.getByRole('button', { name: '2D' }));
+    act(() => {
+      useSceneModeStore.getState().setSceneModeId('2d');
+    });
 
     await waitFor(() => expect(viewer.scene.morphTo2D).toHaveBeenCalledWith(0.8));
 

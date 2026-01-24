@@ -18,7 +18,7 @@ describe('layoutPanels store', () => {
 
     expect(useLayoutPanelsStore.getState().timelineCollapsed).toBe(false);
     expect(useLayoutPanelsStore.getState().layerTreeCollapsed).toBe(false);
-    expect(useLayoutPanelsStore.getState().infoPanelCollapsed).toBe(false);
+    expect(useLayoutPanelsStore.getState().infoPanelCollapsed).toBe(true);
     expect(useLayoutPanelsStore.getState().legendCollapsed).toBe(false);
   });
 
@@ -62,7 +62,7 @@ describe('layoutPanels store', () => {
     expect(persisted).toEqual({
       timelineCollapsed: false,
       layerTreeCollapsed: true,
-      infoPanelCollapsed: false,
+      infoPanelCollapsed: true,
       legendCollapsed: false,
     });
   });

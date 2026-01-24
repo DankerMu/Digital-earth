@@ -1,15 +1,16 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState, type CSSProperties } from 'react';
 
+import { loadConfig } from '../../config';
+import { TopNavBar } from '../../components/ui/TopNavBar';
 import { useLayoutPanelsStore } from '../../state/layoutPanels';
 import type { LayerConfig } from '../../state/layerManager';
 import { useLayerManagerStore } from '../../state/layerManager';
+import { AttributionBar } from '../attribution/AttributionBar';
+import { HelpDialog } from '../help/HelpDialog';
 import { CesiumViewer } from '../viewer/CesiumViewer';
-import { DisclaimerLauncher } from '../disclaimer/DisclaimerLauncher';
-import { HelpLauncher } from '../help/HelpLauncher';
 import { InfoPanel } from './InfoPanel';
-import { LayerTree } from './LayerTree';
-import { LegendPanel } from './LegendPanel';
-import { TimelinePanel } from './TimelinePanel';
+import { LayerPanel } from './LayerPanel';
+import { TimelineBar } from './TimelineBar';
 
 const DEFAULT_LAYERS: LayerConfig[] = [
   {
@@ -56,15 +57,15 @@ const DEFAULT_LAYERS: LayerConfig[] = [
 
 export function AppLayout() {
   const appRootRef = useRef<HTMLDivElement | null>(null);
-  const isTimelineCollapsed = useLayoutPanelsStore((state) => state.timelineCollapsed);
   const isLayerTreeCollapsed = useLayoutPanelsStore((state) => state.layerTreeCollapsed);
   const isInfoPanelCollapsed = useLayoutPanelsStore((state) => state.infoPanelCollapsed);
-  const isLegendCollapsed = useLayoutPanelsStore((state) => state.legendCollapsed);
 
-  const toggleTimelineCollapsed = useLayoutPanelsStore((state) => state.toggleTimelineCollapsed);
   const toggleLayerTreeCollapsed = useLayoutPanelsStore((state) => state.toggleLayerTreeCollapsed);
   const toggleInfoPanelCollapsed = useLayoutPanelsStore((state) => state.toggleInfoPanelCollapsed);
-  const toggleLegendCollapsed = useLayoutPanelsStore((state) => state.toggleLegendCollapsed);
+  const setInfoPanelCollapsed = useLayoutPanelsStore((state) => state.setInfoPanelCollapsed);
+
+  const [helpOpen, setHelpOpen] = useState(false);
+  const [apiBaseUrl, setApiBaseUrl] = useState<string | null>(null);
 
   useEffect(() => {
     const state = useLayerManagerStore.getState();
@@ -78,90 +79,63 @@ export function AppLayout() {
   }, []);
 
   useEffect(() => {
-    const root = appRootRef.current;
-    if (!root) return;
-
-    const cssVar = '--disclaimer-fab-offset-bottom';
-    const extraOffsetPx = 8;
-
-    let resizeObserver: ResizeObserver | null = null;
-    let mutationObserver: MutationObserver | null = null;
-
-    const observeCredits = (creditsElement: HTMLElement) => {
-      resizeObserver = new ResizeObserver((entries) => {
-        const entry = entries[0];
-        const measuredHeight =
-          entry?.contentRect?.height ?? creditsElement.getBoundingClientRect().height;
-        const offset = Math.max(0, Math.ceil(measuredHeight + extraOffsetPx));
-        root.style.setProperty(cssVar, `${offset}px`);
+    let cancelled = false;
+    void loadConfig()
+      .then((config) => {
+        if (cancelled) return;
+        setApiBaseUrl(config.apiBaseUrl);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setApiBaseUrl(null);
       });
-      resizeObserver.observe(creditsElement);
-    };
-
-    const findCreditsElement = () =>
-      document.querySelector<HTMLElement>('.cesium-widget-credits');
-
-    const connect = () => {
-      const creditsElement = findCreditsElement();
-      if (!creditsElement) return false;
-      observeCredits(creditsElement);
-      return true;
-    };
-
-    if (!connect()) {
-      mutationObserver = new MutationObserver(() => {
-        if (resizeObserver) return;
-        if (connect()) {
-          mutationObserver?.disconnect();
-          mutationObserver = null;
-        }
-      });
-      mutationObserver.observe(document.body, { childList: true, subtree: true });
-    }
-
     return () => {
-      resizeObserver?.disconnect();
-      mutationObserver?.disconnect();
-      root.style.removeProperty(cssVar);
+      cancelled = true;
     };
   }, []);
 
+  const layerPanelWidthPx = isLayerTreeCollapsed ? 48 : 320;
+
   return (
-    <div ref={appRootRef} className="h-screen w-screen bg-slate-950 text-slate-100">
-      <div className="grid h-full grid-rows-[auto_1fr_auto] gap-3 p-3">
-        <TimelinePanel
-          collapsed={isTimelineCollapsed}
-          onToggleCollapsed={toggleTimelineCollapsed}
-        />
-
-        <div className="flex min-h-0 gap-3">
-          <div className={isLayerTreeCollapsed ? 'w-12' : 'w-[320px]'}>
-            <LayerTree
-              collapsed={isLayerTreeCollapsed}
-              onToggleCollapsed={toggleLayerTreeCollapsed}
-            />
-          </div>
-
-          <div className="flex-1 min-h-0 min-w-0 rounded-xl border border-slate-400/20 bg-slate-900/20">
-            <CesiumViewer />
-          </div>
-
-          <div className={isInfoPanelCollapsed ? 'w-12' : 'w-[360px]'}>
-            <InfoPanel
-              collapsed={isInfoPanelCollapsed}
-              onToggleCollapsed={toggleInfoPanelCollapsed}
-            />
-          </div>
-        </div>
-
-        <LegendPanel
-          collapsed={isLegendCollapsed}
-          onToggleCollapsed={toggleLegendCollapsed}
-        />
+    <div
+      ref={appRootRef}
+      className="relative h-screen w-screen bg-slate-950 text-slate-100"
+      style={{ '--layer-panel-width': `${layerPanelWidthPx}px` } as CSSProperties}
+    >
+      <div className="absolute inset-0 z-0">
+        <CesiumViewer />
       </div>
 
-      <HelpLauncher />
-      <DisclaimerLauncher />
+      <TopNavBar
+        onOpenHelp={() => setHelpOpen(true)}
+        onOpenSettings={() => setInfoPanelCollapsed(false)}
+      />
+
+      <div
+        className={[
+          'fixed left-4 top-24 bottom-24 z-40',
+          isLayerTreeCollapsed ? 'w-12' : 'w-80',
+        ].join(' ')}
+      >
+        <LayerPanel collapsed={isLayerTreeCollapsed} onToggleCollapsed={toggleLayerTreeCollapsed} />
+      </div>
+
+      <div
+        className={[
+          'fixed right-4 top-24 bottom-24 z-40',
+          isInfoPanelCollapsed ? 'w-12' : 'w-[360px]',
+        ].join(' ')}
+      >
+        <InfoPanel collapsed={isInfoPanelCollapsed} onToggleCollapsed={toggleInfoPanelCollapsed} />
+      </div>
+
+      <div className="fixed bottom-4 left-4 right-4 z-50">
+        <TimelineBar />
+      </div>
+
+      {apiBaseUrl ? <AttributionBar apiBaseUrl={apiBaseUrl} /> : null}
+
+      <HelpDialog open={helpOpen} onClose={() => setHelpOpen(false)} />
     </div>
   );
 }

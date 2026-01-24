@@ -24,6 +24,13 @@ it('switches active layer and updates legend', async () => {
       return jsonResponse({ apiBaseUrl: 'http://api.test' });
     }
 
+    if (url === 'http://api.test/api/v1/attribution') {
+      return new Response('© Cesium · © ECMWF / CLDAS', {
+        status: 200,
+        headers: { 'Content-Type': 'text/plain' },
+      });
+    }
+
     if (url === 'http://api.test/api/v1/legends?layer_type=temperature') {
       return jsonResponse({
         colors: ['#0000ff', '#ffffff', '#ff0000'],
@@ -49,9 +56,7 @@ it('switches active layer and updates legend', async () => {
   render(<App />);
 
   expect(await screen.findByText('温度')).toBeInTheDocument();
-  expect(
-    screen.getByRole('button', { name: '打开数据来源与免责声明' })
-  ).toBeInTheDocument();
+  expect(await screen.findByRole('button', { name: '查看数据来源' })).toBeInTheDocument();
 
   const windCheckbox = screen.getByRole('checkbox', { name: '显示 wind' });
   fireEvent.click(windCheckbox);
