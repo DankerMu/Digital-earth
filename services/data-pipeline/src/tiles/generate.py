@@ -19,7 +19,10 @@ from tiling.bias_tiles import (
     DEFAULT_BIAS_OBSERVATION_VARIABLE,
     BiasTileGenerator,
 )
-from tiling.precip_amount_tiles import PrecipAmountTileGenerator, PrecipAmountTilingError
+from tiling.precip_amount_tiles import (
+    PrecipAmountTileGenerator,
+    PrecipAmountTilingError,
+)
 from tiling.tcc_tiles import TccTileGenerator, TccTilingError
 from tiling.temperature_tiles import TemperatureTileGenerator, TemperatureTilingError
 

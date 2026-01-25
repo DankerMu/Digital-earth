@@ -55,9 +55,7 @@ def decode_grib(
     *,
     engine: str = "cfgrib",
 ) -> DataCube:
-    def _open_cfgrib_subset(
-        *, filter_by_keys: dict[str, Any]
-    ) -> Optional[xr.Dataset]:
+    def _open_cfgrib_subset(*, filter_by_keys: dict[str, Any]) -> Optional[xr.Dataset]:
         """Open a GRIB subset using cfgrib filter_by_keys.
 
         Returns None when the filter matches no messages.

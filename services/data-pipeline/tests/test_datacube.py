@@ -216,7 +216,9 @@ def test_decode_grib_filters_surface_variables(monkeypatch: pytest.MonkeyPatch) 
     lon = np.array([100.0, 101.0, 102.0], dtype=np.float32)
     valid_time = np.datetime64("2026-01-01T00:00:00")
 
-    def make_ds(name: str, values: np.ndarray, *, units: str | None = None) -> xr.Dataset:
+    def make_ds(
+        name: str, values: np.ndarray, *, units: str | None = None
+    ) -> xr.Dataset:
         da = xr.DataArray(values, dims=["latitude", "longitude"], name=name)
         if units is not None:
             da.attrs["units"] = units

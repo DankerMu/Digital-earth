@@ -185,7 +185,10 @@ def main(argv: Iterable[str] | None = None) -> int:
                 cube.dataset.close()
 
     if skipped_decode:
-        print(f"Skipped {skipped_decode} file(s) that could not be decoded.", file=sys.stderr)
+        print(
+            f"Skipped {skipped_decode} file(s) that could not be decoded.",
+            file=sys.stderr,
+        )
 
     if failures:
         print(f"Completed with {failures} failure(s).", file=sys.stderr)

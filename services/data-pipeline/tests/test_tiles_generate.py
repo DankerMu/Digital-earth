@@ -206,8 +206,13 @@ def test_generate_ecmwf_tiles_skips_missing_layers(
         formats=("png",),
     )
 
-    skipped = [result for result in results if isinstance(result, SkippedTileGenerationResult)]
-    assert {result.layer for result in skipped} >= {"ecmwf/precip_amount", "ecmwf/wind_speed"}
+    skipped = [
+        result for result in results if isinstance(result, SkippedTileGenerationResult)
+    ]
+    assert {result.layer for result in skipped} >= {
+        "ecmwf/precip_amount",
+        "ecmwf/wind_speed",
+    }
 
     assert (tmp_path / "tiles" / "ecmwf" / "temp").is_dir()
     assert (tmp_path / "tiles" / "ecmwf" / "tcc").is_dir()

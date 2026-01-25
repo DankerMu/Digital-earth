@@ -311,7 +311,7 @@ def _generate_tiles_for_time(
         formats=("png",),
     )
     print(
-        f"  temp tiles={temp_result.tiles_written} zoom={min_zoom}-{max_zoom} ({perf_counter()-t0:.1f}s)"
+        f"  temp tiles={temp_result.tiles_written} zoom={min_zoom}-{max_zoom} ({perf_counter() - t0:.1f}s)"
     )
 
     t0 = perf_counter()
@@ -324,7 +324,7 @@ def _generate_tiles_for_time(
         formats=("png",),
     )
     print(
-        f"  tcc tiles={tcc_result.tiles_written} zoom={min_zoom}-{max_zoom} ({perf_counter()-t0:.1f}s)"
+        f"  tcc tiles={tcc_result.tiles_written} zoom={min_zoom}-{max_zoom} ({perf_counter() - t0:.1f}s)"
     )
 
     t0 = perf_counter()
@@ -337,7 +337,7 @@ def _generate_tiles_for_time(
         formats=("png",),
     )
     print(
-        f"  precip tiles={precip_result.tiles_written} zoom={min_zoom}-{max_zoom} ({perf_counter()-t0:.1f}s)"
+        f"  precip tiles={precip_result.tiles_written} zoom={min_zoom}-{max_zoom} ({perf_counter() - t0:.1f}s)"
     )
 
 
@@ -353,7 +353,9 @@ def _write_wind_datacube(
     time_values = np.asarray(
         [np.datetime64(dt.strftime("%Y-%m-%dT%H:%M:%S")) for dt in times]
     )
-    level = xr.DataArray([0.0], dims=["level"], attrs={"long_name": "surface", "units": "1"})
+    level = xr.DataArray(
+        [0.0], dims=["level"], attrs={"long_name": "surface", "units": "1"}
+    )
 
     ds = xr.Dataset(
         data_vars={
@@ -577,7 +579,9 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
     wind_cube_path = (
         Path(args.wind_cube).resolve()
         if args.wind_cube is not None
-        else (REPO_ROOT / "Data" / "cubes" / "ecmwf" / "wind" / f"{run_key}.nc").resolve()
+        else (
+            REPO_ROOT / "Data" / "cubes" / "ecmwf" / "wind" / f"{run_key}.nc"
+        ).resolve()
     )
 
     db_url = str(args.database_url or _default_database_url(repo_root=REPO_ROOT))
@@ -587,7 +591,9 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
         engine, run_time=run_time, valid_times=valid_times
     )
     print(f"catalog_run_id={run_id} run={run_key} db={db_url}")
-    print(f"catalog_times={len(catalog_times)} range={_time_key(catalog_times[0][1])}..{_time_key(catalog_times[-1][1])}")
+    print(
+        f"catalog_times={len(catalog_times)} range={_time_key(catalog_times[0][1])}..{_time_key(catalog_times[-1][1])}"
+    )
 
     data_source = LocalDataSource()
     resolved = _resolve_grib_files(
@@ -612,7 +618,9 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
 
     for idx, dt in enumerate(time_sequence):
         grib_path = resolved[dt]
-        print(f"[{idx+1}/{len(time_sequence)}] load {grib_path.name} time={_time_key(dt)}")
+        print(
+            f"[{idx + 1}/{len(time_sequence)}] load {grib_path.name} time={_time_key(dt)}"
+        )
         fields = _load_surface_fields(grib_path)
 
         if lat_ref is None:

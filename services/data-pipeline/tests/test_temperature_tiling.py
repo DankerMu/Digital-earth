@@ -57,11 +57,7 @@ def _make_surface_dataset(*, value: float, var: str = "temp") -> xr.Dataset:
     time = np.array(["2026-01-01T00:00:00"], dtype="datetime64[s]")
     data = np.full((1, lat.size, lon.size), value, dtype=np.float32)
     return xr.Dataset(
-        {
-            var: xr.DataArray(
-                data, dims=["time", "lat", "lon"], attrs={"units": "°C"}
-            )
-        },
+        {var: xr.DataArray(data, dims=["time", "lat", "lon"], attrs={"units": "°C"})},
         coords={"time": time, "lat": lat, "lon": lon},
     )
 
