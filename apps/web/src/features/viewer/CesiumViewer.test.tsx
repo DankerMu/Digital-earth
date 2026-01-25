@@ -1798,12 +1798,15 @@ describe('CesiumViewer', () => {
     });
     useCameraPerspectiveStore.setState({ cameraPerspectiveId: 'forward' });
 
-    let resolveTerrain: ((value: unknown) => void) | null = null;
-    const terrainPromise = new Promise<unknown>((resolve) => {
+    type TerrainSampleResult = Awaited<ReturnType<typeof sampleTerrainMostDetailed>>;
+    let resolveTerrain: (value: TerrainSampleResult) => void = () => {
+      throw new Error('resolveTerrain not initialized');
+    };
+    const terrainPromise = new Promise<TerrainSampleResult>((resolve) => {
       resolveTerrain = resolve;
     });
 
-    vi.mocked(sampleTerrainMostDetailed).mockImplementationOnce(() => terrainPromise as never);
+    vi.mocked(sampleTerrainMostDetailed).mockImplementationOnce(() => terrainPromise);
 
     render(<CesiumViewer />);
 
@@ -1830,7 +1833,7 @@ describe('CesiumViewer', () => {
 
     await waitFor(() => expect(viewer.scene.morphTo2D).toHaveBeenCalled());
 
-    resolveTerrain?.([{ longitude: 120, latitude: 30, height: 1234 }]);
+    resolveTerrain([{ longitude: 120, latitude: 30, height: 1234 }] as never);
 
     await new Promise((resolve) => setTimeout(resolve, 0));
 
