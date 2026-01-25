@@ -103,6 +103,25 @@ const cloudSamplerMocks = vi.hoisted(() => {
   };
 });
 
+const localCloudStackMocks = vi.hoisted(() => {
+  return {
+    instances: [] as Array<{ update: ReturnType<typeof vi.fn>; destroy: ReturnType<typeof vi.fn> }>,
+  };
+});
+
+vi.mock('../layers/LocalCloudStack', () => {
+  return {
+    LocalCloudStack: vi.fn(function () {
+      const instance = {
+        update: vi.fn(),
+        destroy: vi.fn(),
+      };
+      localCloudStackMocks.instances.push(instance);
+      return instance;
+    }),
+  };
+});
+
 vi.mock('../effects/weatherSampler', () => {
   return {
     createWeatherSampler: vi.fn(() => ({
@@ -512,6 +531,7 @@ describe('CesiumViewer', () => {
     vi.unstubAllGlobals();
     precipitationParticlesMocks.instances.length = 0;
     windArrowsMocks.instances.length = 0;
+    localCloudStackMocks.instances.length = 0;
     osmBuildingsMocks.instances.length = 0;
     customDataSourceMocks.instances.length = 0;
     clearConfigCache();
@@ -795,6 +815,26 @@ describe('CesiumViewer', () => {
     expect(vi.mocked(createWorldTerrainAsync)).not.toHaveBeenCalled();
   });
 
+  it('enables local cloud stack in local mode even for free perspective', async () => {
+    useViewModeStore.setState({
+      route: { viewModeId: 'local', lat: 30, lon: 120, heightMeters: 100 },
+      history: [],
+      saved: {},
+    });
+    useCameraPerspectiveStore.setState({ cameraPerspectiveId: 'free' });
+
+    render(<CesiumViewer />);
+
+    await waitFor(() => expect(vi.mocked(Viewer)).toHaveBeenCalledTimes(1));
+
+    await waitFor(() => expect(localCloudStackMocks.instances.length).toBe(1));
+    const stack = localCloudStackMocks.instances[0]!;
+
+    await waitFor(() => expect(stack.update).toHaveBeenCalled());
+    const lastCall = stack.update.mock.calls[stack.update.mock.calls.length - 1]?.[0] as { enabled?: boolean };
+    expect(lastCall.enabled).toBe(true);
+  });
+
   it('falls back to ellipsoid terrain and shows a notice when ion token is missing', async () => {
     vi.stubGlobal(
       'fetch',
@@ -909,6 +949,13 @@ describe('CesiumViewer', () => {
     await waitFor(() => expect(vi.mocked(createWorldTerrainAsync)).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(vi.mocked(sampleTerrainMostDetailed)).toHaveBeenCalled());
     await waitFor(() => expect(useViewModeStore.getState().route).toMatchObject({ heightMeters: 1234 }));
+
+    await waitFor(() => {
+      expect(localCloudStackMocks.instances.length).toBe(1);
+      const stack = localCloudStackMocks.instances[0]!;
+      const updates = stack.update.mock.calls.map((call) => call[0] as { surfaceHeightMeters?: number });
+      expect(updates.some((update) => update.surfaceHeightMeters === 1234)).toBe(true);
+    });
 
     expect(vi.mocked(Cartesian3.fromDegrees)).toHaveBeenCalledWith(120, 30, 350);
     expect(vi.mocked(Cartesian3.fromDegrees)).toHaveBeenCalledWith(120, 30, 1234 + 1.7);
@@ -1187,6 +1234,47 @@ describe('CesiumViewer', () => {
 
     useLayerManagerStore.getState().setLayerVisible('cloud', false);
     await waitFor(() => expect(imageryLayer.show).toBe(false));
+  });
+
+  it('hides cloud imagery layers in local mode by default', async () => {
+    useViewModeStore.setState({
+      route: { viewModeId: 'local', lat: 30, lon: 120, heightMeters: 100 },
+      history: [],
+      saved: {},
+    });
+
+    useLayerManagerStore.setState({
+      layers: [
+        {
+          id: 'cloud',
+          type: 'cloud',
+          variable: 'tcc',
+          opacity: 0.65,
+          visible: true,
+          zIndex: 20,
+        },
+      ],
+    });
+
+    render(<CesiumViewer />);
+
+    await waitFor(() => expect(vi.mocked(Viewer)).toHaveBeenCalledTimes(1));
+
+    const viewer = vi.mocked(Viewer).mock.results[0].value;
+
+    await waitFor(() => expect(viewer.imageryLayers.add).toHaveBeenCalled());
+
+    const addedLayers = viewer.imageryLayers.add.mock.calls.map(([layer]: [unknown]) => layer as {
+      show?: boolean;
+      provider?: { options?: { credit?: string } };
+    });
+    const cloudLayer = addedLayers.find(
+      (layer: { show?: boolean; provider?: { options?: { credit?: string } } }) =>
+        layer.provider?.options?.credit === 'Cloud tiles',
+    );
+
+    expect(cloudLayer).toBeTruthy();
+    expect(cloudLayer?.show).toBe(false);
   });
 
   it('syncs precipitation imagery layers from layerManager and applies threshold filtering', async () => {

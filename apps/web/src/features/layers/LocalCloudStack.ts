@@ -13,8 +13,13 @@ import {
 import type { LayerConfig } from '../../state/layerManager';
 import { buildCloudTileUrlTemplate } from './layersApi';
 
-const LOCAL_CLOUD_TILE_ZOOM = 6;
-const LOCAL_CLOUD_TILE_RADIUS = 1;
+const DEFAULT_LOCAL_CLOUD_TILE_ZOOM = 6;
+const DEFAULT_LOCAL_CLOUD_TILE_RADIUS = 1;
+
+type LocalCloudTileSettings = {
+  zoom: number;
+  radius: number;
+};
 
 type TileBoundsDegrees = {
   west: number;
@@ -37,6 +42,43 @@ function clamp01(value: number): number {
 function tilesAtZoom(zoom: number): number {
   if (!Number.isFinite(zoom) || zoom < 0) return 1;
   return 2 ** Math.floor(zoom);
+}
+
+function getViewerCameraHeightMeters(viewer: Viewer): number | null {
+  const camera = viewer.camera as unknown as { positionCartographic?: { height?: number } } | undefined;
+  const height = camera?.positionCartographic?.height;
+  if (typeof height !== 'number' || !Number.isFinite(height)) return null;
+  return height;
+}
+
+function localCloudTileSettingsForHeightAboveSurface(heightMeters: number | null): LocalCloudTileSettings {
+  if (heightMeters == null) {
+    return {
+      zoom: DEFAULT_LOCAL_CLOUD_TILE_ZOOM,
+      radius: DEFAULT_LOCAL_CLOUD_TILE_RADIUS,
+    };
+  }
+
+  if (heightMeters <= 2_500) {
+    return { zoom: 10, radius: 2 };
+  }
+
+  if (heightMeters <= 10_000) {
+    return { zoom: 9, radius: 2 };
+  }
+
+  if (heightMeters <= 40_000) {
+    return { zoom: 8, radius: 1 };
+  }
+
+  if (heightMeters <= 150_000) {
+    return { zoom: 7, radius: 1 };
+  }
+
+  return {
+    zoom: DEFAULT_LOCAL_CLOUD_TILE_ZOOM,
+    radius: DEFAULT_LOCAL_CLOUD_TILE_RADIUS,
+  };
 }
 
 function tileXYForLonLatDegrees(options: { lon: number; lat: number; zoom: number }): { x: number; y: number } {
@@ -154,7 +196,13 @@ export class LocalCloudStack {
       return;
     }
 
-    const zoom = LOCAL_CLOUD_TILE_ZOOM;
+    const cameraHeightMeters = getViewerCameraHeightMeters(this.viewer);
+    const heightAboveSurfaceMeters =
+      cameraHeightMeters == null
+        ? null
+        : Math.max(0, cameraHeightMeters - Math.max(0, update.surfaceHeightMeters));
+
+    const { zoom, radius } = localCloudTileSettingsForHeightAboveSurface(heightAboveSurfaceMeters);
     const center = tileXYForLonLatDegrees({ lon: update.lon, lat: update.lat, zoom });
     const tiles = tilesAtZoom(zoom);
 
@@ -171,7 +219,7 @@ export class LocalCloudStack {
       const heightMeters = Math.max(0, update.surfaceHeightMeters + cloudLayerHeightOffsetMeters(layer));
       const alpha = clamp01(layer.opacity);
 
-      const key = `${timeKey}:${variable}:${levelKey ?? 'sfc'}:${heightMeters}:${center.x}:${center.y}:${zoom}`;
+      const key = `${timeKey}:${variable}:${levelKey ?? 'sfc'}:${heightMeters}:${center.x}:${center.y}:${zoom}:${radius}`;
       const existing = this.groups.get(layer.id);
 
       if (!existing || existing.key !== key) {
@@ -185,9 +233,9 @@ export class LocalCloudStack {
           ...(levelKey ? { level: levelKey } : {}),
         });
 
-        for (let dy = -LOCAL_CLOUD_TILE_RADIUS; dy <= LOCAL_CLOUD_TILE_RADIUS; dy += 1) {
+        for (let dy = -radius; dy <= radius; dy += 1) {
           const y = clamp(center.y + dy, 0, tiles - 1);
-          for (let dx = -LOCAL_CLOUD_TILE_RADIUS; dx <= LOCAL_CLOUD_TILE_RADIUS; dx += 1) {
+          for (let dx = -radius; dx <= radius; dx += 1) {
             const x = (center.x + dx + tiles) % tiles;
             const bounds = tileBoundsForXY({ x, y, zoom });
             const rectangle = Rectangle.fromDegrees(bounds.west, bounds.south, bounds.east, bounds.north);
@@ -257,4 +305,3 @@ export class LocalCloudStack {
     this.viewer.scene.requestRender();
   }
 }
-

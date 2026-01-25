@@ -826,6 +826,7 @@ export function CesiumViewer() {
   const [apiBaseUrl, setApiBaseUrl] = useState<string | null>(null);
   const [terrainNotice, setTerrainNotice] = useState<string | null>(null);
   const [terrainReady, setTerrainReady] = useState(false);
+  const [localCloudSurfaceHeightMeters, setLocalCloudSurfaceHeightMeters] = useState(0);
   const [monitoringNotice, setMonitoringNotice] = useState<string | null>(null);
   const [performanceNotice, setPerformanceNotice] = useState<{ fps: number } | null>(null);
   const basemapId = useBasemapStore((state) => state.basemapId);
@@ -1781,6 +1782,47 @@ export function CesiumViewer() {
       cancelled = true;
     };
   }, [replaceRoute, requestLocalGroundHeightMeters, terrainReady, viewModeRoute, viewer]);
+
+  useEffect(() => {
+    if (viewModeRoute.viewModeId !== 'local') {
+      setLocalCloudSurfaceHeightMeters(0);
+      return;
+    }
+
+    const routeHeight =
+      typeof viewModeRoute.heightMeters === 'number' && Number.isFinite(viewModeRoute.heightMeters)
+        ? viewModeRoute.heightMeters
+        : null;
+    setLocalCloudSurfaceHeightMeters(routeHeight ?? 0);
+
+    if (!viewer) return;
+    if (!terrainReady) return;
+
+    const { lon, lat } = viewModeRoute;
+    if (!Number.isFinite(lon) || !Number.isFinite(lat)) return;
+
+    let cancelled = false;
+
+    void (async () => {
+      try {
+        const sampledHeight = await requestLocalGroundHeightMeters({ lon, lat });
+        if (cancelled) return;
+        if (typeof sampledHeight !== 'number' || !Number.isFinite(sampledHeight)) return;
+
+        const currentRoute = useViewModeStore.getState().route;
+        if (currentRoute.viewModeId !== 'local') return;
+        if (!Object.is(currentRoute.lon, lon) || !Object.is(currentRoute.lat, lat)) return;
+
+        setLocalCloudSurfaceHeightMeters(sampledHeight);
+      } catch (error: unknown) {
+        console.warn('[Digital Earth] failed to sample local cloud surface height', error);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [requestLocalGroundHeightMeters, terrainReady, viewModeRoute, viewer]);
 
   useEffect(() => {
     if (!viewer) return;
@@ -3560,7 +3602,7 @@ export function CesiumViewer() {
             ? String(Math.round(config.level))
             : undefined,
         opacity: config.opacity,
-        visible: config.visible,
+        visible: config.visible && viewModeRoute.viewModeId !== 'local',
         zIndex: config.zIndex,
       };
 
@@ -3577,23 +3619,17 @@ export function CesiumViewer() {
       layer.destroy();
       existing.delete(id);
     }
-  }, [apiBaseUrl, cloudTimeKey, layers, viewer]);
+  }, [apiBaseUrl, cloudTimeKey, layers, viewModeRoute.viewModeId, viewer]);
 
   useEffect(() => {
     const stack = localCloudStackRef.current;
     if (!viewer || !stack) return;
 
-    const enabled =
-      !lowModeEnabled && viewModeRoute.viewModeId === 'local' && cameraPerspectiveId !== 'free';
+    const enabled = !lowModeEnabled && viewModeRoute.viewModeId === 'local';
 
     const lon = viewModeRoute.viewModeId === 'local' ? viewModeRoute.lon : Number.NaN;
     const lat = viewModeRoute.viewModeId === 'local' ? viewModeRoute.lat : Number.NaN;
-    const surfaceHeightMeters =
-      viewModeRoute.viewModeId === 'local' &&
-      typeof viewModeRoute.heightMeters === 'number' &&
-      Number.isFinite(viewModeRoute.heightMeters)
-        ? viewModeRoute.heightMeters
-        : 0;
+    const surfaceHeightMeters = viewModeRoute.viewModeId === 'local' ? localCloudSurfaceHeightMeters : 0;
 
     stack.update({
       enabled,
@@ -3604,7 +3640,7 @@ export function CesiumViewer() {
       surfaceHeightMeters,
       layers,
     });
-  }, [apiBaseUrl, cameraPerspectiveId, cloudTimeKey, layers, lowModeEnabled, viewModeRoute, viewer]);
+  }, [apiBaseUrl, cloudTimeKey, layers, localCloudSurfaceHeightMeters, lowModeEnabled, viewModeRoute, viewer]);
 
   useEffect(() => {
     if (!viewer) return;
