@@ -14,13 +14,13 @@ function writeStorage(value: unknown) {
 }
 
 describe('cameraPerspective store', () => {
-  it('defaults to free when localStorage is empty', async () => {
+  it('defaults to human when localStorage is empty', async () => {
     localStorage.removeItem(STORAGE_KEY);
     const { DEFAULT_CAMERA_PERSPECTIVE_ID, useCameraPerspectiveStore } = await importFresh();
 
     const state = useCameraPerspectiveStore.getState();
     expect(state.cameraPerspectiveId).toBe(DEFAULT_CAMERA_PERSPECTIVE_ID);
-    expect(state.cameraPerspectiveId).toBe('free');
+    expect(state.cameraPerspectiveId).toBe('human');
   });
 
   it('restores a valid persisted cameraPerspectiveId', async () => {
@@ -33,19 +33,19 @@ describe('cameraPerspective store', () => {
   it('falls back to default when persisted JSON is invalid', async () => {
     localStorage.setItem(STORAGE_KEY, '{');
     const { useCameraPerspectiveStore } = await importFresh();
-    expect(useCameraPerspectiveStore.getState().cameraPerspectiveId).toBe('free');
+    expect(useCameraPerspectiveStore.getState().cameraPerspectiveId).toBe('human');
   });
 
   it('falls back to default when persisted JSON is not an object', async () => {
     localStorage.setItem(STORAGE_KEY, 'null');
     const { useCameraPerspectiveStore } = await importFresh();
-    expect(useCameraPerspectiveStore.getState().cameraPerspectiveId).toBe('free');
+    expect(useCameraPerspectiveStore.getState().cameraPerspectiveId).toBe('human');
   });
 
   it('falls back to default when persisted value is invalid', async () => {
     writeStorage({ cameraPerspectiveId: 'nope' });
     const { useCameraPerspectiveStore } = await importFresh();
-    expect(useCameraPerspectiveStore.getState().cameraPerspectiveId).toBe('free');
+    expect(useCameraPerspectiveStore.getState().cameraPerspectiveId).toBe('human');
   });
 
   it('setCameraPerspectiveId updates state and persists', async () => {
@@ -59,7 +59,7 @@ describe('cameraPerspective store', () => {
     expect(persisted).toEqual({ cameraPerspectiveId: 'forward' });
   });
 
-  it('cycleCameraPerspective rotates forward → upward → free → forward', async () => {
+  it('cycleCameraPerspective rotates forward → upward → free → human → forward', async () => {
     localStorage.removeItem(STORAGE_KEY);
     const { useCameraPerspectiveStore } = await importFresh();
 
@@ -69,6 +69,9 @@ describe('cameraPerspective store', () => {
 
     useCameraPerspectiveStore.getState().cycleCameraPerspective();
     expect(useCameraPerspectiveStore.getState().cameraPerspectiveId).toBe('free');
+
+    useCameraPerspectiveStore.getState().cycleCameraPerspective();
+    expect(useCameraPerspectiveStore.getState().cameraPerspectiveId).toBe('human');
 
     useCameraPerspectiveStore.getState().cycleCameraPerspective();
     expect(useCameraPerspectiveStore.getState().cameraPerspectiveId).toBe('forward');
@@ -95,7 +98,7 @@ describe('cameraPerspective store', () => {
     }
 
     render(createElement(PerspectiveLabel));
-    expect(screen.getByTestId('perspective')).toHaveTextContent('free');
+    expect(screen.getByTestId('perspective')).toHaveTextContent('human');
 
     act(() => {
       useCameraPerspectiveStore.getState().setCameraPerspectiveId('upward');
@@ -112,7 +115,7 @@ describe('cameraPerspective store', () => {
     });
 
     const { useCameraPerspectiveStore } = await importFresh();
-    expect(useCameraPerspectiveStore.getState().cameraPerspectiveId).toBe('free');
+    expect(useCameraPerspectiveStore.getState().cameraPerspectiveId).toBe('human');
     getItem.mockRestore();
 
     const setItem = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
@@ -131,6 +134,7 @@ describe('isCameraPerspectiveId', () => {
   it('accepts only the supported ids', async () => {
     const { isCameraPerspectiveId } = await importFresh();
 
+    expect(isCameraPerspectiveId('human')).toBe(true);
     expect(isCameraPerspectiveId('forward')).toBe(true);
     expect(isCameraPerspectiveId('upward')).toBe(true);
     expect(isCameraPerspectiveId('free')).toBe(true);
@@ -140,4 +144,3 @@ describe('isCameraPerspectiveId', () => {
     expect(isCameraPerspectiveId(null)).toBe(false);
   });
 });
-

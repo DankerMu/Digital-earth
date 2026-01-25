@@ -113,6 +113,9 @@ const EVENT_ANALYTICS_LIST_LIMIT = 25;
 const LOCAL_FREE_PITCH = -Math.PI / 4;
 const LOCAL_FORWARD_PITCH = 0;
 const LOCAL_UPWARD_PITCH = CesiumMath.PI_OVER_TWO - Math.PI / 12;
+const HUMAN_EYE_HEIGHT_METERS = 1.7;
+const HUMAN_SAFE_HEIGHT_OFFSET_METERS = 350;
+const HUMAN_MIN_ZOOM_DISTANCE_METERS = 1;
 
 const LAYER_GLOBAL_SHELL_HEIGHT_METERS_BY_LAYER_TYPE: Record<LayerType, number> = {
   temperature: 2000,
@@ -264,7 +267,7 @@ function isCloudCoverVariable(variable: string): boolean {
 
 function cameraPitchForPerspective(cameraPerspectiveId: CameraPerspectiveId): number | null {
   if (cameraPerspectiveId === 'upward') return LOCAL_UPWARD_PITCH;
-  if (cameraPerspectiveId === 'forward') return LOCAL_FORWARD_PITCH;
+  if (cameraPerspectiveId === 'forward' || cameraPerspectiveId === 'human') return LOCAL_FORWARD_PITCH;
   return null;
 }
 
@@ -393,9 +396,172 @@ function localFrustumForCameraHeight(heightMeters: number): { near: number; far:
   return { near, far: Math.max(far, near + 1) };
 }
 
+function localHumanFrustumForCameraHeight(heightMeters: number): { near: number; far: number } {
+  const near = clampNumber(heightMeters * 0.0005, 0.05, 0.2);
+  const far = clampNumber(heightMeters * 400, 10_000, 50_000);
+  return { near, far: Math.max(far, near + 1) };
+}
+
 function localFogDensityForCameraHeight(heightMeters: number): number {
   const normalized = clampNumber(heightMeters / 12_000, 0, 1);
   return 0.00055 * (1 - normalized) + 0.00005;
+}
+
+type FlyToRequest = {
+  destination: unknown;
+  orientation: { heading: number; pitch: number; roll: number };
+  duration: number;
+};
+
+function flyCameraToAsync(camera: CesiumViewerInstance['camera'], request: FlyToRequest): Promise<void> {
+  return new Promise((resolve) => {
+    camera.flyTo({
+      destination: request.destination,
+      orientation: request.orientation,
+      duration: request.duration,
+      complete: () => resolve(),
+      cancel: () => resolve(),
+    } as never);
+  });
+}
+
+type StartHumanLandingParams = {
+  viewer: CesiumViewerInstance;
+  sceneModeId: string;
+  target: { lon: number; lat: number };
+  surfaceHeightMeters: number;
+  replaceRoute: (route: ViewModeRoute) => void;
+  requestLocalGroundHeightMeters: (target: { lon: number; lat: number }) => Promise<number | null>;
+  localEntryKeyRef: { current: string | null };
+  localHumanEntryKeyRef: { current: string | null };
+  localHumanLandingAbortRef: { current: AbortController | null };
+};
+
+function startHumanLanding({
+  viewer,
+  sceneModeId,
+  target,
+  surfaceHeightMeters,
+  replaceRoute,
+  requestLocalGroundHeightMeters,
+  localEntryKeyRef,
+  localHumanEntryKeyRef,
+  localHumanLandingAbortRef,
+}: StartHumanLandingParams): () => void {
+  localHumanLandingAbortRef.current?.abort();
+  const controller = new AbortController();
+  localHumanLandingAbortRef.current = controller;
+
+  const lonLatKey = `${sceneModeId}:${target.lon}:${target.lat}`;
+  const isNewTarget = localHumanEntryKeyRef.current !== lonLatKey;
+  localHumanEntryKeyRef.current = lonLatKey;
+
+  const heading = viewer.camera.heading;
+  const pitch = cameraPitchForPerspective('human') ?? LOCAL_FORWARD_PITCH;
+
+  const cleanup = () => {
+    controller.abort();
+    if (localHumanLandingAbortRef.current === controller) {
+      localHumanLandingAbortRef.current = null;
+    }
+  };
+
+  const getCurrentRoute = (): Extract<ViewModeRoute, { viewModeId: 'local' }> | null => {
+    if (controller.signal.aborted) return null;
+    if (useSceneModeStore.getState().sceneModeId === '2d') return null;
+    if (useCameraPerspectiveStore.getState().cameraPerspectiveId !== 'human') return null;
+
+    const currentRoute = useViewModeStore.getState().route;
+    if (currentRoute.viewModeId !== 'local') return null;
+    if (!Object.is(currentRoute.lon, target.lon) || !Object.is(currentRoute.lat, target.lat)) return null;
+    return currentRoute;
+  };
+
+  if (!isNewTarget) {
+    const destination = Cartesian3.fromDegrees(
+      target.lon,
+      target.lat,
+      surfaceHeightMeters + HUMAN_EYE_HEIGHT_METERS,
+    );
+
+    viewer.camera.flyTo({
+      destination,
+      orientation: { heading, pitch, roll: 0 },
+      duration: 0.8,
+    });
+
+    return cleanup;
+  }
+
+  const safeDestination = Cartesian3.fromDegrees(
+    target.lon,
+    target.lat,
+    surfaceHeightMeters + HUMAN_SAFE_HEIGHT_OFFSET_METERS,
+  );
+
+  void flyCameraToAsync(viewer.camera, {
+    destination: safeDestination,
+    orientation: { heading, pitch, roll: 0 },
+    duration: 1.4,
+  }).then(async () => {
+    if (!getCurrentRoute()) return;
+
+    const sampledHeight = await requestLocalGroundHeightMeters(target);
+    const currentRoute = getCurrentRoute();
+    if (!currentRoute) return;
+
+    const groundHeightMeters = sampledHeight ?? surfaceHeightMeters;
+    if (sampledHeight != null) {
+      const currentHeight = currentRoute.heightMeters;
+      const heightChanged =
+        typeof currentHeight !== 'number' || !Number.isFinite(currentHeight) || Math.abs(currentHeight - sampledHeight) > 0.5;
+      if (heightChanged) {
+        localEntryKeyRef.current = `${sceneModeId}:${target.lon}:${target.lat}:${sampledHeight}`;
+        replaceRoute({
+          viewModeId: 'local',
+          lon: target.lon,
+          lat: target.lat,
+          heightMeters: sampledHeight,
+        });
+      }
+    }
+
+    const destination = Cartesian3.fromDegrees(
+      target.lon,
+      target.lat,
+      groundHeightMeters + HUMAN_EYE_HEIGHT_METERS,
+    );
+
+    viewer.camera.flyTo({
+      destination,
+      orientation: { heading, pitch, roll: 0 },
+      duration: 1.1,
+    });
+  });
+
+  return cleanup;
+}
+
+async function sampleGroundHeightMeters(
+  viewer: CesiumViewerInstance,
+  target: { lon: number; lat: number },
+): Promise<number | null> {
+  const { lon, lat } = target;
+
+  try {
+    const samples = await sampleTerrainMostDetailed(viewer.terrainProvider, [Cartographic.fromDegrees(lon, lat)]);
+    const sampled = samples?.[0] as (Cartographic & { height?: number }) | undefined;
+    const sampledHeight = sampled?.height;
+    if (typeof sampledHeight === 'number' && Number.isFinite(sampledHeight)) return sampledHeight;
+  } catch (error: unknown) {
+    console.warn('[Digital Earth] failed to sample terrain most detailed', error);
+  }
+
+  const globe = (viewer.scene as unknown as { globe?: { getHeight?: (pos: unknown) => unknown } }).globe;
+  const fallback = globe?.getHeight?.(Cartographic.fromDegrees(lon, lat));
+  if (typeof fallback === 'number' && Number.isFinite(fallback)) return fallback;
+
+  return null;
 }
 
 function wrapLongitudeDegrees(lon: number): number {
@@ -686,6 +852,12 @@ export function CesiumViewer() {
   const appliedBasemapIdRef = useRef<BasemapId | null>(null);
   const didApplySceneModeRef = useRef(false);
   const localEntryKeyRef = useRef<string | null>(null);
+  const localHumanEntryKeyRef = useRef<string | null>(null);
+  const localHumanLandingAbortRef = useRef<AbortController | null>(null);
+  const localTerrainSamplePromiseRef = useRef<{
+    key: string | null;
+    promise: Promise<number | null> | null;
+  }>({ key: null, promise: null });
   const layerGlobalEntryKeyRef = useRef<string | null>(null);
   const eventEntryKeyRef = useRef<string | null>(null);
   const appliedCameraPerspectiveRef = useRef<CameraPerspectiveId | null>(null);
@@ -779,6 +951,25 @@ export function CesiumViewer() {
     () => makeHourlyUtcIso(timeKey, cloudFrameIndex),
     [cloudFrameIndex, timeKey],
   );
+
+  const requestLocalGroundHeightMeters = useCallback(
+    (target: { lon: number; lat: number }): Promise<number | null> => {
+      if (!viewer) return Promise.resolve(null);
+
+      const key = `${target.lon}:${target.lat}`;
+      const existing = localTerrainSamplePromiseRef.current;
+      if (existing.key === key && existing.promise) return existing.promise;
+
+      const promise = sampleGroundHeightMeters(viewer, target).catch(() => null);
+      localTerrainSamplePromiseRef.current = { key, promise };
+      return promise;
+    },
+    [viewer],
+  );
+
+  useEffect(() => {
+    localTerrainSamplePromiseRef.current = { key: null, promise: null };
+  }, [terrainReady]);
 
   useEffect(() => {
     if (!viewer) return;
@@ -1565,13 +1756,8 @@ export function CesiumViewer() {
 
     void (async () => {
       try {
-        const samples = await sampleTerrainMostDetailed(viewer.terrainProvider, [
-          Cartographic.fromDegrees(lon, lat),
-        ]);
+        const sampledHeight = await requestLocalGroundHeightMeters({ lon, lat });
         if (cancelled) return;
-
-        const sampled = samples?.[0] as (Cartographic & { height?: number }) | undefined;
-        const sampledHeight = sampled?.height;
         if (typeof sampledHeight !== 'number' || !Number.isFinite(sampledHeight)) return;
 
         const currentRoute = useViewModeStore.getState().route;
@@ -1594,7 +1780,7 @@ export function CesiumViewer() {
     return () => {
       cancelled = true;
     };
-  }, [replaceRoute, terrainReady, viewModeRoute, viewer]);
+  }, [replaceRoute, requestLocalGroundHeightMeters, terrainReady, viewModeRoute, viewer]);
 
   useEffect(() => {
     if (!viewer) return;
@@ -2201,6 +2387,9 @@ export function CesiumViewer() {
     if (!viewer) return;
     if (viewModeRoute.viewModeId !== 'local') {
       localEntryKeyRef.current = null;
+      localHumanEntryKeyRef.current = null;
+      localHumanLandingAbortRef.current?.abort();
+      localHumanLandingAbortRef.current = null;
       return;
     }
 
@@ -2242,6 +2431,22 @@ export function CesiumViewer() {
       return;
     }
 
+    if (cameraPerspectiveId === 'human' && sceneModeId !== '2d') {
+      appliedCameraPerspectiveRef.current = cameraPerspectiveId;
+
+      return startHumanLanding({
+        viewer,
+        sceneModeId,
+        target: { lon: viewModeRoute.lon, lat: viewModeRoute.lat },
+        surfaceHeightMeters,
+        replaceRoute,
+        requestLocalGroundHeightMeters,
+        localEntryKeyRef,
+        localHumanEntryKeyRef,
+        localHumanLandingAbortRef,
+      });
+    }
+
     const offsetMeters = sceneModeId === '2d' ? 5000 : cameraPerspectiveId === 'free' ? 3000 : 50;
     const destination = Cartesian3.fromDegrees(
       viewModeRoute.lon,
@@ -2259,7 +2464,7 @@ export function CesiumViewer() {
       duration: 2.5,
     });
     appliedCameraPerspectiveRef.current = cameraPerspectiveId;
-  }, [cameraPerspectiveId, sceneModeId, viewModeRoute, viewer]);
+  }, [cameraPerspectiveId, replaceRoute, requestLocalGroundHeightMeters, sceneModeId, viewModeRoute, viewer]);
 
   useEffect(() => {
     if (!viewer) return;
@@ -2662,6 +2867,7 @@ export function CesiumViewer() {
     if (!viewer) return;
 
     const controller = viewer.scene.screenSpaceCameraController as unknown as {
+      minimumZoomDistance?: number;
       enableTilt?: boolean;
       enableLook?: boolean;
       enableRotate?: boolean;
@@ -2673,6 +2879,11 @@ export function CesiumViewer() {
     if (viewModeRoute.viewModeId !== 'local') {
       const previous = appliedCameraPerspectiveRef.current;
       appliedCameraPerspectiveRef.current = null;
+      localHumanLandingAbortRef.current?.abort();
+      localHumanLandingAbortRef.current = null;
+      if (typeof controller.minimumZoomDistance === 'number') {
+        controller.minimumZoomDistance = MIN_ZOOM_DISTANCE_METERS;
+      }
 
       if (!baseController || !previous || previous === 'free') return;
       if (typeof baseController.enableTilt === 'boolean') controller.enableTilt = baseController.enableTilt;
@@ -2682,6 +2893,16 @@ export function CesiumViewer() {
       if (baseController.lookEventTypes !== undefined) controller.lookEventTypes = baseController.lookEventTypes;
       viewer.scene.requestRender();
       return;
+    }
+
+    if (typeof controller.minimumZoomDistance === 'number') {
+      controller.minimumZoomDistance =
+        cameraPerspectiveId === 'human' ? HUMAN_MIN_ZOOM_DISTANCE_METERS : MIN_ZOOM_DISTANCE_METERS;
+    }
+
+    if (cameraPerspectiveId !== 'human' || sceneModeId === '2d') {
+      localHumanLandingAbortRef.current?.abort();
+      localHumanLandingAbortRef.current = null;
     }
 
     if (cameraPerspectiveId === 'free') {
@@ -2709,6 +2930,26 @@ export function CesiumViewer() {
     }
 
     appliedCameraPerspectiveRef.current = cameraPerspectiveId;
+
+    if (cameraPerspectiveId === 'human' && sceneModeId !== '2d') {
+      const surfaceHeightMeters =
+        typeof viewModeRoute.heightMeters === 'number' && Number.isFinite(viewModeRoute.heightMeters)
+          ? viewModeRoute.heightMeters
+          : 0;
+
+      return startHumanLanding({
+        viewer,
+        sceneModeId,
+        target: { lon: viewModeRoute.lon, lat: viewModeRoute.lat },
+        surfaceHeightMeters,
+        replaceRoute,
+        requestLocalGroundHeightMeters,
+        localEntryKeyRef,
+        localHumanEntryKeyRef,
+        localHumanLandingAbortRef,
+      });
+    }
+
     const pitch = cameraPitchForPerspective(cameraPerspectiveId) ?? LOCAL_FREE_PITCH;
     const surfaceHeightMeters =
       typeof (viewModeRoute as { heightMeters?: unknown }).heightMeters === 'number' &&
@@ -2726,7 +2967,7 @@ export function CesiumViewer() {
       },
       duration: 0.6,
     });
-  }, [cameraPerspectiveId, sceneModeId, viewModeRoute, viewer]);
+  }, [cameraPerspectiveId, replaceRoute, requestLocalGroundHeightMeters, sceneModeId, viewModeRoute, viewer]);
 
   useEffect(() => {
     if (!viewer) return;
@@ -2792,7 +3033,10 @@ export function CesiumViewer() {
       const heightMeters = getViewerCameraHeightMeters(viewer) ?? 0;
 
       if (camera.frustum) {
-        const { near, far } = localFrustumForCameraHeight(heightMeters);
+        const { near, far } =
+          cameraPerspectiveId === 'human'
+            ? localHumanFrustumForCameraHeight(heightMeters)
+            : localFrustumForCameraHeight(heightMeters);
         camera.frustum.near = near;
         camera.frustum.far = far;
         const targetFov = CesiumMath.toRadians(75);
@@ -2805,8 +3049,9 @@ export function CesiumViewer() {
       }
 
       if (scene.fog) {
-        scene.fog.enabled = volumetricEnabled;
-        if (volumetricEnabled) {
+        const fogEnabled = volumetricEnabled && cameraPerspectiveId !== 'human';
+        scene.fog.enabled = fogEnabled;
+        if (fogEnabled) {
           scene.fog.density = localFogDensityForCameraHeight(heightMeters);
           scene.fog.screenSpaceErrorFactor = 3.0;
           scene.fog.minimumBrightness = 0.12;
