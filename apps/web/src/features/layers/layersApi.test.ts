@@ -104,6 +104,22 @@ describe('layersApi', () => {
     expect(url).toContain('{y}');
   });
 
+  it('builds ECMWF humidity tile templates when requested', () => {
+    const url = buildCloudTileUrlTemplate({
+      apiBaseUrl: 'http://api.test/',
+      timeKey: '2025-12-22T00:00:00Z',
+      variable: 'humidity',
+      level: '850',
+    });
+
+    expect(url).toBe(
+      'http://api.test/api/v1/tiles/ecmwf/humidity/20251222T000000Z/850/{z}/{x}/{y}.png',
+    );
+    expect(url).toContain('{z}');
+    expect(url).toContain('{x}');
+    expect(url).toContain('{y}');
+  });
+
   it('defaults ECMWF cloud tiles to surface level', () => {
     const url = buildCloudTileUrlTemplate({
       apiBaseUrl: 'http://api.test',

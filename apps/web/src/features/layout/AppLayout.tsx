@@ -25,9 +25,45 @@ const DEFAULT_LAYERS: LayerConfig[] = [
     id: 'cloud',
     type: 'cloud',
     variable: 'tcc',
-    opacity: 0.65,
+    opacity: 0.45,
     visible: false,
     zIndex: 20,
+  },
+  {
+    id: 'cloud-r-850',
+    type: 'cloud',
+    variable: 'humidity',
+    level: 850,
+    opacity: 0.28,
+    visible: false,
+    zIndex: 21,
+  },
+  {
+    id: 'cloud-r-700',
+    type: 'cloud',
+    variable: 'humidity',
+    level: 700,
+    opacity: 0.24,
+    visible: false,
+    zIndex: 22,
+  },
+  {
+    id: 'cloud-r-500',
+    type: 'cloud',
+    variable: 'humidity',
+    level: 500,
+    opacity: 0.2,
+    visible: false,
+    zIndex: 23,
+  },
+  {
+    id: 'cloud-r-300',
+    type: 'cloud',
+    variable: 'humidity',
+    level: 300,
+    opacity: 0.16,
+    visible: false,
+    zIndex: 24,
   },
   {
     id: 'precipitation',
@@ -69,10 +105,11 @@ export function AppLayout() {
 
   useEffect(() => {
     const state = useLayerManagerStore.getState();
-    if (state.layers.length > 0) return;
+    const existingIds = new Set(state.layers.map((layer) => layer.id));
 
     state.batch(() => {
       for (const layer of DEFAULT_LAYERS) {
+        if (existingIds.has(layer.id)) continue;
         state.registerLayer(layer);
       }
     });
@@ -95,12 +132,18 @@ export function AppLayout() {
   }, []);
 
   const layerPanelWidthPx = isLayerTreeCollapsed ? 48 : 320;
+  const infoPanelWidthPx = isInfoPanelCollapsed ? 48 : 360;
 
   return (
     <div
       ref={appRootRef}
       className="relative h-screen w-screen bg-slate-950 text-slate-100"
-      style={{ '--layer-panel-width': `${layerPanelWidthPx}px` } as CSSProperties}
+      style={
+        {
+          '--layer-panel-width': `${layerPanelWidthPx}px`,
+          '--info-panel-width': `${infoPanelWidthPx}px`,
+        } as CSSProperties
+      }
     >
       <div className="absolute inset-0 z-0">
         <CesiumViewer />

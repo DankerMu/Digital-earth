@@ -29,6 +29,7 @@ export type SnowDepthLayerParams = CldasTileUrlTemplateOptions & {
 
 export type CloudLayerParams = CldasTileUrlTemplateOptions & {
   id: string;
+  levelKey?: string;
   opacity: number;
   visible: boolean;
   zIndex: number;

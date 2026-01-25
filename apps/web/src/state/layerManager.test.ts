@@ -64,8 +64,8 @@ describe('layerManager store', () => {
     ]);
 
     const visible = state.getVisibleLayers();
-    expect(visible.map((layer) => layer.id)).toEqual(['wind-850', 'cloud-high']);
-    expect(state.layers.find((layer) => layer.id === 'cloud-low')?.visible).toBe(false);
+    expect(visible.map((layer) => layer.id)).toEqual(['cloud-low', 'wind-850', 'cloud-high']);
+    expect(state.layers.find((layer) => layer.id === 'cloud-low')?.visible).toBe(true);
   });
 
   it('restores layers from an array payload, ignores invalid entries, and sorts ties by id', async () => {
@@ -104,7 +104,7 @@ describe('layerManager store', () => {
     const state = useLayerManagerStore.getState();
 
     expect(state.layers.map((layer) => layer.id)).toEqual(['a', 'b', 'hidden-wind']);
-    expect(state.getVisibleLayers().map((layer) => layer.id)).toEqual(['b']);
+    expect(state.getVisibleLayers().map((layer) => layer.id)).toEqual(['a', 'b']);
     expect(state.layers.find((layer) => layer.id === 'b')?.opacity).toBe(1);
   });
 
@@ -229,27 +229,27 @@ describe('layerManager store', () => {
     const { useLayerManagerStore } = await importFresh();
 
     useLayerManagerStore.getState().registerLayer({
-      id: 'cloud-a',
-      type: 'cloud',
-      variable: 'tcc',
+      id: 'temp-a',
+      type: 'temperature',
+      variable: 't2m',
       opacity: 0.5,
       visible: true,
       zIndex: 0,
     });
 
     useLayerManagerStore.getState().registerLayer({
-      id: 'cloud-b',
-      type: 'cloud',
-      variable: 'tcc',
+      id: 'temp-b',
+      type: 'temperature',
+      variable: 't2m',
       opacity: 0.7,
       visible: true,
       zIndex: 1,
     });
 
     const state = useLayerManagerStore.getState();
-    expect(state.getVisibleLayers().map((layer) => layer.id)).toEqual(['cloud-b']);
-    expect(state.layers.find((layer) => layer.id === 'cloud-a')?.visible).toBe(false);
-    expect(state.layers.find((layer) => layer.id === 'cloud-b')?.visible).toBe(true);
+    expect(state.getVisibleLayers().map((layer) => layer.id)).toEqual(['temp-b']);
+    expect(state.layers.find((layer) => layer.id === 'temp-a')?.visible).toBe(false);
+    expect(state.layers.find((layer) => layer.id === 'temp-b')?.visible).toBe(true);
   });
 
   it('unregisterLayer removes layers and is a no-op for missing ids', async () => {
@@ -285,28 +285,28 @@ describe('layerManager store', () => {
     const { useLayerManagerStore } = await importFresh();
 
     useLayerManagerStore.getState().registerLayer({
-      id: 'cloud-a',
-      type: 'cloud',
-      variable: 'tcc',
+      id: 'temp-a',
+      type: 'temperature',
+      variable: 't2m',
       opacity: 0.5,
       visible: true,
       zIndex: 0,
     });
 
     useLayerManagerStore.getState().registerLayer({
-      id: 'cloud-b',
-      type: 'cloud',
-      variable: 'tcc',
+      id: 'temp-b',
+      type: 'temperature',
+      variable: 't2m',
       opacity: 0.7,
       visible: false,
       zIndex: 1,
     });
 
-    useLayerManagerStore.getState().setLayerVisible('cloud-b', true);
+    useLayerManagerStore.getState().setLayerVisible('temp-b', true);
 
     const state = useLayerManagerStore.getState();
-    expect(state.getVisibleLayers().map((layer) => layer.id)).toEqual(['cloud-b']);
-    expect(state.layers.find((layer) => layer.id === 'cloud-a')?.visible).toBe(false);
+    expect(state.getVisibleLayers().map((layer) => layer.id)).toEqual(['temp-b']);
+    expect(state.layers.find((layer) => layer.id === 'temp-a')?.visible).toBe(false);
   });
 
   it('updateLayer supports partial updates, including clearing level', async () => {
@@ -366,7 +366,7 @@ describe('layerManager store', () => {
 
     useLayerManagerStore.getState().updateLayer('precip', { type: 'cloud' });
     expect(useLayerManagerStore.getState().layers.find((layer) => layer.id === 'precip')?.type).toBe('cloud');
-    expect(useLayerManagerStore.getState().getVisibleLayers().map((layer) => layer.id)).toEqual(['precip']);
+    expect(useLayerManagerStore.getState().getVisibleLayers().map((layer) => layer.id)).toEqual(['cloud-a', 'precip']);
 
     useLayerManagerStore.getState().updateLayer('precip', { variable: '  newVar  ' });
     expect(useLayerManagerStore.getState().layers.find((layer) => layer.id === 'precip')?.variable).toBe('newVar');
