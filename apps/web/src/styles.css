@@ -36,6 +36,12 @@ body {
   gap: 10px;
 }
 
+.viewerRoot .cesium-viewer-toolbar {
+  top: 96px;
+  right: calc(1rem + var(--info-panel-width, 0px) + 1rem);
+  z-index: 20;
+}
+
 .compassButton {
   align-items: center;
   background: rgba(42, 42, 42, 0.75);

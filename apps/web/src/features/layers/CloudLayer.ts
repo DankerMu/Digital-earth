@@ -64,6 +64,7 @@ export class CloudLayer {
       apiBaseUrl: params.apiBaseUrl,
       timeKey: params.timeKey,
       variable: params.variable,
+      level: params.levelKey,
     });
   }
 

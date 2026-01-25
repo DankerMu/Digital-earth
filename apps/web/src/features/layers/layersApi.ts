@@ -235,6 +235,25 @@ export function buildEcmwfTemperatureTileUrlTemplate(
   });
 }
 
+export type EcmwfHumidityTileUrlTemplateOptions = Omit<
+  EcmwfTileUrlTemplateOptions,
+  'tileLayer' | 'format'
+> & {
+  format?: TileImageFormat;
+};
+
+export function buildEcmwfHumidityTileUrlTemplate(
+  options: EcmwfHumidityTileUrlTemplateOptions,
+): string {
+  return buildEcmwfTileUrlTemplate({
+    apiBaseUrl: options.apiBaseUrl,
+    tileLayer: 'ecmwf/humidity',
+    timeKey: options.timeKey,
+    level: options.level,
+    format: options.format,
+  });
+}
+
 export type EcmwfCloudTileUrlTemplateOptions = Omit<
   EcmwfTileUrlTemplateOptions,
   'tileLayer' | 'format'
@@ -278,9 +297,20 @@ export function buildPrecipitationTileUrlTemplate(
 
 export type CloudTileUrlTemplateOptions = Omit<CldasTileUrlTemplateOptions, 'variable'> & {
   variable?: string;
+  level?: string;
 };
 
 export function buildCloudTileUrlTemplate(options: CloudTileUrlTemplateOptions): string {
+  const variable = options.variable?.trim().toLowerCase();
+  if (variable === 'humidity' || variable === 'r' || variable === 'rh') {
+    return buildEcmwfHumidityTileUrlTemplate({
+      apiBaseUrl: options.apiBaseUrl,
+      timeKey: options.timeKey,
+      level: options.level ?? 'sfc',
+      format: 'png',
+    });
+  }
+
   return buildEcmwfCloudTileUrlTemplate({
     apiBaseUrl: options.apiBaseUrl,
     timeKey: options.timeKey,

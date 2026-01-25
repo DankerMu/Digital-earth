@@ -122,6 +122,10 @@ vi.mock('cesium', () => {
     SCENE3D: 3
   };
 
+  const CameraEventType = {
+    LEFT_DRAG: 0,
+  };
+
   const ScreenSpaceEventType = {
     LEFT_CLICK: 0,
     LEFT_DOUBLE_CLICK: 1,
@@ -309,8 +313,11 @@ vi.mock('cesium', () => {
       screenSpaceCameraController: {
         minimumZoomDistance: 0,
         maximumZoomDistance: 0,
+        enableRotate: true,
         enableTilt: true,
         enableLook: true,
+        rotateEventTypes: 'rotate',
+        lookEventTypes: 'look',
       },
       postRender: {
         addEventListener: vi.fn(),
@@ -330,6 +337,7 @@ vi.mock('cesium', () => {
 
   return {
     SceneMode,
+    CameraEventType,
     ScreenSpaceEventType,
     KeyboardEventModifier,
     Cartographic,
@@ -403,6 +411,7 @@ vi.mock('cesium', () => {
     TextureMagnificationFilter,
     Math: {
       toDegrees: vi.fn((radians: number) => radians),
+      toRadians: vi.fn((degrees: number) => (degrees * Math.PI) / 180),
       PI_OVER_TWO: Math.PI / 2
     },
     __mocks: {
@@ -1538,6 +1547,7 @@ describe('CesiumViewer', () => {
 
     expect(viewer.scene.screenSpaceCameraController.enableTilt).toBe(true);
     expect(viewer.scene.screenSpaceCameraController.enableLook).toBe(true);
+    expect(viewer.scene.screenSpaceCameraController.enableRotate).toBe(true);
 
     const callsBefore = viewer.camera.flyTo.mock.calls.length;
 
@@ -1546,8 +1556,9 @@ describe('CesiumViewer', () => {
     });
 
     await waitFor(() => expect(viewer.camera.flyTo).toHaveBeenCalledTimes(callsBefore + 1));
-    expect(viewer.scene.screenSpaceCameraController.enableTilt).toBe(false);
-    expect(viewer.scene.screenSpaceCameraController.enableLook).toBe(false);
+    expect(viewer.scene.screenSpaceCameraController.enableRotate).toBe(false);
+    expect(viewer.scene.screenSpaceCameraController.enableLook).toBe(true);
+    expect(viewer.scene.screenSpaceCameraController.lookEventTypes).toBe(0);
     expect(viewer.camera.flyTo).toHaveBeenLastCalledWith(
       expect.objectContaining({
         orientation: expect.objectContaining({
@@ -1579,6 +1590,7 @@ describe('CesiumViewer', () => {
     await waitFor(() => {
       expect(viewer.scene.screenSpaceCameraController.enableTilt).toBe(true);
       expect(viewer.scene.screenSpaceCameraController.enableLook).toBe(true);
+      expect(viewer.scene.screenSpaceCameraController.enableRotate).toBe(true);
     });
     expect(viewer.camera.flyTo).toHaveBeenCalledTimes(callsAfterForward);
   });

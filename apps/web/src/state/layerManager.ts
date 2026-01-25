@@ -120,6 +120,10 @@ function sortLayers(next: LayerConfig[]): LayerConfig[] {
   );
 }
 
+function shouldEnforceExclusivity(type: LayerType): boolean {
+  return type !== 'cloud';
+}
+
 function enforceExclusivityOnLoad(next: LayerConfig[]): LayerConfig[] {
   const sorted = sortLayers(next);
   const nextById = new Map<string, LayerConfig>();
@@ -132,6 +136,7 @@ function enforceExclusivityOnLoad(next: LayerConfig[]): LayerConfig[] {
   for (let i = sorted.length - 1; i >= 0; i -= 1) {
     const layer = sorted[i]!;
     if (!layer.visible) continue;
+    if (!shouldEnforceExclusivity(layer.type)) continue;
     if (!hasVisibleType.has(layer.type)) {
       hasVisibleType.add(layer.type);
       continue;
@@ -221,6 +226,7 @@ function applyExclusiveVisibility(
   type: LayerType,
   visibleLayerId: string,
 ): LayerConfig[] {
+  if (!shouldEnforceExclusivity(type)) return next;
   let didChange = false;
   const updated = next.map((layer) => {
     if (layer.type !== type) return layer;
