@@ -21,6 +21,7 @@ import {
   SceneMode,
   SceneTransforms,
   ScreenSpaceEventType,
+  sampleTerrainMostDetailed,
   UrlTemplateImageryProvider,
   Viewer,
   WebMercatorTilingScheme,
@@ -658,6 +659,7 @@ export function CesiumViewer() {
   const [mapConfigLoaded, setMapConfigLoaded] = useState(false);
   const [apiBaseUrl, setApiBaseUrl] = useState<string | null>(null);
   const [terrainNotice, setTerrainNotice] = useState<string | null>(null);
+  const [terrainReady, setTerrainReady] = useState(false);
   const [monitoringNotice, setMonitoringNotice] = useState<string | null>(null);
   const [performanceNotice, setPerformanceNotice] = useState<{ fps: number } | null>(null);
   const basemapId = useBasemapStore((state) => state.basemapId);
@@ -668,6 +670,7 @@ export function CesiumViewer() {
   const enterLayerGlobal = useViewModeStore((state) => state.enterLayerGlobal);
   const canGoBack = useViewModeStore((state) => state.canGoBack);
   const goBack = useViewModeStore((state) => state.goBack);
+  const replaceRoute = useViewModeStore((state) => state.replaceRoute);
   const layers = useLayerManagerStore((state) => state.layers);
   const runTimeKey = useTimeStore((state) => state.runTimeKey);
   const timeKey = useTimeStore((state) => state.timeKey);
@@ -688,6 +691,9 @@ export function CesiumViewer() {
   const appliedCameraPerspectiveRef = useRef<CameraPerspectiveId | null>(null);
   const eventAbortRef = useRef<AbortController | null>(null);
   const eventEntitiesRef = useRef<Entity[]>([]);
+  const cachedIonTerrainRef = useRef<{ token: string; provider: unknown } | null>(null);
+  const cachedSelfHostedTerrainRef = useRef<{ terrainUrl: string; provider: unknown } | null>(null);
+  const localTerrainSampleKeyRef = useRef<string | null>(null);
   const riskAbortRef = useRef<AbortController | null>(null);
   const riskEntryKeyRef = useRef<string | null>(null);
   const riskDataSourceRef = useRef<CustomDataSource | null>(null);
@@ -1424,7 +1430,10 @@ export function CesiumViewer() {
 
   useEffect(() => {
     if (!viewer) return;
-    if (!mapConfig) return;
+    if (!mapConfig) {
+      setTerrainReady(false);
+      return;
+    }
     if (viewModeRoute.viewModeId === 'layerGlobal') return;
 
     let cancelled = false;
@@ -1432,40 +1441,70 @@ export function CesiumViewer() {
     const applyTerrainProvider = async () => {
       setTerrainNotice(null);
 
-      if (mapConfig.terrainProvider === 'none' || mapConfig.terrainProvider === undefined) {
+      const terrainProviderMode = mapConfig?.terrainProvider;
+
+      if (terrainProviderMode === 'none' || terrainProviderMode === undefined) {
+        setTerrainReady(false);
         viewer.terrainProvider = new EllipsoidTerrainProvider();
         viewer.scene.requestRender();
         return;
       }
 
-      if (mapConfig.terrainProvider === 'ion') {
-        const token = mapConfig.cesiumIonAccessToken;
+      if (terrainProviderMode === 'ion') {
+        const token = mapConfig?.cesiumIonAccessToken;
         if (!token) {
           console.warn('[Digital Earth] map.terrainProvider=ion requires map.cesiumIonAccessToken');
           setTerrainNotice('未配置 Cesium ion token，已回退到无地形模式。');
+          setTerrainReady(false);
           viewer.terrainProvider = new EllipsoidTerrainProvider();
           viewer.scene.requestRender();
           return;
         }
+
+        if (cachedIonTerrainRef.current?.token === token && cachedIonTerrainRef.current.provider) {
+          viewer.terrainProvider = cachedIonTerrainRef.current.provider as never;
+          setTerrainReady(true);
+          viewer.scene.requestRender();
+          return;
+        }
+
+        setTerrainReady(false);
         const terrain = await createWorldTerrainAsync();
         if (cancelled) return;
+        cachedIonTerrainRef.current = { token, provider: terrain as unknown };
         viewer.terrainProvider = terrain;
+        setTerrainReady(true);
         viewer.scene.requestRender();
         return;
       }
 
-      if (mapConfig.terrainProvider === 'selfHosted') {
-        const terrainUrl = mapConfig.selfHosted?.terrainUrl;
+      if (terrainProviderMode === 'selfHosted') {
+        const terrainUrl = mapConfig?.selfHosted?.terrainUrl;
         if (!terrainUrl) {
           console.warn('[Digital Earth] map.terrainProvider=selfHosted requires map.selfHosted.terrainUrl');
           setTerrainNotice('未配置自建地形地址，已回退到无地形模式。');
+          setTerrainReady(false);
           viewer.terrainProvider = new EllipsoidTerrainProvider();
           viewer.scene.requestRender();
           return;
         }
+
+        if (
+          cachedSelfHostedTerrainRef.current?.terrainUrl === terrainUrl &&
+          cachedSelfHostedTerrainRef.current.provider
+        ) {
+          viewer.terrainProvider = cachedSelfHostedTerrainRef.current.provider as never;
+          setTerrainReady(true);
+          viewer.scene.requestRender();
+          return;
+        }
+
+        setTerrainReady(false);
         const terrain = await CesiumTerrainProvider.fromUrl(terrainUrl);
         if (cancelled) return;
+        cachedSelfHostedTerrainRef.current = { terrainUrl, provider: terrain as unknown };
         viewer.terrainProvider = terrain;
+        setTerrainReady(true);
         viewer.scene.requestRender();
       }
     };
@@ -1474,6 +1513,7 @@ export function CesiumViewer() {
       if (cancelled) return;
       console.warn('[Digital Earth] failed to apply terrain provider', error);
       setTerrainNotice('地形加载失败，已回退到无地形模式。');
+      setTerrainReady(false);
       viewer.terrainProvider = new EllipsoidTerrainProvider();
       viewer.scene.requestRender();
     });
@@ -1482,6 +1522,79 @@ export function CesiumViewer() {
       cancelled = true;
     };
   }, [mapConfig, viewModeRoute.viewModeId, viewer]);
+
+  useEffect(() => {
+    const NO_TERRAIN_NOTICE = '当前环境未启用 DEM 地形，Local 视角精度受限。';
+
+    if (!mapConfigLoaded) return;
+
+    const shouldShow =
+      viewModeRoute.viewModeId === 'local' &&
+      (mapConfig?.terrainProvider === undefined || mapConfig.terrainProvider === 'none');
+
+    setTerrainNotice((current) => {
+      const isGeneric = current === NO_TERRAIN_NOTICE;
+
+      if (shouldShow) {
+        return current ?? NO_TERRAIN_NOTICE;
+      }
+
+      return isGeneric ? null : current;
+    });
+  }, [mapConfig?.terrainProvider, mapConfigLoaded, viewModeRoute.viewModeId]);
+
+  useEffect(() => {
+    if (!viewer) return;
+    if (viewModeRoute.viewModeId !== 'local') {
+      localTerrainSampleKeyRef.current = null;
+      return;
+    }
+    if (!terrainReady) {
+      localTerrainSampleKeyRef.current = null;
+      return;
+    }
+
+    const { lon, lat } = viewModeRoute;
+    if (!Number.isFinite(lon) || !Number.isFinite(lat)) return;
+
+    const key = `${lon}:${lat}`;
+    if (localTerrainSampleKeyRef.current === key) return;
+    localTerrainSampleKeyRef.current = key;
+
+    let cancelled = false;
+
+    void (async () => {
+      try {
+        const samples = await sampleTerrainMostDetailed(viewer.terrainProvider, [
+          Cartographic.fromDegrees(lon, lat),
+        ]);
+        if (cancelled) return;
+
+        const sampled = samples?.[0] as (Cartographic & { height?: number }) | undefined;
+        const sampledHeight = sampled?.height;
+        if (typeof sampledHeight !== 'number' || !Number.isFinite(sampledHeight)) return;
+
+        const currentRoute = useViewModeStore.getState().route;
+        if (currentRoute.viewModeId !== 'local') return;
+        if (!Object.is(currentRoute.lon, lon) || !Object.is(currentRoute.lat, lat)) return;
+
+        const currentHeight = currentRoute.heightMeters;
+        const heightChanged =
+          typeof currentHeight !== 'number' ||
+          !Number.isFinite(currentHeight) ||
+          Math.abs(currentHeight - sampledHeight) > 0.5;
+        if (!heightChanged) return;
+
+        replaceRoute({ viewModeId: 'local', lon, lat, heightMeters: sampledHeight });
+      } catch (error: unknown) {
+        console.warn('[Digital Earth] failed to sample terrain height', error);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [replaceRoute, terrainReady, viewModeRoute, viewer]);
 
   useEffect(() => {
     if (!viewer) return;
