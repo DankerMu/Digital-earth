@@ -1,4 +1,9 @@
 {
-  "apiBaseUrl": "https://api.digital-earth.example"
+  "apiBaseUrl": "https://api.digital-earth.example",
+  "map": {
+    "terrainProvider": "selfHosted",
+    "selfHosted": {
+      "terrainUrl": "https://tiles.digital-earth.example/terrain/"
+    }
+  }
 }
-

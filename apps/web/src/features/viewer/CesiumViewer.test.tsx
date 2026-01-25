@@ -190,7 +190,14 @@ vi.mock('cesium', () => {
 
   const Cartographic = {
     fromCartesian: vi.fn(() => ({ longitude: 0, latitude: 0 })),
+    fromDegrees: vi.fn((longitude: number, latitude: number) => ({ longitude, latitude, height: 0 })),
   };
+
+  const CesiumTerrainProvider = {
+    fromUrl: vi.fn(async () => ({ kind: 'terrain-from-url' })),
+  };
+
+  const sampleTerrainMostDetailed = vi.fn(async (_provider: unknown, positions: unknown[]) => positions);
 
   const camera = {
     heading: 1,
@@ -429,13 +436,24 @@ vi.mock('cesium', () => {
     },
     createWorldTerrainAsync,
     createOsmBuildingsAsync,
+    CesiumTerrainProvider,
     Ellipsoid,
     EllipsoidTerrainProvider,
     Ion,
+    sampleTerrainMostDetailed,
   };
 });
 
-import { Cartesian3, EllipsoidTerrainProvider, Rectangle, createOsmBuildingsAsync, createWorldTerrainAsync, Viewer } from 'cesium';
+import {
+  Cartesian3,
+  CesiumTerrainProvider,
+  EllipsoidTerrainProvider,
+  Rectangle,
+  createOsmBuildingsAsync,
+  createWorldTerrainAsync,
+  sampleTerrainMostDetailed,
+  Viewer,
+} from 'cesium';
 import { clearConfigCache } from '../../config';
 import { DEFAULT_BASEMAP_ID } from '../../config/basemaps';
 import { clearProductsCache } from '../products/productsApi';
@@ -714,6 +732,21 @@ describe('CesiumViewer', () => {
     expect(viewer.imageryLayers.addImageryProvider).toHaveBeenCalledTimes(1);
   });
 
+  it('shows a notice in local mode when terrain is not configured', async () => {
+    useViewModeStore.setState({
+      route: { viewModeId: 'local', lat: 30, lon: 120, heightMeters: 100 },
+      history: [],
+      saved: {},
+    });
+
+    render(<CesiumViewer />);
+
+    await waitFor(() => expect(vi.mocked(Viewer)).toHaveBeenCalledTimes(1));
+
+    expect(await screen.findByRole('alert', { name: 'terrain-notice' })).toHaveTextContent('未启用 DEM 地形');
+    expect(vi.mocked(createWorldTerrainAsync)).not.toHaveBeenCalled();
+  });
+
   it('falls back to ellipsoid terrain and shows a notice when ion token is missing', async () => {
     vi.stubGlobal(
       'fetch',
@@ -739,6 +772,97 @@ describe('CesiumViewer', () => {
     expect(vi.mocked(createWorldTerrainAsync)).not.toHaveBeenCalled();
     expect(vi.mocked(EllipsoidTerrainProvider)).toHaveBeenCalled();
     expect(viewer.scene.requestRender).toHaveBeenCalled();
+  });
+
+  it('falls back to ellipsoid terrain and shows a notice when self-hosted terrain url is missing', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        jsonResponse({
+          apiBaseUrl: 'http://api.test',
+          map: {
+            terrainProvider: 'selfHosted',
+            selfHosted: {},
+          },
+        }),
+      ),
+    );
+
+    render(<CesiumViewer />);
+
+    await waitFor(() => expect(vi.mocked(Viewer)).toHaveBeenCalledTimes(1));
+
+    const viewer = vi.mocked(Viewer).mock.results[0].value;
+
+    expect(await screen.findByRole('alert', { name: 'terrain-notice' })).toHaveTextContent('未配置自建地形地址');
+    expect(vi.mocked(CesiumTerrainProvider.fromUrl)).not.toHaveBeenCalled();
+    expect(vi.mocked(EllipsoidTerrainProvider)).toHaveBeenCalled();
+    expect(viewer.scene.requestRender).toHaveBeenCalled();
+  });
+
+  it('loads self-hosted terrain when configured', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        jsonResponse({
+          apiBaseUrl: 'http://api.test',
+          map: {
+            terrainProvider: 'selfHosted',
+            selfHosted: { terrainUrl: 'https://tiles.example/terrain/' },
+          },
+        }),
+      ),
+    );
+
+    const terrainProvider = { kind: 'self-hosted-terrain' };
+    vi.mocked(CesiumTerrainProvider.fromUrl).mockResolvedValueOnce(terrainProvider as never);
+
+    render(<CesiumViewer />);
+
+    await waitFor(() => expect(vi.mocked(Viewer)).toHaveBeenCalledTimes(1));
+
+    const viewer = vi.mocked(Viewer).mock.results[0].value;
+
+    await waitFor(() =>
+      expect(vi.mocked(CesiumTerrainProvider.fromUrl)).toHaveBeenCalledWith('https://tiles.example/terrain/'),
+    );
+    await waitFor(() => expect(viewer.terrainProvider).toBe(terrainProvider));
+    expect(viewer.scene.requestRender).toHaveBeenCalled();
+  });
+
+  it('samples terrain height and updates local route after terrain becomes ready', async () => {
+    useViewModeStore.setState({
+      route: { viewModeId: 'local', lat: 30, lon: 120 },
+      history: [],
+      saved: {},
+    });
+
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        jsonResponse({
+          apiBaseUrl: 'http://api.test',
+          map: {
+            terrainProvider: 'ion',
+            cesiumIonAccessToken: 'token',
+          },
+        }),
+      ),
+    );
+
+    vi.mocked(sampleTerrainMostDetailed).mockResolvedValueOnce([
+      { longitude: 120, latitude: 30, height: 1234 },
+    ] as never);
+
+    render(<CesiumViewer />);
+
+    await waitFor(() => expect(vi.mocked(Viewer)).toHaveBeenCalledTimes(1));
+
+    await waitFor(() => expect(vi.mocked(createWorldTerrainAsync)).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(vi.mocked(sampleTerrainMostDetailed)).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(useViewModeStore.getState().route).toMatchObject({ heightMeters: 1234 }));
+
+    expect(vi.mocked(Cartesian3.fromDegrees)).toHaveBeenCalledWith(120, 30, 1234 + 3000);
   });
 
   it('falls back to ellipsoid terrain and shows a notice when ion terrain fails to load', async () => {
