@@ -3,12 +3,24 @@ import { useAircraftDemoStore } from '../../state/aircraftDemo';
 import { useCameraPerspectiveStore, type CameraPerspectiveId } from '../../state/cameraPerspective';
 
 const PERSPECTIVE_LABELS: Record<CameraPerspectiveId, string> = {
+  human: '人眼',
   upward: '仰视',
   forward: '平视',
   free: '自由',
 };
 
 function PerspectiveIcon({ id }: { id: CameraPerspectiveId }) {
+  if (id === 'human') {
+    return (
+      <svg viewBox="0 0 16 16" className="h-3.5 w-3.5" aria-hidden="true">
+        <path
+          d="M8 2.4a2.2 2.2 0 1 1 0 4.4 2.2 2.2 0 0 1 0-4.4zm0 5.2c2.5 0 4.6 1.6 4.6 3.6V14H3.4v-2.8c0-2 2.1-3.6 4.6-3.6z"
+          fill="currentColor"
+        />
+      </svg>
+    );
+  }
+
   if (id === 'upward') {
     return (
       <svg viewBox="0 0 16 16" className="h-3.5 w-3.5" aria-hidden="true">
