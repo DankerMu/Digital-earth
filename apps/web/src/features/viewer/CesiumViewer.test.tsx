@@ -197,9 +197,7 @@ vi.mock('cesium', () => {
     fromUrl: vi.fn(async () => ({ kind: 'terrain-from-url' })),
   };
 
-  const sampleTerrainMostDetailed = vi.fn(async (_provider: unknown, positions: unknown[]) =>
-    positions.map((position) => ({ ...(position as Record<string, unknown>), height: 100 })),
-  );
+  const sampleTerrainMostDetailed = vi.fn(async (_provider: unknown, positions: unknown[]) => positions);
 
   const camera = {
     heading: 1,
@@ -210,10 +208,7 @@ vi.mock('cesium', () => {
     frustum: { near: 0.1, far: 1000 },
     computeViewRectangle: vi.fn(() => null),
     setView: vi.fn(),
-    flyTo: vi.fn((options?: unknown) => {
-      const complete = (options as { complete?: (() => void) | undefined } | undefined)?.complete;
-      if (typeof complete === 'function') complete();
-    }),
+    flyTo: vi.fn(),
     pickEllipsoid: vi.fn(() => ({ pickedEllipsoid: true })),
     changed: makeEvent(),
     moveEnd: makeEvent(),
@@ -369,27 +364,6 @@ vi.mock('cesium', () => {
         north,
       })),
     },
-    EllipsoidSurfaceAppearance: Object.assign(
-      vi.fn(function (options: unknown) {
-        return { ...(options as Record<string, unknown>) };
-      }),
-      { VERTEX_FORMAT: { kind: 'vertex-format' } },
-    ),
-    RectangleGeometry: vi.fn(function (options: unknown) {
-      return { ...(options as Record<string, unknown>) };
-    }),
-    GeometryInstance: vi.fn(function (options: unknown) {
-      return { ...(options as Record<string, unknown>) };
-    }),
-    Material: {
-      fromType: vi.fn((_type: string, options?: unknown) => ({
-        uniforms: { ...(options as Record<string, unknown>) },
-      })),
-    },
-    Primitive: vi.fn(function (options?: unknown) {
-      const show = (options as { show?: unknown } | undefined)?.show;
-      return { show: typeof show === 'boolean' ? show : true };
-    }),
     PolygonHierarchy: vi.fn(function (positions: unknown[], holes?: unknown[]) {
       return { positions, holes: holes ?? [] };
     }),
@@ -450,7 +424,6 @@ vi.mock('cesium', () => {
     __mocks: {
       getMorphCompleteHandler: () => morphCompleteHandler,
       getCamera: () => camera,
-      getViewer: () => viewer,
       triggerLeftClick: (movement: { position?: unknown }) => {
         leftClickHandler?.(movement);
       },
@@ -507,7 +480,7 @@ function jsonResponse(payload: unknown) {
 }
 
 describe('CesiumViewer', () => {
-  beforeEach(async () => {
+  beforeEach(() => {
     vi.clearAllMocks();
     vi.unstubAllGlobals();
     precipitationParticlesMocks.instances.length = 0;
@@ -543,27 +516,6 @@ describe('CesiumViewer', () => {
     usePerformanceModeStore.setState({ mode: 'high' });
     useViewModeStore.setState({ route: { viewModeId: 'global' }, history: [], saved: {} });
     useViewerStatsStore.setState({ fps: null });
-
-    const cesium = await import('cesium');
-    const viewer = (
-      cesium as unknown as {
-        __mocks: {
-          getViewer: () => {
-            scene: { screenSpaceCameraController: Record<string, unknown> };
-          };
-        };
-      }
-    ).__mocks.getViewer();
-
-    const controller = viewer.scene.screenSpaceCameraController as Record<string, unknown>;
-    controller.minimumZoomDistance = 0;
-    controller.maximumZoomDistance = 0;
-    controller.enableRotate = true;
-    controller.enableTilt = true;
-    controller.enableLook = true;
-    controller.rotateEventTypes = 'rotate';
-    controller.lookEventTypes = 'look';
-
     vi.stubGlobal(
       'fetch',
       vi.fn(async (input: RequestInfo | URL) => {
@@ -898,20 +850,19 @@ describe('CesiumViewer', () => {
       ),
     );
 
-    vi.mocked(sampleTerrainMostDetailed)
-      .mockResolvedValueOnce([{ longitude: 120, latitude: 30, height: 1234 }] as never)
-      .mockResolvedValueOnce([{ longitude: 120, latitude: 30, height: 1234 }] as never);
+    vi.mocked(sampleTerrainMostDetailed).mockResolvedValueOnce([
+      { longitude: 120, latitude: 30, height: 1234 },
+    ] as never);
 
     render(<CesiumViewer />);
 
     await waitFor(() => expect(vi.mocked(Viewer)).toHaveBeenCalledTimes(1));
 
     await waitFor(() => expect(vi.mocked(createWorldTerrainAsync)).toHaveBeenCalledTimes(1));
-    await waitFor(() => expect(vi.mocked(sampleTerrainMostDetailed)).toHaveBeenCalled());
+    await waitFor(() => expect(vi.mocked(sampleTerrainMostDetailed)).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(useViewModeStore.getState().route).toMatchObject({ heightMeters: 1234 }));
 
-    expect(vi.mocked(Cartesian3.fromDegrees)).toHaveBeenCalledWith(120, 30, 350);
-    expect(vi.mocked(Cartesian3.fromDegrees)).toHaveBeenCalledWith(120, 30, 1234 + 1.7);
+    expect(vi.mocked(Cartesian3.fromDegrees)).toHaveBeenCalledWith(120, 30, 1234 + 3000);
   });
 
   it('falls back to ellipsoid terrain and shows a notice when ion terrain fails to load', async () => {
@@ -1666,33 +1617,25 @@ describe('CesiumViewer', () => {
     const viewer = vi.mocked(Viewer).mock.results[0].value;
 
     await waitFor(() => {
-      expect(viewer.camera.flyTo).toHaveBeenCalledWith(
-        expect.objectContaining({
-          destination: { destination: true },
-          orientation: {
-            heading: 1,
-            pitch: 0,
-            roll: 0,
-          },
-          duration: 1.4,
-        }),
-      );
+      expect(viewer.camera.flyTo).toHaveBeenCalledWith({
+        destination: { destination: true },
+        orientation: {
+          heading: 1,
+          pitch: -Math.PI / 4,
+          roll: 0,
+        },
+        duration: 2.5,
+      });
     });
-
-    await waitFor(() =>
-      expect(viewer.camera.flyTo).toHaveBeenCalledWith(
-        expect.objectContaining({
-          orientation: expect.objectContaining({ pitch: 0 }),
-          duration: 1.1,
-        }),
-      ),
-    );
 
     expect(viewer.scene.skyBox.show).toBe(true);
     expect(viewer.scene.skyAtmosphere.show).toBe(true);
-    expect(viewer.scene.fog.enabled).toBe(false);
-    expect(viewer.camera.frustum.near).toBeCloseTo(0.0615);
-    expect(viewer.camera.frustum.far).toBe(49_200);
+    expect(viewer.scene.fog.enabled).toBe(true);
+    expect(viewer.scene.fog.screenSpaceErrorFactor).toBe(3.0);
+    expect(viewer.scene.fog.minimumBrightness).toBe(0.12);
+    expect(viewer.scene.fog.density).toBeGreaterThan(0);
+    expect(viewer.camera.frustum.near).toBe(0.2);
+    expect(viewer.camera.frustum.far).toBe(50_000);
 
     const panel = await screen.findByLabelText('Local info');
     expect(panel).toHaveTextContent('30.0000, 120.0000');
@@ -1718,29 +1661,17 @@ describe('CesiumViewer', () => {
     await waitFor(() =>
       expect(viewer.camera.flyTo).toHaveBeenCalledWith(
         expect.objectContaining({
-          duration: 1.4,
+          duration: 2.5,
           orientation: expect.objectContaining({
-            pitch: 0,
+            pitch: -Math.PI / 4,
           }),
         }),
       ),
     );
 
-    await waitFor(() =>
-      expect(viewer.camera.flyTo).toHaveBeenCalledWith(
-        expect.objectContaining({
-          duration: 1.1,
-          orientation: expect.objectContaining({
-            pitch: 0,
-          }),
-        }),
-      ),
-    );
-
-    expect(viewer.scene.screenSpaceCameraController.minimumZoomDistance).toBe(1);
     expect(viewer.scene.screenSpaceCameraController.enableTilt).toBe(true);
     expect(viewer.scene.screenSpaceCameraController.enableLook).toBe(true);
-    expect(viewer.scene.screenSpaceCameraController.enableRotate).toBe(false);
+    expect(viewer.scene.screenSpaceCameraController.enableRotate).toBe(true);
 
     const callsBefore = viewer.camera.flyTo.mock.calls.length;
 
@@ -1749,7 +1680,6 @@ describe('CesiumViewer', () => {
     });
 
     await waitFor(() => expect(viewer.camera.flyTo).toHaveBeenCalledTimes(callsBefore + 1));
-    expect(viewer.scene.screenSpaceCameraController.minimumZoomDistance).toBe(100);
     expect(viewer.scene.screenSpaceCameraController.enableRotate).toBe(false);
     expect(viewer.scene.screenSpaceCameraController.enableLook).toBe(true);
     expect(viewer.scene.screenSpaceCameraController.lookEventTypes).toBe(0);
@@ -1786,7 +1716,6 @@ describe('CesiumViewer', () => {
       expect(viewer.scene.screenSpaceCameraController.enableLook).toBe(true);
       expect(viewer.scene.screenSpaceCameraController.enableRotate).toBe(true);
     });
-    expect(viewer.scene.screenSpaceCameraController.minimumZoomDistance).toBe(100);
     expect(viewer.camera.flyTo).toHaveBeenCalledTimes(callsAfterForward);
   });
 
@@ -2124,11 +2053,11 @@ describe('CesiumViewer', () => {
 
     await waitFor(() => expect(useViewModeStore.getState().route.viewModeId).toBe('local'));
     await waitFor(() =>
-      expect(viewer.camera.flyTo).toHaveBeenCalledTimes(callsBeforeEnterLocal + 2),
+      expect(viewer.camera.flyTo).toHaveBeenCalledTimes(callsBeforeEnterLocal + 1),
     );
 
     expect(viewer.camera.flyTo).toHaveBeenLastCalledWith(
-      expect.objectContaining({ duration: 1.1 }),
+      expect.objectContaining({ duration: 2.5 }),
     );
   });
 

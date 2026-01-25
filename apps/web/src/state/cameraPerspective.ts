@@ -1,11 +1,11 @@
 import { useSyncExternalStore } from 'react';
 
-export type CameraPerspectiveId = 'human' | 'upward' | 'forward' | 'free';
+export type CameraPerspectiveId = 'upward' | 'forward' | 'free';
 
-export const DEFAULT_CAMERA_PERSPECTIVE_ID: CameraPerspectiveId = 'human';
+export const DEFAULT_CAMERA_PERSPECTIVE_ID: CameraPerspectiveId = 'free';
 
 export function isCameraPerspectiveId(value: unknown): value is CameraPerspectiveId {
-  return value === 'human' || value === 'upward' || value === 'forward' || value === 'free';
+  return value === 'upward' || value === 'forward' || value === 'free';
 }
 
 type CameraPerspectiveState = {
@@ -47,10 +47,9 @@ function safeWriteCameraPerspectiveId(cameraPerspectiveId: CameraPerspectiveId) 
 }
 
 function nextCameraPerspective(current: CameraPerspectiveId): CameraPerspectiveId {
-  if (current === 'human') return 'forward';
   if (current === 'forward') return 'upward';
   if (current === 'upward') return 'free';
-  return 'human';
+  return 'forward';
 }
 
 let cameraPerspectiveId: CameraPerspectiveId = safeReadCameraPerspectiveId();
@@ -104,3 +103,4 @@ export const useCameraPerspectiveStore: StoreHook = Object.assign(useCameraPersp
   getState,
   setState,
 });
+
