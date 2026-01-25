@@ -105,6 +105,7 @@ def generate_ecmwf_raster_tiles(
     *,
     valid_time: object | None = None,
     level: object = "sfc",
+    temperature_variable: str | None = None,
     temperature: bool = True,
     cloud: bool = True,
     precipitation: bool = True,
@@ -127,7 +128,11 @@ def generate_ecmwf_raster_tiles(
     output_dir = Path(output_dir)
 
     if temperature:
-        generator = TemperatureTileGenerator(cube)
+        generator = (
+            TemperatureTileGenerator(cube)
+            if temperature_variable is None
+            else TemperatureTileGenerator(cube, variable=str(temperature_variable))
+        )
         try:
             results.append(
                 generator.generate(

@@ -19,17 +19,14 @@ SHARED_SRC = REPO_ROOT / "packages" / "shared" / "src"
 for src in (PIPELINE_SRC, SHARED_SRC, CONFIG_SRC):
     sys.path.insert(0, str(src))
 
-import numpy as np  # noqa: E402
-import xarray as xr  # noqa: E402
-from cfgrib.messages import FileStream  # noqa: E402
-
-from datacube.core import DataCube  # noqa: E402
 from datacube.decoder import decode_grib  # noqa: E402
 from datacube.errors import DataCubeDecodeError  # noqa: E402
 from tiles.generate import DEFAULT_TILE_FORMATS, generate_ecmwf_raster_tiles  # noqa: E402
+from tiling.humidity_tiles import HumidityTileGenerator, HumidityTilingError  # noqa: E402
 
 
 DEFAULT_INPUT_GLOB = "Data/EC-forecast/EC预报/W_NAFP_C_ECMF_*.grib"
+DEFAULT_LEVELS = ("sfc", "850", "700", "500", "300")
 
 
 def _parse_formats(values: Sequence[str]) -> tuple[str, ...]:
@@ -112,6 +109,14 @@ class _GribCandidate:
 
 
 def _probe_grib_candidate(path: Path) -> _GribCandidate:
+    try:
+        from cfgrib.messages import FileStream
+    except ModuleNotFoundError as exc:
+        raise RuntimeError(
+            "This script requires the optional dependency `cfgrib` "
+            "(and the `eccodes` system library)."
+        ) from exc
+
     fs = FileStream(str(path), errors="ignore")
 
     valid_time: datetime | None = None
@@ -133,22 +138,22 @@ def _probe_grib_candidate(path: Path) -> _GribCandidate:
 
     has_t2m = "2t" in short_names or "t2m" in short_names
     has_tcc = "tcc" in short_names
-    has_tp = "tp" in short_names
     has_u10 = "10u" in short_names
     has_v10 = "10v" in short_names
     has_t_pl = ("t", "isobaricInhPa") in combos
     has_u_pl = ("u", "isobaricInhPa") in combos
     has_v_pl = ("v", "isobaricInhPa") in combos
+    has_r_pl = ("r", "isobaricInhPa") in combos
 
     score = (
-        int(has_tp),
-        int(has_tcc),
         int(has_t2m),
+        int(has_tcc),
         int(has_u10),
         int(has_v10),
         int(has_t_pl),
         int(has_u_pl),
         int(has_v_pl),
+        int(has_r_pl),
     )
 
     try:
@@ -221,8 +226,11 @@ def _expand_inputs(values: Sequence[str]) -> list[Path]:
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="python services/data-pipeline/scripts/batch_generate_ecmwf_tiles.py",
-        description="Batch-generate ECMWF raster tiles from local GRIB files.",
+        prog="python services/data-pipeline/scripts/batch_generate_multilevel_tiles.py",
+        description=(
+            "Batch-generate ECMWF temperature + wind speed + cloud/humidity tiles for multiple levels "
+            "(surface + pressure levels) from local GRIB files."
+        ),
     )
     parser.add_argument(
         "inputs",
@@ -234,22 +242,26 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--output-dir",
-        required=True,
-        help="Directory to write tiles into.",
+        type=Path,
+        default=Path("Data/tiles"),
+        help=(
+            "Tiles root directory (default: Data/tiles). Output is written under "
+            "ecmwf/temp/<time>/<level>/..., ecmwf/wind_speed/<time>/<level>/..., "
+            "ecmwf/tcc/<time>/sfc/... and ecmwf/humidity/<time>/<level>/..."
+        ),
     )
     parser.add_argument(
         "--valid-time",
         default=None,
-        help="Optional ISO8601 timestamp; defaults to the first time in each GRIB.",
+        help="Optional ISO8601 timestamp; defaults to the valid_time in each GRIB.",
     )
-    parser.add_argument("--level", default="sfc", help="Pressure level or 'sfc'.")
     parser.add_argument(
         "--levels",
         action="append",
-        default=[],
+        default=[",".join(DEFAULT_LEVELS)],
         help=(
             "Comma-separated list of levels to generate (e.g. sfc,850,700,500,300). "
-            "May be repeated. When provided, --level is ignored."
+            f"Defaults to {','.join(DEFAULT_LEVELS)}. May be repeated."
         ),
     )
     parser.add_argument(
@@ -262,8 +274,8 @@ def _build_parser() -> argparse.ArgumentParser:
             "Disable to process every GRIB file."
         ),
     )
-    parser.add_argument("--min-zoom", type=int, default=0)
-    parser.add_argument("--max-zoom", type=int, default=0)
+    parser.add_argument("--min-zoom", type=int, default=None)
+    parser.add_argument("--max-zoom", type=int, default=None)
     parser.add_argument("--tile-size", type=int, default=None)
     parser.add_argument(
         "--format",
@@ -273,34 +285,28 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Tile format(s): png, webp. May be repeated or comma-separated.",
     )
     parser.add_argument(
-        "--temperature",
-        action=argparse.BooleanOptionalAction,
-        default=True,
-        help="Generate temperature tiles (default: enabled).",
+        "--wind-speed-opacity",
+        type=float,
+        default=0.35,
+        help="Wind speed tile opacity in [0, 1] (default: 0.35).",
     )
     parser.add_argument(
         "--cloud",
         action=argparse.BooleanOptionalAction,
         default=True,
-        help="Generate total cloud cover tiles (default: enabled).",
+        help="Generate surface cloud tiles (tcc) (default: true).",
     )
     parser.add_argument(
-        "--precipitation",
+        "--humidity",
         action=argparse.BooleanOptionalAction,
         default=True,
-        help="Generate precipitation amount tiles (default: enabled).",
+        help="Generate isobaric humidity tiles (r) (default: true).",
     )
     parser.add_argument(
-        "--wind-speed",
-        action=argparse.BooleanOptionalAction,
-        default=False,
-        help="Generate optional wind speed background tiles (default: disabled).",
-    )
-    parser.add_argument(
-        "--wind-speed-opacity",
+        "--humidity-opacity",
         type=float,
-        default=0.35,
-        help="Wind speed tile opacity in [0, 1] (default: 0.35).",
+        default=1.0,
+        help="Humidity tile opacity in [0, 1] (default: 1.0).",
     )
     parser.add_argument(
         "--fail-fast",
@@ -322,7 +328,7 @@ def main(argv: Iterable[str] | None = None) -> int:
     output_dir.mkdir(parents=True, exist_ok=True)
 
     resolved_formats = _parse_formats(tuple(args.formats)) or DEFAULT_TILE_FORMATS
-    resolved_levels = _parse_levels(tuple(args.levels)) or (str(args.level),)
+    resolved_levels = _parse_levels(tuple(args.levels))
     surface_levels = tuple(level for level in resolved_levels if _is_surface_level(level))
     isobaric_levels = tuple(
         level for level in resolved_levels if not _is_surface_level(level)
@@ -351,14 +357,14 @@ def main(argv: Iterable[str] | None = None) -> int:
     failures = 0
     skipped_surface_decode = 0
     skipped_isobaric_decode = 0
-    previous_tp: np.ndarray | None = None
-    previous_time: np.datetime64 | None = None
+    skipped_humidity_decode = 0
 
     for idx, candidate in enumerate(selected, start=1):
         path = candidate.path
         print(f"[{idx}/{len(selected)}] {path}")
         cube_surface = None
         cube_isobaric = None
+        cube_humidity = None
         try:
             if wants_surface:
                 try:
@@ -384,30 +390,35 @@ def main(argv: Iterable[str] | None = None) -> int:
                     if args.fail_fast:
                         raise
 
+                if bool(args.humidity):
+                    try:
+                        cube_humidity = decode_grib(path, subset="humidity")
+                    except DataCubeDecodeError as exc:
+                        skipped_humidity_decode += 1
+                        print(
+                            f"  WARNING: failed to decode humidity subset: {exc}",
+                            file=sys.stderr,
+                        )
+                        if args.fail_fast:
+                            raise
+
             resolved_valid_time = (
                 args.valid_time if args.valid_time is not None else candidate.valid_time
             )
 
-            wants_surface_layers = any(
-                (
-                    bool(args.temperature),
-                    bool(args.cloud),
-                    bool(args.wind_speed),
-                )
-            )
-            if wants_surface and cube_surface is not None and wants_surface_layers:
+            if wants_surface and cube_surface is not None:
                 results = generate_ecmwf_raster_tiles(
                     cube_surface,
                     output_dir,
                     valid_time=resolved_valid_time,
                     level="sfc",
-                    temperature=bool(args.temperature),
+                    temperature=True,
                     cloud=bool(args.cloud),
                     precipitation=False,
-                    wind_speed=bool(args.wind_speed),
+                    wind_speed=True,
                     wind_speed_opacity=float(args.wind_speed_opacity),
-                    min_zoom=int(args.min_zoom),
-                    max_zoom=int(args.max_zoom),
+                    min_zoom=int(args.min_zoom) if args.min_zoom is not None else None,
+                    max_zoom=int(args.max_zoom) if args.max_zoom is not None else None,
                     tile_size=int(args.tile_size)
                     if args.tile_size is not None
                     else None,
@@ -419,80 +430,7 @@ def main(argv: Iterable[str] | None = None) -> int:
                         json.dumps(result.__dict__, ensure_ascii=False, default=str),
                     )
 
-            if wants_surface and cube_surface is not None and bool(args.precipitation):
-                ds_surface = cube_surface.dataset
-                if "tp" not in ds_surface.data_vars:
-                    print(
-                        "  WARNING: tp missing; skipping precipitation tiles.",
-                        file=sys.stderr,
-                    )
-                else:
-                    tp_slice = ds_surface["tp"].isel(time=0, level=0)
-                    current_tp = np.asarray(tp_slice.values).astype(np.float32, copy=False)
-                    current_time = np.asarray(ds_surface["time"].values)[0].astype(
-                        "datetime64[s]"
-                    )
-                    lat = np.asarray(ds_surface["lat"].values, dtype=np.float32)
-                    lon = np.asarray(ds_surface["lon"].values, dtype=np.float32)
-
-                    prev_tp = previous_tp
-                    prev_time = previous_time
-                    if prev_tp is None or prev_time is None:
-                        interval_hours = 3
-                        if idx < len(selected):
-                            next_dt = selected[idx].valid_time - candidate.valid_time
-                            candidate_hours = int(next_dt.total_seconds() // 3600)
-                            if candidate_hours > 0:
-                                interval_hours = candidate_hours
-                        prev_tp = np.zeros_like(current_tp, dtype=np.float32)
-                        prev_time = current_time - np.timedelta64(int(interval_hours), "h")
-
-                    ds_tp = xr.Dataset(
-                        {
-                            "tp": (
-                                ("time", "lat", "lon"),
-                                np.stack([prev_tp, current_tp], axis=0),
-                            )
-                        },
-                        coords={"time": [prev_time, current_time], "lat": lat, "lon": lon},
-                    )
-                    cube_tp = DataCube.from_dataset(ds_tp)
-                    try:
-                        results = generate_ecmwf_raster_tiles(
-                            cube_tp,
-                            output_dir,
-                            valid_time=current_time,
-                            level="sfc",
-                            temperature=False,
-                            cloud=False,
-                            precipitation=True,
-                            wind_speed=False,
-                            min_zoom=int(args.min_zoom),
-                            max_zoom=int(args.max_zoom),
-                            tile_size=int(args.tile_size)
-                            if args.tile_size is not None
-                            else None,
-                            formats=resolved_formats,
-                        )
-                        for result in results:
-                            print(
-                                " ",
-                                json.dumps(
-                                    result.__dict__, ensure_ascii=False, default=str
-                                ),
-                            )
-                    finally:
-                        cube_tp.dataset.close()
-
-                    previous_tp = current_tp
-                    previous_time = current_time
-
-            wants_isobaric_layers = any((bool(args.temperature), bool(args.wind_speed)))
-            if (
-                wants_isobaric
-                and cube_isobaric is not None
-                and wants_isobaric_layers
-            ):
+            if wants_isobaric and cube_isobaric is not None:
                 for level in isobaric_levels:
                     results = generate_ecmwf_raster_tiles(
                         cube_isobaric,
@@ -500,13 +438,13 @@ def main(argv: Iterable[str] | None = None) -> int:
                         valid_time=resolved_valid_time,
                         level=level,
                         temperature_variable="t",
-                        temperature=bool(args.temperature),
+                        temperature=True,
                         cloud=False,
                         precipitation=False,
-                        wind_speed=bool(args.wind_speed),
+                        wind_speed=True,
                         wind_speed_opacity=float(args.wind_speed_opacity),
-                        min_zoom=int(args.min_zoom),
-                        max_zoom=int(args.max_zoom),
+                        min_zoom=int(args.min_zoom) if args.min_zoom is not None else None,
+                        max_zoom=int(args.max_zoom) if args.max_zoom is not None else None,
                         tile_size=int(args.tile_size)
                         if args.tile_size is not None
                         else None,
@@ -515,10 +453,45 @@ def main(argv: Iterable[str] | None = None) -> int:
                     for result in results:
                         print(
                             " ",
-                            json.dumps(
-                                result.__dict__, ensure_ascii=False, default=str
-                            ),
+                            json.dumps(result.__dict__, ensure_ascii=False, default=str),
                         )
+
+            if (
+                wants_isobaric
+                and bool(args.humidity)
+                and cube_humidity is not None
+                and isobaric_levels
+            ):
+                generator = HumidityTileGenerator(cube_humidity)
+                for level in isobaric_levels:
+                    try:
+                        result = generator.generate(
+                            output_dir,
+                            valid_time=resolved_valid_time,
+                            level=level,
+                            opacity=float(args.humidity_opacity),
+                            min_zoom=int(args.min_zoom)
+                            if args.min_zoom is not None
+                            else None,
+                            max_zoom=int(args.max_zoom)
+                            if args.max_zoom is not None
+                            else None,
+                            tile_size=int(args.tile_size)
+                            if args.tile_size is not None
+                            else None,
+                            formats=resolved_formats,
+                        )
+                        print(
+                            " ",
+                            json.dumps(result.__dict__, ensure_ascii=False, default=str),
+                        )
+                    except HumidityTilingError as exc:
+                        print(
+                            f"  WARNING: failed to generate humidity tiles for level={level!r}: {exc}",
+                            file=sys.stderr,
+                        )
+                        if args.fail_fast:
+                            raise
         except Exception as exc:  # noqa: BLE001
             failures += 1
             print(f"  ERROR: {exc}", file=sys.stderr)
@@ -529,6 +502,8 @@ def main(argv: Iterable[str] | None = None) -> int:
                 cube_surface.dataset.close()
             if cube_isobaric is not None:
                 cube_isobaric.dataset.close()
+            if cube_humidity is not None:
+                cube_humidity.dataset.close()
 
     if skipped_surface_decode:
         print(
@@ -538,6 +513,11 @@ def main(argv: Iterable[str] | None = None) -> int:
     if skipped_isobaric_decode:
         print(
             f"Skipped isobaric subset for {skipped_isobaric_decode} file(s).",
+            file=sys.stderr,
+        )
+    if skipped_humidity_decode:
+        print(
+            f"Skipped humidity subset for {skipped_humidity_decode} file(s).",
             file=sys.stderr,
         )
 

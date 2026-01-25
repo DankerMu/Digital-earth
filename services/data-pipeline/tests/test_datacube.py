@@ -282,6 +282,61 @@ def test_decode_grib_filters_surface_variables(monkeypatch: pytest.MonkeyPatch) 
     assert all(call.get("engine") == "cfgrib" for call in calls)
 
 
+def test_decode_grib_filters_humidity_variables(monkeypatch: pytest.MonkeyPatch) -> None:
+    from datacube.decoder import decode_grib
+
+    time = np.array(["2026-01-01T00:00:00"], dtype="datetime64[s]")
+    levels = np.array([850.0, 700.0], dtype=np.float32)
+    lat = np.array([10.0, 11.0], dtype=np.float32)
+    lon = np.array([100.0, 101.0, 102.0], dtype=np.float32)
+
+    rh_ds = xr.Dataset(
+        {
+            "r": xr.DataArray(
+                np.full((1, levels.size, lat.size, lon.size), 50.0, dtype=np.float32),
+                dims=["valid_time", "isobaricInhPa", "latitude", "longitude"],
+                attrs={"units": "%"},
+            )
+        },
+        coords={
+            "valid_time": time,
+            "isobaricInhPa": levels,
+            "latitude": lat,
+            "longitude": lon,
+        },
+    )
+
+    calls: list[dict[str, object]] = []
+
+    def fake_open_dataset(*args, **kwargs):  # noqa: ANN001,ANN002
+        backend_kwargs = kwargs.get("backend_kwargs") or {}
+        calls.append(
+            {
+                "engine": kwargs.get("engine"),
+                "backend_kwargs": backend_kwargs,
+            }
+        )
+        keys = dict(backend_kwargs.get("filter_by_keys") or {})
+        short = keys.get("shortName")
+        if short == "r":
+            return rh_ds
+        return xr.Dataset()
+
+    monkeypatch.setattr("datacube.decoder.xr.open_dataset", fake_open_dataset)
+
+    cube = decode_grib("dummy.grib", subset="humidity")
+    out = cube.dataset
+    assert set(out.dims) == {"time", "level", "lat", "lon"}
+    assert "r" in out.data_vars
+
+    short_names = [
+        (call.get("backend_kwargs") or {}).get("filter_by_keys", {}).get("shortName")
+        for call in calls
+    ]
+    assert "r" in set(short_names)
+    assert all(call.get("engine") == "cfgrib" for call in calls)
+
+
 def test_decode_grib_missing_dependency_is_wrapped(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
