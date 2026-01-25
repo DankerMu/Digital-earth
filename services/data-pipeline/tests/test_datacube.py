@@ -339,6 +339,232 @@ def test_decode_grib_filters_humidity_variables(
     assert all(call.get("engine") == "cfgrib" for call in calls)
 
 
+def test_decode_grib_humidity_subset_aliases_and_no_variables_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from datacube.decoder import decode_grib
+    from datacube.errors import DataCubeDecodeError
+
+    time = np.array(["2026-01-01T00:00:00"], dtype="datetime64[s]")
+    levels = np.array([850.0], dtype=np.float32)
+    lat = np.array([10.0, 11.0], dtype=np.float32)
+    lon = np.array([100.0, 101.0, 102.0], dtype=np.float32)
+
+    rh_ds = xr.Dataset(
+        {
+            "r": xr.DataArray(
+                np.full((1, levels.size, lat.size, lon.size), 50.0, dtype=np.float32),
+                dims=["valid_time", "isobaricInhPa", "latitude", "longitude"],
+                attrs={"units": "%"},
+            )
+        },
+        coords={
+            "valid_time": time,
+            "isobaricInhPa": levels,
+            "latitude": lat,
+            "longitude": lon,
+        },
+    )
+
+    calls: list[dict[str, object]] = []
+
+    def fake_open_dataset(*args, **kwargs):  # noqa: ANN001,ANN002
+        backend_kwargs = kwargs.get("backend_kwargs") or {}
+        calls.append(
+            {
+                "engine": kwargs.get("engine"),
+                "backend_kwargs": backend_kwargs,
+            }
+        )
+        keys = dict(backend_kwargs.get("filter_by_keys") or {})
+        short = keys.get("shortName")
+        level_type = keys.get("typeOfLevel")
+        if short == "r" and level_type == "isobaricInhPa":
+            return rh_ds
+        return xr.Dataset()
+
+    monkeypatch.setattr("datacube.decoder.xr.open_dataset", fake_open_dataset)
+
+    cube = decode_grib("dummy.grib", subset="rh")
+    assert "r" in cube.dataset.data_vars
+
+    cube = decode_grib("dummy.grib", subset="isobaric-humidity")
+    assert "r" in cube.dataset.data_vars
+
+    def fake_open_dataset_empty(*args, **kwargs):  # noqa: ANN001,ANN002
+        backend_kwargs = kwargs.get("backend_kwargs") or {}
+        calls.append(
+            {
+                "engine": kwargs.get("engine"),
+                "backend_kwargs": backend_kwargs,
+            }
+        )
+        return xr.Dataset()
+
+    monkeypatch.setattr("datacube.decoder.xr.open_dataset", fake_open_dataset_empty)
+
+    with pytest.raises(DataCubeDecodeError, match="no supported humidity variables"):
+        decode_grib("dummy.grib", subset="humidity")
+
+    short_names = [
+        (call.get("backend_kwargs") or {}).get("filter_by_keys", {}).get("shortName")
+        for call in calls
+    ]
+    assert "r" in set(short_names)
+
+
+def test_decode_grib_rejects_invalid_subset() -> None:
+    from datacube.decoder import decode_grib
+
+    with pytest.raises(ValueError, match="subset must be one of"):
+        decode_grib("dummy.grib", subset="nope")
+
+
+def test_decode_grib_filters_isobaric_variables(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from datacube.decoder import decode_grib
+
+    time = np.datetime64("2026-01-01T00:00:00")
+    levels = np.array([850.0, 700.0], dtype=np.float32)
+    lat = np.array([10.0, 11.0], dtype=np.float32)
+    lon = np.array([100.0, 101.0, 102.0], dtype=np.float32)
+
+    def make_pl(name: str) -> xr.Dataset:
+        da = xr.DataArray(
+            np.zeros((levels.size, lat.size, lon.size), dtype=np.float32),
+            dims=["isobaricInhPa", "latitude", "longitude"],
+            name=name,
+        )
+        return xr.Dataset(
+            {name: da},
+            coords={
+                "valid_time": time,
+                "isobaricInhPa": levels,
+                "latitude": lat,
+                "longitude": lon,
+            },
+        )
+
+    t_ds = make_pl("t")
+    u_ds = make_pl("u")
+    v_ds = make_pl("v")
+
+    def fake_open_dataset(*args, **kwargs):  # noqa: ANN001,ANN002
+        backend_kwargs = kwargs.get("backend_kwargs") or {}
+        keys = dict(backend_kwargs.get("filter_by_keys") or {})
+        short = keys.get("shortName")
+        if short == "t":
+            return t_ds
+        if short == "u":
+            return u_ds
+        if short == "v":
+            return v_ds
+        return xr.Dataset()
+
+    monkeypatch.setattr("datacube.decoder.xr.open_dataset", fake_open_dataset)
+
+    cube = decode_grib("dummy.grib", subset="isobaric")
+    out = cube.dataset
+    assert set(out.dims) == {"time", "level", "lat", "lon"}
+    assert "t" in out.data_vars
+    assert "u" in out.data_vars
+    assert "v" in out.data_vars
+
+
+def test_decode_grib_surface_falls_back_to_height_above_ground_wind(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from datacube.decoder import decode_grib
+
+    lat = np.array([10.0, 11.0], dtype=np.float32)
+    lon = np.array([100.0, 101.0, 102.0], dtype=np.float32)
+
+    temp_ds = xr.Dataset(
+        {
+            "t2m": xr.DataArray(
+                np.full((2, 3), 273.15, dtype=np.float32),
+                dims=["latitude", "longitude"],
+                attrs={"units": "K"},
+            )
+        },
+        coords={
+            "valid_time": np.datetime64("2026-01-01T00:00:00"),
+            "latitude": lat,
+            "longitude": lon,
+        },
+    )
+
+    wind_u10_ds = xr.Dataset(
+        {
+            "u10": xr.DataArray(
+                np.full((2, 3), 2.0, dtype=np.float32),
+                dims=["latitude", "longitude"],
+                attrs={"units": "m/s"},
+            )
+        },
+        coords={
+            "time": np.datetime64("2026-01-01T00:00:00"),
+            "step": np.timedelta64(0, "h"),
+            "latitude": lat,
+            "longitude": lon,
+        },
+    )
+
+    wind_u_ds = xr.Dataset(
+        {
+            "u": xr.DataArray(
+                np.full((2, 3), 2.0, dtype=np.float32),
+                dims=["latitude", "longitude"],
+                attrs={"units": "m/s"},
+            )
+        },
+        coords={
+            "time": np.datetime64("2026-01-01T00:00:00"),
+            "step": np.timedelta64(0, "h"),
+            "latitude": lat,
+            "longitude": lon,
+        },
+    )
+    wind_v_ds = xr.Dataset(
+        {
+            "v": xr.DataArray(
+                np.full((2, 3), 3.0, dtype=np.float32),
+                dims=["latitude", "longitude"],
+                attrs={"units": "m/s"},
+            )
+        },
+        coords={
+            "time": np.datetime64("2026-01-01T00:00:00"),
+            "step": np.timedelta64(0, "h"),
+            "latitude": lat,
+            "longitude": lon,
+        },
+    )
+
+    def fake_open_dataset(*args, **kwargs):  # noqa: ANN001,ANN002
+        backend_kwargs = kwargs.get("backend_kwargs") or {}
+        keys = dict(backend_kwargs.get("filter_by_keys") or {})
+        short = keys.get("shortName")
+        if short == "2t":
+            return temp_ds
+        if short == "10u":
+            return wind_u10_ds
+        if short == "u" and keys.get("typeOfLevel") == "heightAboveGround":
+            return wind_u_ds
+        if short == "v" and keys.get("typeOfLevel") == "heightAboveGround":
+            return wind_v_ds
+        return xr.Dataset()
+
+    monkeypatch.setattr("datacube.decoder.xr.open_dataset", fake_open_dataset)
+
+    cube = decode_grib("dummy.grib", subset="surface")
+    out = cube.dataset
+    assert "t2m" in out.data_vars
+    assert "u" in out.data_vars
+    assert "v" in out.data_vars
+
+
 def test_decode_grib_missing_dependency_is_wrapped(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
