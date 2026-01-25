@@ -425,6 +425,123 @@ function flyCameraToAsync(camera: CesiumViewerInstance['camera'], request: FlyTo
   });
 }
 
+type StartHumanLandingParams = {
+  viewer: CesiumViewerInstance;
+  sceneModeId: string;
+  target: { lon: number; lat: number };
+  surfaceHeightMeters: number;
+  replaceRoute: (route: ViewModeRoute) => void;
+  requestLocalGroundHeightMeters: (target: { lon: number; lat: number }) => Promise<number | null>;
+  localEntryKeyRef: { current: string | null };
+  localHumanEntryKeyRef: { current: string | null };
+  localHumanLandingAbortRef: { current: AbortController | null };
+};
+
+function startHumanLanding({
+  viewer,
+  sceneModeId,
+  target,
+  surfaceHeightMeters,
+  replaceRoute,
+  requestLocalGroundHeightMeters,
+  localEntryKeyRef,
+  localHumanEntryKeyRef,
+  localHumanLandingAbortRef,
+}: StartHumanLandingParams): () => void {
+  localHumanLandingAbortRef.current?.abort();
+  const controller = new AbortController();
+  localHumanLandingAbortRef.current = controller;
+
+  const lonLatKey = `${sceneModeId}:${target.lon}:${target.lat}`;
+  const isNewTarget = localHumanEntryKeyRef.current !== lonLatKey;
+  localHumanEntryKeyRef.current = lonLatKey;
+
+  const heading = viewer.camera.heading;
+  const pitch = cameraPitchForPerspective('human') ?? LOCAL_FORWARD_PITCH;
+
+  const cleanup = () => {
+    controller.abort();
+    if (localHumanLandingAbortRef.current === controller) {
+      localHumanLandingAbortRef.current = null;
+    }
+  };
+
+  const getCurrentRoute = (): Extract<ViewModeRoute, { viewModeId: 'local' }> | null => {
+    if (controller.signal.aborted) return null;
+    if (useSceneModeStore.getState().sceneModeId === '2d') return null;
+    if (useCameraPerspectiveStore.getState().cameraPerspectiveId !== 'human') return null;
+
+    const currentRoute = useViewModeStore.getState().route;
+    if (currentRoute.viewModeId !== 'local') return null;
+    if (!Object.is(currentRoute.lon, target.lon) || !Object.is(currentRoute.lat, target.lat)) return null;
+    return currentRoute;
+  };
+
+  if (!isNewTarget) {
+    const destination = Cartesian3.fromDegrees(
+      target.lon,
+      target.lat,
+      surfaceHeightMeters + HUMAN_EYE_HEIGHT_METERS,
+    );
+
+    viewer.camera.flyTo({
+      destination,
+      orientation: { heading, pitch, roll: 0 },
+      duration: 0.8,
+    });
+
+    return cleanup;
+  }
+
+  const safeDestination = Cartesian3.fromDegrees(
+    target.lon,
+    target.lat,
+    surfaceHeightMeters + HUMAN_SAFE_HEIGHT_OFFSET_METERS,
+  );
+
+  void flyCameraToAsync(viewer.camera, {
+    destination: safeDestination,
+    orientation: { heading, pitch, roll: 0 },
+    duration: 1.4,
+  }).then(async () => {
+    if (!getCurrentRoute()) return;
+
+    const sampledHeight = await requestLocalGroundHeightMeters(target);
+    const currentRoute = getCurrentRoute();
+    if (!currentRoute) return;
+
+    const groundHeightMeters = sampledHeight ?? surfaceHeightMeters;
+    if (sampledHeight != null) {
+      const currentHeight = currentRoute.heightMeters;
+      const heightChanged =
+        typeof currentHeight !== 'number' || !Number.isFinite(currentHeight) || Math.abs(currentHeight - sampledHeight) > 0.5;
+      if (heightChanged) {
+        localEntryKeyRef.current = `${sceneModeId}:${target.lon}:${target.lat}:${sampledHeight}`;
+        replaceRoute({
+          viewModeId: 'local',
+          lon: target.lon,
+          lat: target.lat,
+          heightMeters: sampledHeight,
+        });
+      }
+    }
+
+    const destination = Cartesian3.fromDegrees(
+      target.lon,
+      target.lat,
+      groundHeightMeters + HUMAN_EYE_HEIGHT_METERS,
+    );
+
+    viewer.camera.flyTo({
+      destination,
+      orientation: { heading, pitch, roll: 0 },
+      duration: 1.1,
+    });
+  });
+
+  return cleanup;
+}
+
 async function sampleGroundHeightMeters(
   viewer: CesiumViewerInstance,
   target: { lon: number; lat: number },
@@ -2317,96 +2434,17 @@ export function CesiumViewer() {
     if (cameraPerspectiveId === 'human' && sceneModeId !== '2d') {
       appliedCameraPerspectiveRef.current = cameraPerspectiveId;
 
-      localHumanLandingAbortRef.current?.abort();
-      const controller = new AbortController();
-      localHumanLandingAbortRef.current = controller;
-
-      const target = { lon: viewModeRoute.lon, lat: viewModeRoute.lat };
-      const lonLatKey = `${sceneModeId}:${target.lon}:${target.lat}`;
-      const isNewTarget = localHumanEntryKeyRef.current !== lonLatKey;
-      localHumanEntryKeyRef.current = lonLatKey;
-
-      const heading = viewer.camera.heading;
-      const pitch = cameraPitchForPerspective(cameraPerspectiveId) ?? LOCAL_FORWARD_PITCH;
-
-      if (!isNewTarget) {
-        const destination = Cartesian3.fromDegrees(
-          target.lon,
-          target.lat,
-          surfaceHeightMeters + HUMAN_EYE_HEIGHT_METERS,
-        );
-
-        viewer.camera.flyTo({
-          destination,
-          orientation: { heading, pitch, roll: 0 },
-          duration: 0.8,
-        });
-        return () => {
-          controller.abort();
-          if (localHumanLandingAbortRef.current === controller) {
-            localHumanLandingAbortRef.current = null;
-          }
-        };
-      }
-
-      const safeDestination = Cartesian3.fromDegrees(
-        target.lon,
-        target.lat,
-        surfaceHeightMeters + HUMAN_SAFE_HEIGHT_OFFSET_METERS,
-      );
-
-      void flyCameraToAsync(viewer.camera, {
-        destination: safeDestination,
-        orientation: { heading, pitch, roll: 0 },
-        duration: 1.4,
-      }).then(async () => {
-        if (controller.signal.aborted) return;
-
-        const currentRoute = useViewModeStore.getState().route;
-        if (currentRoute.viewModeId !== 'local') return;
-        if (!Object.is(currentRoute.lon, target.lon) || !Object.is(currentRoute.lat, target.lat)) return;
-        if (useCameraPerspectiveStore.getState().cameraPerspectiveId !== 'human') return;
-
-        const sampledHeight = await requestLocalGroundHeightMeters(target);
-        if (controller.signal.aborted) return;
-
-        const groundHeightMeters = sampledHeight ?? surfaceHeightMeters;
-        if (sampledHeight != null) {
-          const currentHeight = currentRoute.heightMeters;
-          const heightChanged =
-            typeof currentHeight !== 'number' ||
-            !Number.isFinite(currentHeight) ||
-            Math.abs(currentHeight - sampledHeight) > 0.5;
-          if (heightChanged) {
-            localEntryKeyRef.current = `${sceneModeId}:${target.lon}:${target.lat}:${sampledHeight}`;
-            replaceRoute({
-              viewModeId: 'local',
-              lon: target.lon,
-              lat: target.lat,
-              heightMeters: sampledHeight,
-            });
-          }
-        }
-
-        const destination = Cartesian3.fromDegrees(
-          target.lon,
-          target.lat,
-          groundHeightMeters + HUMAN_EYE_HEIGHT_METERS,
-        );
-
-        viewer.camera.flyTo({
-          destination,
-          orientation: { heading, pitch, roll: 0 },
-          duration: 1.1,
-        });
+      return startHumanLanding({
+        viewer,
+        sceneModeId,
+        target: { lon: viewModeRoute.lon, lat: viewModeRoute.lat },
+        surfaceHeightMeters,
+        replaceRoute,
+        requestLocalGroundHeightMeters,
+        localEntryKeyRef,
+        localHumanEntryKeyRef,
+        localHumanLandingAbortRef,
       });
-
-      return () => {
-        controller.abort();
-        if (localHumanLandingAbortRef.current === controller) {
-          localHumanLandingAbortRef.current = null;
-        }
-      };
     }
 
     const offsetMeters = sceneModeId === '2d' ? 5000 : cameraPerspectiveId === 'free' ? 3000 : 50;
@@ -2862,7 +2900,7 @@ export function CesiumViewer() {
         cameraPerspectiveId === 'human' ? HUMAN_MIN_ZOOM_DISTANCE_METERS : MIN_ZOOM_DISTANCE_METERS;
     }
 
-    if (cameraPerspectiveId !== 'human') {
+    if (cameraPerspectiveId !== 'human' || sceneModeId === '2d') {
       localHumanLandingAbortRef.current?.abort();
       localHumanLandingAbortRef.current = null;
     }
@@ -2894,90 +2932,22 @@ export function CesiumViewer() {
     appliedCameraPerspectiveRef.current = cameraPerspectiveId;
 
     if (cameraPerspectiveId === 'human' && sceneModeId !== '2d') {
-      localHumanLandingAbortRef.current?.abort();
-      const controllerSignal = new AbortController();
-      localHumanLandingAbortRef.current = controllerSignal;
-
-      const target = { lon: viewModeRoute.lon, lat: viewModeRoute.lat };
-      const lonLatKey = `${sceneModeId}:${target.lon}:${target.lat}`;
-      const isNewTarget = localHumanEntryKeyRef.current !== lonLatKey;
-      localHumanEntryKeyRef.current = lonLatKey;
-
       const surfaceHeightMeters =
-        typeof (viewModeRoute as { heightMeters?: unknown }).heightMeters === 'number' &&
-        Number.isFinite((viewModeRoute as { heightMeters?: number }).heightMeters)
-          ? (viewModeRoute as { heightMeters: number }).heightMeters
+        typeof viewModeRoute.heightMeters === 'number' && Number.isFinite(viewModeRoute.heightMeters)
+          ? viewModeRoute.heightMeters
           : 0;
 
-      const heading = viewer.camera.heading;
-      const pitch = cameraPitchForPerspective(cameraPerspectiveId) ?? LOCAL_FORWARD_PITCH;
-
-      if (!isNewTarget) {
-        const destination = Cartesian3.fromDegrees(
-          target.lon,
-          target.lat,
-          surfaceHeightMeters + HUMAN_EYE_HEIGHT_METERS,
-        );
-        viewer.camera.flyTo({
-          destination,
-          orientation: { heading, pitch, roll: 0 },
-          duration: 0.8,
-        });
-        return;
-      }
-
-      const safeDestination = Cartesian3.fromDegrees(
-        target.lon,
-        target.lat,
-        surfaceHeightMeters + HUMAN_SAFE_HEIGHT_OFFSET_METERS,
-      );
-
-      void flyCameraToAsync(viewer.camera, {
-        destination: safeDestination,
-        orientation: { heading, pitch, roll: 0 },
-        duration: 1.4,
-      }).then(async () => {
-        if (controllerSignal.signal.aborted) return;
-
-        const currentRoute = useViewModeStore.getState().route;
-        if (currentRoute.viewModeId !== 'local') return;
-        if (!Object.is(currentRoute.lon, target.lon) || !Object.is(currentRoute.lat, target.lat)) return;
-        if (useCameraPerspectiveStore.getState().cameraPerspectiveId !== 'human') return;
-
-        const sampledHeight = await requestLocalGroundHeightMeters(target);
-        if (controllerSignal.signal.aborted) return;
-
-        const groundHeightMeters = sampledHeight ?? surfaceHeightMeters;
-        if (sampledHeight != null) {
-          const currentHeight = currentRoute.heightMeters;
-          const heightChanged =
-            typeof currentHeight !== 'number' ||
-            !Number.isFinite(currentHeight) ||
-            Math.abs(currentHeight - sampledHeight) > 0.5;
-          if (heightChanged) {
-            localEntryKeyRef.current = `${sceneModeId}:${target.lon}:${target.lat}:${sampledHeight}`;
-            replaceRoute({
-              viewModeId: 'local',
-              lon: target.lon,
-              lat: target.lat,
-              heightMeters: sampledHeight,
-            });
-          }
-        }
-
-        const destination = Cartesian3.fromDegrees(
-          target.lon,
-          target.lat,
-          groundHeightMeters + HUMAN_EYE_HEIGHT_METERS,
-        );
-        viewer.camera.flyTo({
-          destination,
-          orientation: { heading, pitch, roll: 0 },
-          duration: 1.1,
-        });
+      return startHumanLanding({
+        viewer,
+        sceneModeId,
+        target: { lon: viewModeRoute.lon, lat: viewModeRoute.lat },
+        surfaceHeightMeters,
+        replaceRoute,
+        requestLocalGroundHeightMeters,
+        localEntryKeyRef,
+        localHumanEntryKeyRef,
+        localHumanLandingAbortRef,
       });
-
-      return;
     }
 
     const pitch = cameraPitchForPerspective(cameraPerspectiveId) ?? LOCAL_FREE_PITCH;

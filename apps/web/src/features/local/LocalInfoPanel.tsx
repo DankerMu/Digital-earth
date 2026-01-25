@@ -9,6 +9,8 @@ const PERSPECTIVE_LABELS: Record<CameraPerspectiveId, string> = {
   free: '自由',
 };
 
+const PERSPECTIVE_ORDER: CameraPerspectiveId[] = ['human', 'forward', 'upward', 'free'];
+
 function PerspectiveIcon({ id }: { id: CameraPerspectiveId }) {
   if (id === 'human') {
     return (
@@ -131,7 +133,7 @@ export function LocalInfoPanel({
           aria-label="Camera perspective"
           data-testid="camera-perspective-group"
         >
-          {(Object.keys(PERSPECTIVE_LABELS) as CameraPerspectiveId[]).map((id) => (
+          {PERSPECTIVE_ORDER.map((id) => (
             <button
               key={id}
               type="button"

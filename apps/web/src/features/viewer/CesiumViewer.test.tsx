@@ -1790,6 +1790,90 @@ describe('CesiumViewer', () => {
     expect(viewer.camera.flyTo).toHaveBeenCalledTimes(callsAfterForward);
   });
 
+  it('aborts human landing when switching to 2D during landing', async () => {
+    useViewModeStore.setState({
+      route: { viewModeId: 'local', lat: 30, lon: 120, heightMeters: 100 },
+      history: [],
+      saved: {},
+    });
+    useCameraPerspectiveStore.setState({ cameraPerspectiveId: 'forward' });
+
+    let resolveTerrain: ((value: unknown) => void) | null = null;
+    const terrainPromise = new Promise<unknown>((resolve) => {
+      resolveTerrain = resolve;
+    });
+
+    vi.mocked(sampleTerrainMostDetailed).mockImplementationOnce(() => terrainPromise as never);
+
+    render(<CesiumViewer />);
+
+    await waitFor(() => expect(vi.mocked(Viewer)).toHaveBeenCalledTimes(1));
+    const viewer = vi.mocked(Viewer).mock.results[0].value;
+
+    act(() => {
+      useCameraPerspectiveStore.getState().setCameraPerspectiveId('human');
+    });
+
+    await waitFor(() =>
+      expect(viewer.camera.flyTo).toHaveBeenCalledWith(
+        expect.objectContaining({
+          duration: 1.4,
+        }),
+      ),
+    );
+
+    await waitFor(() => expect(vi.mocked(sampleTerrainMostDetailed)).toHaveBeenCalledTimes(1));
+
+    act(() => {
+      useSceneModeStore.getState().setSceneModeId('2d');
+    });
+
+    await waitFor(() => expect(viewer.scene.morphTo2D).toHaveBeenCalled());
+
+    resolveTerrain?.([{ longitude: 120, latitude: 30, height: 1234 }]);
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(viewer.camera.flyTo).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        duration: 1.1,
+      }),
+    );
+  });
+
+  it('falls back to globe height when terrain sampling throws', async () => {
+    useViewModeStore.setState({
+      route: { viewModeId: 'local', lat: 30, lon: 120 },
+      history: [],
+      saved: {},
+    });
+
+    const cesium = await import('cesium');
+    const viewer = (
+      cesium as unknown as {
+        __mocks: {
+          getViewer: () => { scene: { globe: Record<string, unknown> } };
+        };
+      }
+    ).__mocks.getViewer();
+
+    const getHeight = vi.fn(() => 1234);
+    viewer.scene.globe.getHeight = getHeight;
+
+    vi.mocked(sampleTerrainMostDetailed).mockRejectedValueOnce(new Error('Sample failed'));
+
+    render(<CesiumViewer />);
+
+    await waitFor(() => expect(vi.mocked(Viewer)).toHaveBeenCalledTimes(1));
+
+    await waitFor(() => expect(getHeight).toHaveBeenCalled());
+    await waitFor(() => expect(useViewModeStore.getState().route).toMatchObject({ heightMeters: 1234 }));
+
+    expect(vi.mocked(Cartesian3.fromDegrees)).toHaveBeenCalledWith(120, 30, 1234 + 1.7);
+
+    delete viewer.scene.globe.getHeight;
+  });
+
   it('flies camera above the shell and ensures the selected layer is visible in layerGlobal mode', async () => {
     useLayerManagerStore.setState({
       layers: [
