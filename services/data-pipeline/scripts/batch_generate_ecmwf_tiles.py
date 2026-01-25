@@ -323,7 +323,9 @@ def main(argv: Iterable[str] | None = None) -> int:
 
     resolved_formats = _parse_formats(tuple(args.formats)) or DEFAULT_TILE_FORMATS
     resolved_levels = _parse_levels(tuple(args.levels)) or (str(args.level),)
-    surface_levels = tuple(level for level in resolved_levels if _is_surface_level(level))
+    surface_levels = tuple(
+        level for level in resolved_levels if _is_surface_level(level)
+    )
     isobaric_levels = tuple(
         level for level in resolved_levels if not _is_surface_level(level)
     )
@@ -428,7 +430,9 @@ def main(argv: Iterable[str] | None = None) -> int:
                     )
                 else:
                     tp_slice = ds_surface["tp"].isel(time=0, level=0)
-                    current_tp = np.asarray(tp_slice.values).astype(np.float32, copy=False)
+                    current_tp = np.asarray(tp_slice.values).astype(
+                        np.float32, copy=False
+                    )
                     current_time = np.asarray(ds_surface["time"].values)[0].astype(
                         "datetime64[s]"
                     )
@@ -445,7 +449,9 @@ def main(argv: Iterable[str] | None = None) -> int:
                             if candidate_hours > 0:
                                 interval_hours = candidate_hours
                         prev_tp = np.zeros_like(current_tp, dtype=np.float32)
-                        prev_time = current_time - np.timedelta64(int(interval_hours), "h")
+                        prev_time = current_time - np.timedelta64(
+                            int(interval_hours), "h"
+                        )
 
                     ds_tp = xr.Dataset(
                         {
@@ -454,7 +460,11 @@ def main(argv: Iterable[str] | None = None) -> int:
                                 np.stack([prev_tp, current_tp], axis=0),
                             )
                         },
-                        coords={"time": [prev_time, current_time], "lat": lat, "lon": lon},
+                        coords={
+                            "time": [prev_time, current_time],
+                            "lat": lat,
+                            "lon": lon,
+                        },
                     )
                     cube_tp = DataCube.from_dataset(ds_tp)
                     try:
@@ -488,11 +498,7 @@ def main(argv: Iterable[str] | None = None) -> int:
                     previous_time = current_time
 
             wants_isobaric_layers = any((bool(args.temperature), bool(args.wind_speed)))
-            if (
-                wants_isobaric
-                and cube_isobaric is not None
-                and wants_isobaric_layers
-            ):
+            if wants_isobaric and cube_isobaric is not None and wants_isobaric_layers:
                 for level in isobaric_levels:
                     results = generate_ecmwf_raster_tiles(
                         cube_isobaric,

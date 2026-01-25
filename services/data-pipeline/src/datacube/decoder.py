@@ -175,8 +175,7 @@ def decode_grib(
         subset_key = "isobaric_rh"
     if subset_key not in {"surface", "isobaric", "isobaric_rh"}:
         raise ValueError(
-            "subset must be one of: surface, isobaric, humidity "
-            f"(got {subset!r})"
+            f"subset must be one of: surface, isobaric, humidity (got {subset!r})"
         )
 
     path = Path(source_path)
@@ -281,8 +280,12 @@ def decode_grib(
                 }
             )
             if wind_u is not None and wind_v is not None:
-                subsets.append(_ensure_time_dim(_keep_single_var(wind_u, preferred="u")))
-                subsets.append(_ensure_time_dim(_keep_single_var(wind_v, preferred="v")))
+                subsets.append(
+                    _ensure_time_dim(_keep_single_var(wind_u, preferred="u"))
+                )
+                subsets.append(
+                    _ensure_time_dim(_keep_single_var(wind_v, preferred="v"))
+                )
             else:
                 if wind_u is not None:
                     _close_quietly(wind_u)

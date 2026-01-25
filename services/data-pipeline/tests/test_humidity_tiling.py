@@ -91,4 +91,3 @@ def test_humidity_tile_generator_normalizes_percent_grid(
         _assert_solid_color(img, rgba=(255, 255, 255, 128))
     finally:
         img.close()
-

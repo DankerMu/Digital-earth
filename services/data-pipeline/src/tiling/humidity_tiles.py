@@ -184,7 +184,9 @@ def _resolve_surface_level_index(levels: np.ndarray, attrs: dict) -> int:
     )[0]
     if matches.size:
         return int(matches[0])
-    raise HumidityTilingError("surface level requested but dataset has no surface level")
+    raise HumidityTilingError(
+        "surface level requested but dataset has no surface level"
+    )
 
 
 def _resolve_level_index(ds: xr.Dataset, level: object) -> tuple[int, str]:
@@ -544,4 +546,3 @@ class HumidityTileGenerator:
             formats=resolved_formats,
             tiles_written=tiles_written,
         )
-

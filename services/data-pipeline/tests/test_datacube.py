@@ -282,7 +282,9 @@ def test_decode_grib_filters_surface_variables(monkeypatch: pytest.MonkeyPatch) 
     assert all(call.get("engine") == "cfgrib" for call in calls)
 
 
-def test_decode_grib_filters_humidity_variables(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_decode_grib_filters_humidity_variables(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from datacube.decoder import decode_grib
 
     time = np.array(["2026-01-01T00:00:00"], dtype="datetime64[s]")

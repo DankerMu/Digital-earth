@@ -329,7 +329,9 @@ def main(argv: Iterable[str] | None = None) -> int:
 
     resolved_formats = _parse_formats(tuple(args.formats)) or DEFAULT_TILE_FORMATS
     resolved_levels = _parse_levels(tuple(args.levels))
-    surface_levels = tuple(level for level in resolved_levels if _is_surface_level(level))
+    surface_levels = tuple(
+        level for level in resolved_levels if _is_surface_level(level)
+    )
     isobaric_levels = tuple(
         level for level in resolved_levels if not _is_surface_level(level)
     )
@@ -443,8 +445,12 @@ def main(argv: Iterable[str] | None = None) -> int:
                         precipitation=False,
                         wind_speed=True,
                         wind_speed_opacity=float(args.wind_speed_opacity),
-                        min_zoom=int(args.min_zoom) if args.min_zoom is not None else None,
-                        max_zoom=int(args.max_zoom) if args.max_zoom is not None else None,
+                        min_zoom=int(args.min_zoom)
+                        if args.min_zoom is not None
+                        else None,
+                        max_zoom=int(args.max_zoom)
+                        if args.max_zoom is not None
+                        else None,
                         tile_size=int(args.tile_size)
                         if args.tile_size is not None
                         else None,
@@ -453,7 +459,9 @@ def main(argv: Iterable[str] | None = None) -> int:
                     for result in results:
                         print(
                             " ",
-                            json.dumps(result.__dict__, ensure_ascii=False, default=str),
+                            json.dumps(
+                                result.__dict__, ensure_ascii=False, default=str
+                            ),
                         )
 
             if (
@@ -483,7 +491,9 @@ def main(argv: Iterable[str] | None = None) -> int:
                         )
                         print(
                             " ",
-                            json.dumps(result.__dict__, ensure_ascii=False, default=str),
+                            json.dumps(
+                                result.__dict__, ensure_ascii=False, default=str
+                            ),
                         )
                     except HumidityTilingError as exc:
                         print(
