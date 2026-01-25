@@ -173,6 +173,53 @@ def test_generate_ecmwf_tiles_supports_cloud_and_precipitation(
     assert (tmp_path / "tiles" / "ecmwf" / "wind_speed").is_dir()
 
 
+def test_generate_ecmwf_tiles_skips_missing_layers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from datacube.core import DataCube
+    from tiles.generate import SkippedTileGenerationResult, generate_ecmwf_raster_tiles
+    from tiling.config import get_tiling_config
+    from tiling.precip_amount_tiles import get_precip_amount_legend
+    from tiling.temperature_tiles import get_temperature_legend
+
+    config_dir = tmp_path / "config"
+    _write_test_config_dir(config_dir, tile_size=8)
+    monkeypatch.setenv("DIGITAL_EARTH_CONFIG_DIR", str(config_dir))
+    get_tiling_config.cache_clear()
+    get_temperature_legend.cache_clear()
+    get_precip_amount_legend.cache_clear()
+
+    ds = _make_dataset().drop_vars(["precipitation_amount", "wind_speed"])
+    cube = DataCube.from_dataset(ds)
+
+    results = generate_ecmwf_raster_tiles(
+        cube,
+        tmp_path / "tiles",
+        temperature=True,
+        cloud=True,
+        precipitation=True,
+        wind_speed=True,
+        wind_speed_opacity=0.25,
+        min_zoom=0,
+        max_zoom=0,
+        tile_size=8,
+        formats=("png",),
+    )
+
+    skipped = [
+        result for result in results if isinstance(result, SkippedTileGenerationResult)
+    ]
+    assert {result.layer for result in skipped} >= {
+        "ecmwf/precip_amount",
+        "ecmwf/wind_speed",
+    }
+
+    assert (tmp_path / "tiles" / "ecmwf" / "temp").is_dir()
+    assert (tmp_path / "tiles" / "ecmwf" / "tcc").is_dir()
+    assert not (tmp_path / "tiles" / "ecmwf" / "precip_amount").exists()
+    assert not (tmp_path / "tiles" / "ecmwf" / "wind_speed").exists()
+
+
 def test_tiles_cli_wind_speed_toggle(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -240,6 +287,49 @@ def test_tiles_cli_wind_speed_toggle(
     )
     assert (out_wind / "ecmwf" / "temp").is_dir()
     assert (out_wind / "ecmwf" / "wind_speed").is_dir()
+
+
+def test_tiles_cli_accepts_grib_inputs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from datacube.core import DataCube
+    from tiles.generate import main as tiles_main
+    from tiling.config import get_tiling_config
+    from tiling.temperature_tiles import get_temperature_legend
+
+    config_dir = tmp_path / "config"
+    _write_test_config_dir(config_dir, tile_size=8)
+    monkeypatch.setenv("DIGITAL_EARTH_CONFIG_DIR", str(config_dir))
+    get_tiling_config.cache_clear()
+    get_temperature_legend.cache_clear()
+
+    ds = _make_dataset()
+
+    def fake_decode_grib(path):  # noqa: ARG001
+        return DataCube.from_dataset(ds)
+
+    monkeypatch.setattr("tiles.generate.decode_grib", fake_decode_grib)
+
+    out = tmp_path / "out"
+    tiles_main(
+        [
+            "--datacube",
+            "dummy.grib",
+            "--output-dir",
+            str(out),
+            "--no-cloud",
+            "--no-precipitation",
+            "--format",
+            "png",
+            "--min-zoom",
+            "0",
+            "--max-zoom",
+            "0",
+            "--tile-size",
+            "8",
+        ]
+    )
+    assert (out / "ecmwf" / "temp").is_dir()
 
 
 def test_tiles_cli_rejects_invalid_wind_speed_opacity(

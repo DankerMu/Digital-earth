@@ -216,9 +216,14 @@ export async function installE2eMocks(page: Page, apiBaseUrl: string) {
     return fulfillJson(route, EFFECT_PRESETS_RESPONSE);
   });
 
+  await page.route('**/api/v1/vector/**', async (route) => {
+    if (route.request().method() !== 'GET') return route.fallback();
+    return fulfillJson(route, { u: [], v: [], lat: [], lon: [] });
+  });
+
   await page.route('**/api/v1/vectors/**', async (route) => {
     if (route.request().method() !== 'GET') return route.fallback();
-    return fulfillJson(route, { vectors: [] });
+    return fulfillJson(route, { u: [], v: [], lat: [], lon: [] });
   });
 
   await page.route('**/api/v1/tiles/**', async (route) => {

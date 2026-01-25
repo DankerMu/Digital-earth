@@ -40,10 +40,11 @@ import {
 } from '../../state/eventAutoLayers';
 import { useEventLayersStore } from '../../state/eventLayers';
 import { useLayerManagerStore, type LayerConfig, type LayerType } from '../../state/layerManager';
+import { useLayoutPanelsStore } from '../../state/layoutPanels';
 import { useOsmBuildingsStore } from '../../state/osmBuildings';
 import { usePerformanceModeStore } from '../../state/performanceMode';
 import { useSceneModeStore } from '../../state/sceneMode';
-import { useTimeStore } from '../../state/time';
+import { DEFAULT_TIME_KEY, useTimeStore } from '../../state/time';
 import { useViewerStatsStore } from '../../state/viewerStats';
 import { useViewModeStore, type ViewModeRoute } from '../../state/viewMode';
 import { AircraftDemoLayer } from '../aircraft/AircraftDemoLayer';
@@ -59,7 +60,7 @@ import { SnowDepthLayer } from '../layers/SnowDepthLayer';
 import { TemperatureLayer } from '../layers/TemperatureLayer';
 import { alignToMostRecentHourTimeKey, normalizeSnowDepthVariable } from '../layers/cldasTime';
 import {
-  buildCldasTileUrlTemplate,
+  buildEcmwfTemperatureTileUrlTemplate,
   buildCloudTileUrlTemplate,
   buildPrecipitationTileUrlTemplate,
   probeCldasTileAvailability,
@@ -668,6 +669,7 @@ export function CesiumViewer() {
   const performanceMode = usePerformanceModeStore((state) => state.mode);
   const lowModeEnabled = performanceMode === 'low';
   const setPerformanceMode = usePerformanceModeStore((state) => state.setMode);
+  const infoPanelCollapsed = useLayoutPanelsStore((state) => state.infoPanelCollapsed);
   const osmBuildingsEnabled = useOsmBuildingsStore((state) => state.enabled);
   const cameraPerspectiveId = useCameraPerspectiveStore((state) => state.cameraPerspectiveId);
   const appliedBasemapIdRef = useRef<BasemapId | null>(null);
@@ -1725,11 +1727,10 @@ export function CesiumViewer() {
       threshold: precipitationLayerConfig.threshold,
     });
 
-    const temperatureVariable = (temperatureLayerConfig?.variable || 'TMP').trim() || 'TMP';
-    const temperatureTemplate = buildCldasTileUrlTemplate({
+    const temperatureTemplate = buildEcmwfTemperatureTileUrlTemplate({
       apiBaseUrl,
       timeKey,
-      variable: temperatureVariable.toUpperCase(),
+      level: 'sfc',
     });
 
     weatherSamplerRef.current = createWeatherSampler({
@@ -1827,85 +1828,155 @@ export function CesiumViewer() {
       });
     };
 
-    const onClick = (movement: { position?: unknown }) => {
-      const position = movement.position;
-      if (!position) return;
+	    const onClick = (movement: { position?: unknown }) => {
+	      const position = movement.position;
+	      if (!position) return;
 
-      const pickedObject = (viewer.scene as unknown as { pick?: (pos: unknown) => unknown }).pick?.(
-        position,
-      );
-      const pickedId =
-        pickedObject && typeof pickedObject === 'object'
-          ? (() => {
-              const raw = (pickedObject as { id?: unknown }).id;
-              if (typeof raw === 'string') return raw;
-              if (raw && typeof raw === 'object' && typeof (raw as { id?: unknown }).id === 'string') {
-                return (raw as { id: string }).id;
-              }
-              return null;
-            })()
-          : null;
-      const riskPoiMatch = pickedId ? /^risk-poi:(\d+)$/.exec(pickedId) : null;
-      if (riskPoiMatch) {
-        const poiId = Number(riskPoiMatch[1]);
-        if (!Number.isFinite(poiId)) return;
-        const poi = riskPoisByIdRef.current.get(poiId);
-        if (!poi) return;
+	      const normalizeScreenPosition = (value: unknown): { x: number; y: number } | null => {
+	        if (!value || typeof value !== 'object') return null;
+	        const x = (value as { x?: unknown }).x;
+	        const y = (value as { y?: unknown }).y;
+	        if (typeof x !== 'number' || !Number.isFinite(x)) return null;
+	        if (typeof y !== 'number' || !Number.isFinite(y)) return null;
+	        return { x, y };
+	      };
 
-        samplingAbortRef.current?.abort();
-        closeSamplingCard();
+	      const openRiskPopup = (poiId: number) => {
+	        if (!Number.isFinite(poiId)) return;
+	        const poi = riskPoisByIdRef.current.get(poiId);
+	        if (!poi) return;
 
-        const existing = riskEvalByIdRef.current.get(poiId) ?? null;
-        setRiskPopup({
-          poi,
-          evaluation: existing,
-          status: existing ? 'loaded' : 'loading',
-          errorMessage: null,
-        });
+	        samplingAbortRef.current?.abort();
+	        closeSamplingCard();
 
-        if (!existing && apiBaseUrl && eventMonitoringTimeKey) {
-          const route = useViewModeStore.getState().route;
-          if (route.viewModeId !== 'event') return;
+	        const existing = riskEvalByIdRef.current.get(poiId) ?? null;
+	        setRiskPopup({
+	          poi,
+	          evaluation: existing,
+	          status: existing ? 'loaded' : 'loading',
+	          errorMessage: null,
+	        });
 
-          riskPopupAbortRef.current?.abort();
-          const controller = new AbortController();
-          riskPopupAbortRef.current = controller;
+	        if (!existing && apiBaseUrl && eventMonitoringTimeKey) {
+	          const route = useViewModeStore.getState().route;
+	          if (route.viewModeId !== 'event') return;
 
-          void (async () => {
-            try {
-              const evaluation = await evaluateRisk({
-                apiBaseUrl,
-                productId: route.productId,
-                validTime: eventMonitoringTimeKey,
-                poiIds: [poiId],
-                signal: controller.signal,
-              });
-              if (controller.signal.aborted) return;
-              const result = evaluation.results.find((item) => item.poi_id === poiId) ?? null;
-              if (result) riskEvalByIdRef.current.set(poiId, result);
-              setRiskPopup((prev) => {
-                if (!prev || prev.poi.id !== poiId) return prev;
-                return { ...prev, evaluation: result, status: 'loaded', errorMessage: null };
-              });
-            } catch (error) {
-              if (controller.signal.aborted) return;
-              console.warn('[Digital Earth] failed to evaluate risk poi', error);
-              setRiskPopup((prev) => {
-                if (!prev || prev.poi.id !== poiId) return prev;
-                return { ...prev, status: 'error', errorMessage: '风险详情加载失败' };
-              });
-            } finally {
-              if (riskPopupAbortRef.current === controller) riskPopupAbortRef.current = null;
-            }
-          })();
-        }
-        return;
-      }
+	          riskPopupAbortRef.current?.abort();
+	          const controller = new AbortController();
+	          riskPopupAbortRef.current = controller;
 
-      const picked = pickLocation(position);
+	          void (async () => {
+	            try {
+	              const evaluation = await evaluateRisk({
+	                apiBaseUrl,
+	                productId: route.productId,
+	                validTime: eventMonitoringTimeKey,
+	                poiIds: [poiId],
+	                signal: controller.signal,
+	              });
+	              if (controller.signal.aborted) return;
+	              const result = evaluation.results.find((item) => item.poi_id === poiId) ?? null;
+	              if (result) riskEvalByIdRef.current.set(poiId, result);
+	              setRiskPopup((prev) => {
+	                if (!prev || prev.poi.id !== poiId) return prev;
+	                return { ...prev, evaluation: result, status: 'loaded', errorMessage: null };
+	              });
+	            } catch (error) {
+	              if (controller.signal.aborted) return;
+	              console.warn('[Digital Earth] failed to evaluate risk poi', error);
+	              setRiskPopup((prev) => {
+	                if (!prev || prev.poi.id !== poiId) return prev;
+	                return { ...prev, status: 'error', errorMessage: '风险详情加载失败' };
+	              });
+	            } finally {
+	              if (riskPopupAbortRef.current === controller) riskPopupAbortRef.current = null;
+	            }
+	          })();
+	        }
+	      };
 
-      if (!picked) {
-        openSamplingCard({ lon: Number.NaN, lat: Number.NaN });
+	      const extractPickedId = (picked: unknown): string | null => {
+	        if (!picked || typeof picked !== 'object') return null;
+	        const raw = (picked as { id?: unknown }).id;
+	        if (typeof raw === 'string') return raw;
+	        if (raw && typeof raw === 'object') {
+	          const nested = (raw as { id?: unknown }).id;
+	          if (typeof nested === 'string') return nested;
+	        }
+	        return null;
+	      };
+
+	      const scene = viewer.scene as unknown as {
+	        pick?: (pos: unknown) => unknown;
+	        drillPick?: (pos: unknown, limit?: number) => unknown[];
+	      };
+
+	      const pickedObjects =
+	        typeof scene.drillPick === 'function'
+	          ? scene.drillPick(position, 10)
+	          : [scene.pick?.(position)];
+
+	      const pickedIds = pickedObjects
+	        .map(extractPickedId)
+	        .filter((id): id is string => Boolean(id));
+
+	      const riskPoiMatch = pickedIds
+	        .map((id) => /^risk-poi:(\d+)$/.exec(id))
+	        .find((match): match is RegExpExecArray => Boolean(match));
+	      if (riskPoiMatch) {
+	        const poiId = Number(riskPoiMatch[1]);
+	        openRiskPopup(poiId);
+	        return;
+	      }
+
+	      const route = useViewModeStore.getState().route;
+	      if (route.viewModeId === 'event') {
+	        const screenPos = normalizeScreenPosition(position);
+	        const dataSource = riskDataSourceRef.current as unknown as {
+	          entities?: { getById?: (id: string) => unknown };
+	        } | null;
+
+	        if (screenPos && dataSource?.entities?.getById) {
+	          let nearestPoiId: number | null = null;
+	          let nearestDist2 = Number.POSITIVE_INFINITY;
+
+	          for (const poiId of riskPoisByIdRef.current.keys()) {
+	            const entity = dataSource.entities.getById(`risk-poi:${poiId}`) as
+	              | { position?: { getValue?: (time: unknown) => unknown } }
+	              | undefined;
+	            const worldPosition = entity?.position?.getValue?.(viewer.clock.currentTime);
+	            if (!worldPosition) continue;
+
+	            const coords = SceneTransforms.worldToWindowCoordinates(
+	              viewer.scene,
+	              worldPosition as Cartesian3,
+	            );
+	            const x = coords?.x;
+	            const y = coords?.y;
+	            if (typeof x !== 'number' || !Number.isFinite(x)) continue;
+	            if (typeof y !== 'number' || !Number.isFinite(y)) continue;
+
+	            const dx = x - screenPos.x;
+	            const dy = y - screenPos.y;
+	            const dist2 = dx * dx + dy * dy;
+	            if (dist2 < nearestDist2) {
+	              nearestDist2 = dist2;
+	              nearestPoiId = poiId;
+	            }
+	          }
+
+	          const thresholdPx = 20;
+	          if (nearestPoiId != null && nearestDist2 <= thresholdPx * thresholdPx) {
+	            openRiskPopup(nearestPoiId);
+	            return;
+	          }
+	        }
+	      }
+
+	      const picked = pickLocation(position);
+
+	      if (!picked) {
+	        openSamplingCard({ lon: Number.NaN, lat: Number.NaN });
         setSamplingError('无法获取点击位置');
         return;
       }
@@ -2374,16 +2445,34 @@ export function CesiumViewer() {
       ? LAYER_GLOBAL_SHELL_HEIGHT_METERS_BY_LAYER_TYPE[targetLayer.type]
       : LAYER_GLOBAL_SHELL_HEIGHT_METERS_BY_LAYER_TYPE.cloud;
 
-    const key = `${sceneModeId}:${viewModeRoute.layerId}:${shellHeightMeters}`;
-    if (layerGlobalEntryKeyRef.current === key) return;
-    layerGlobalEntryKeyRef.current = key;
-
     if (targetLayer && !targetLayer.visible) {
       useLayerManagerStore.getState().setLayerVisible(targetLayer.id, true);
     }
 
+    const key = `${sceneModeId}:${viewModeRoute.layerId}:${shellHeightMeters}:${targetLayer ? 'present' : 'missing'}`;
+    if (layerGlobalEntryKeyRef.current === key) return;
+    layerGlobalEntryKeyRef.current = key;
+
+    const cartographic = viewer.camera.positionCartographic;
+    const lon =
+      typeof cartographic?.longitude === 'number' && Number.isFinite(cartographic.longitude)
+        ? wrapLongitudeDegrees(CesiumMath.toDegrees(cartographic.longitude))
+        : DEFAULT_CAMERA.longitude;
+    const lat =
+      typeof cartographic?.latitude === 'number' && Number.isFinite(cartographic.latitude)
+        ? clampLatitudeDegrees(CesiumMath.toDegrees(cartographic.latitude))
+        : DEFAULT_CAMERA.latitude;
+    const currentHeightMeters =
+      typeof cartographic?.height === 'number' && Number.isFinite(cartographic.height)
+        ? cartographic.height
+        : 0;
     const heightOffsetMeters = Math.max(shellHeightMeters * 0.5, 1000);
-    const destination = Cartesian3.fromDegrees(0, 0, shellHeightMeters + heightOffsetMeters);
+    const targetHeightMeters = Math.max(
+      DEFAULT_CAMERA.heightMeters,
+      shellHeightMeters + heightOffsetMeters,
+      currentHeightMeters,
+    );
+    const destination = Cartesian3.fromDegrees(lon, lat, targetHeightMeters);
     viewer.camera.flyTo({
       destination,
       orientation: {
@@ -2681,14 +2770,18 @@ export function CesiumViewer() {
         const [first, second] = await Promise.all([
           fetchWindVectorData({
             apiBaseUrl: apiBaseUrl ?? '',
+            runTimeKey: DEFAULT_TIME_KEY,
             timeKey,
+            level: 'sfc',
             bbox: { ...options.bbox, east: 180 },
             density: options.density,
             signal: options.signal,
           }),
           fetchWindVectorData({
             apiBaseUrl: apiBaseUrl ?? '',
+            runTimeKey: DEFAULT_TIME_KEY,
             timeKey,
+            level: 'sfc',
             bbox: { ...options.bbox, west: -180 },
             density: options.density,
             signal: options.signal,
@@ -2699,7 +2792,9 @@ export function CesiumViewer() {
 
       const data = await fetchWindVectorData({
         apiBaseUrl: apiBaseUrl ?? '',
+        runTimeKey: DEFAULT_TIME_KEY,
         timeKey,
+        level: 'sfc',
         bbox: options.bbox,
         density: options.density,
         signal: options.signal,
@@ -3213,11 +3308,16 @@ export function CesiumViewer() {
           </div>
         ) : null}
       </div>
-      <div className="absolute right-3 top-3 z-20 flex flex-col gap-3">
-        {viewModeRoute.viewModeId === 'local' ? (
-          <LocalInfoPanel
-            lat={viewModeRoute.lat}
-            lon={viewModeRoute.lon}
+	      <div
+	        className="absolute top-24 z-60 flex flex-col gap-3"
+	        style={{
+	          right: (infoPanelCollapsed ? 48 : 360) + 16 + 12,
+	        }}
+	      >
+	        {viewModeRoute.viewModeId === 'local' ? (
+	          <LocalInfoPanel
+	            lat={viewModeRoute.lat}
+	            lon={viewModeRoute.lon}
             heightMeters={viewModeRoute.heightMeters}
             timeKey={localTimeKey}
             activeLayer={activeLayer}

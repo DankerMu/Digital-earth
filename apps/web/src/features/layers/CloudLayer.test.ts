@@ -34,13 +34,13 @@ describe('CloudLayer', () => {
     vi.clearAllMocks();
   });
 
-  it('creates an ImageryLayer backed by TCC tiles and applies opacity/visibility', () => {
+  it('creates an ImageryLayer backed by ECMWF cloud tiles and applies opacity/visibility', () => {
     const viewer = makeViewer();
 
     new CloudLayer(viewer as never, {
       id: 'cloud',
       apiBaseUrl: 'http://api.test',
-      timeKey: '2024-01-15T00:00:00Z',
+      timeKey: '2025-12-22T00:00:00Z',
       variable: 'tcc',
       opacity: 0.65,
       visible: true,
@@ -53,7 +53,7 @@ describe('CloudLayer', () => {
     );
     expect(vi.mocked(UrlTemplateImageryProvider)).toHaveBeenCalledWith(
       expect.objectContaining({
-        url: expect.stringContaining('/api/v1/tiles/cldas/'),
+        url: expect.stringContaining('/api/v1/tiles/ecmwf/tcc/'),
         tilingScheme: expect.objectContaining({
           kind: 'geographic',
           options: expect.objectContaining({
@@ -70,7 +70,7 @@ describe('CloudLayer', () => {
     const providerUrl = (
       vi.mocked(UrlTemplateImageryProvider).mock.calls[0]?.[0] as { url?: string }
     )?.url;
-    expect(providerUrl).toContain('/TCC/');
+    expect(providerUrl).toContain('/sfc/');
 
     expect(vi.mocked(ImageryLayer)).toHaveBeenCalledWith(
       expect.objectContaining({ kind: 'url-template' }),

@@ -1,6 +1,6 @@
 import { useSyncExternalStore } from 'react';
 
-export const DEFAULT_TIME_KEY = '2024-01-15T00:00:00Z';
+export const DEFAULT_TIME_KEY = '2025-12-22T00:00:00Z';
 
 type TimeState = {
   timeKey: string;
@@ -69,4 +69,3 @@ export const useTimeStore: StoreHook = Object.assign(useTimeStoreImpl, {
   getState,
   setState,
 });
-

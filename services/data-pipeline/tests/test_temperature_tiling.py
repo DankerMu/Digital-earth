@@ -51,17 +51,13 @@ def _write_test_config_dir(config_dir: Path, *, tile_size: int = 8) -> None:
     )
 
 
-def _make_surface_dataset(*, value: float) -> xr.Dataset:
+def _make_surface_dataset(*, value: float, var: str = "temp") -> xr.Dataset:
     lat = np.array([-90.0, 0.0, 90.0], dtype=np.float32)
     lon = np.array([-180.0, 0.0, 180.0], dtype=np.float32)
     time = np.array(["2026-01-01T00:00:00"], dtype="datetime64[s]")
     data = np.full((1, lat.size, lon.size), value, dtype=np.float32)
     return xr.Dataset(
-        {
-            "temp": xr.DataArray(
-                data, dims=["time", "lat", "lon"], attrs={"units": "°C"}
-            )
-        },
+        {var: xr.DataArray(data, dims=["time", "lat", "lon"], attrs={"units": "°C"})},
         coords={"time": time, "lat": lat, "lon": lon},
     )
 
@@ -142,6 +138,40 @@ def test_temperature_tile_generator_writes_png_webp_and_legend(
         _assert_solid_color(img.convert("RGBA"), rgba=(0, 255, 0, 255))
     finally:
         img.close()
+
+
+def test_temperature_tile_generator_accepts_grib_style_variable_names(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from tiling.config import get_tiling_config
+    from tiling.temperature_tiles import (
+        TemperatureTileGenerator,
+        get_temperature_legend,
+    )
+
+    config_dir = tmp_path / "config"
+    _write_test_config_dir(config_dir, tile_size=8)
+    monkeypatch.setenv("DIGITAL_EARTH_CONFIG_DIR", str(config_dir))
+    get_tiling_config.cache_clear()
+    get_temperature_legend.cache_clear()
+
+    ds = _make_surface_dataset(value=0.0, var="t2m")
+    generator = TemperatureTileGenerator.from_dataset(ds, layer="ecmwf/temp")
+    result = generator.generate(
+        tmp_path,
+        valid_time="2026-01-01T00:00:00Z",
+        level="sfc",
+        min_zoom=0,
+        max_zoom=0,
+        tile_size=8,
+        formats=("png",),
+    )
+    assert result.variable == "t2m"
+
+    png_path = (
+        tmp_path / "ecmwf" / "temp" / result.time / result.level / "0" / "0" / "0.png"
+    )
+    assert png_path.is_file()
 
 
 def test_temperature_tile_generator_selects_valid_time_and_pressure_level(

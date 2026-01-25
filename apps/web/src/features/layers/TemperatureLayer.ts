@@ -7,7 +7,7 @@ import {
   type Viewer,
 } from 'cesium';
 
-import { buildCldasTileUrlTemplate } from './layersApi';
+import { buildEcmwfTemperatureTileUrlTemplate } from './layersApi';
 import { attachTileCacheToProvider } from './tilePrefetch';
 import type { TemperatureLayerParams } from './types';
 
@@ -18,25 +18,6 @@ function clampOpacity(value: number): number {
   if (value < 0) return 0;
   if (value > 1) return 1;
   return value;
-}
-
-function normalizeTemperatureVariable(variable: string): string {
-  const trimmed = variable.trim();
-  if (!trimmed) return 'TMP';
-
-  const normalized = trimmed.toLowerCase();
-  if (
-    normalized === 'temperature' ||
-    normalized === 'temp' ||
-    normalized === 't2m' ||
-    normalized === '2t' ||
-    normalized === 'air_temperature' ||
-    normalized === 'air-temperature'
-  ) {
-    return 'TMP';
-  }
-
-  return trimmed.toUpperCase();
 }
 
 export class TemperatureLayer {
@@ -79,10 +60,10 @@ export class TemperatureLayer {
   }
 
   private createUrlTemplate(params: TemperatureLayerParams): string {
-    return buildCldasTileUrlTemplate({
+    return buildEcmwfTemperatureTileUrlTemplate({
       apiBaseUrl: params.apiBaseUrl,
       timeKey: params.timeKey,
-      variable: normalizeTemperatureVariable(params.variable),
+      level: 'sfc',
     });
   }
 

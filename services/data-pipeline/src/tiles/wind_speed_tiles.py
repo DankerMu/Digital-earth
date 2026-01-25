@@ -11,6 +11,7 @@ from datacube.core import DataCube
 from tiling.temperature_tiles import (
     TemperatureTileGenerationResult,
     TemperatureTileGenerator,
+    TemperatureTilingError,
 )
 
 
@@ -84,6 +85,18 @@ class WindSpeedTileGenerator(TemperatureTileGenerator):
     @property
     def opacity(self) -> float:
         return self._opacity
+
+    def _resolve_variable_name(self, ds: xr.Dataset) -> str:
+        preferred = (self.variable or "").strip()
+        present = {name.lower(): name for name in ds.data_vars}
+        direct = present.get(preferred.lower())
+        if direct is not None:
+            return direct
+
+        available = ", ".join(sorted(ds.data_vars))
+        raise TemperatureTilingError(
+            f"Wind speed variable {preferred!r} not found; available=[{available}]"
+        )
 
     def _colorize(self, values: np.ndarray) -> np.ndarray:
         rgba = super()._colorize(values)

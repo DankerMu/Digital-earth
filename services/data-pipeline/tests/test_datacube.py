@@ -209,6 +209,79 @@ def test_decode_netcdf_and_write_roundtrip(tmp_path: Path) -> None:
     assert summary["variables"]["t2m"]["nan_count"] == 2
 
 
+def test_decode_grib_filters_surface_variables(monkeypatch: pytest.MonkeyPatch) -> None:
+    from datacube.decoder import decode_grib
+
+    lat = np.array([10.0, 11.0], dtype=np.float32)
+    lon = np.array([100.0, 101.0, 102.0], dtype=np.float32)
+    valid_time = np.datetime64("2026-01-01T00:00:00")
+
+    def make_ds(
+        name: str, values: np.ndarray, *, units: str | None = None
+    ) -> xr.Dataset:
+        da = xr.DataArray(values, dims=["latitude", "longitude"], name=name)
+        if units is not None:
+            da.attrs["units"] = units
+        return xr.Dataset(
+            {name: da},
+            coords={
+                "valid_time": valid_time,
+                "latitude": lat,
+                "longitude": lon,
+            },
+        )
+
+    temp_ds = make_ds("t2m", np.full((2, 3), 273.15, dtype=np.float32), units="K")
+    tcc_ds = make_ds("tcc", np.full((2, 3), 0.5, dtype=np.float32))
+    tp_ds = make_ds("tp", np.full((2, 3), 0.001, dtype=np.float32), units="m")
+    u10_ds = make_ds("u10", np.full((2, 3), 2.0, dtype=np.float32), units="m/s")
+    v10_ds = make_ds("v10", np.full((2, 3), 3.0, dtype=np.float32), units="m/s")
+
+    calls: list[dict[str, object]] = []
+
+    def fake_open_dataset(*args, **kwargs):  # noqa: ANN001,ANN002
+        backend_kwargs = kwargs.get("backend_kwargs") or {}
+        calls.append(
+            {
+                "engine": kwargs.get("engine"),
+                "backend_kwargs": backend_kwargs,
+            }
+        )
+        keys = dict(backend_kwargs.get("filter_by_keys") or {})
+        short = keys.get("shortName")
+        if short == "2t":
+            return temp_ds
+        if short == "tcc":
+            return tcc_ds
+        if short == "tp":
+            return tp_ds
+        if short == "10u":
+            return u10_ds
+        if short == "10v":
+            return v10_ds
+        return xr.Dataset()
+
+    monkeypatch.setattr("datacube.decoder.xr.open_dataset", fake_open_dataset)
+
+    cube = decode_grib("dummy.grib")
+    out = cube.dataset
+    assert set(out.dims) == {"time", "level", "lat", "lon"}
+    assert "t2m" in out.data_vars
+    assert "tcc" in out.data_vars
+    assert "tp" in out.data_vars
+    assert "eastward_wind_10m" in out.data_vars
+    assert "northward_wind_10m" in out.data_vars
+    assert "precipitation_amount" in out.data_vars
+    assert "wind_speed" in out.data_vars
+
+    short_names = [
+        (call.get("backend_kwargs") or {}).get("filter_by_keys", {}).get("shortName")
+        for call in calls
+    ]
+    assert set(short_names) >= {"2t", "tcc", "tp", "10u", "10v"}
+    assert all(call.get("engine") == "cfgrib" for call in calls)
+
+
 def test_decode_grib_missing_dependency_is_wrapped(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

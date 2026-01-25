@@ -12,6 +12,8 @@ function resolveApiOrigin(apiBaseUrl: string): string {
   }
 }
 
+type TileImageFormat = 'png' | 'webp';
+
 export type WindVector = {
   lon: number;
   lat: number;
@@ -44,6 +46,15 @@ function normalizeDensity(value: number): number {
   if (rounded < 1) return 1;
   if (rounded > 100) return 100;
   return rounded;
+}
+
+function densityToStride(density: number): number {
+  const normalized = normalizeDensity(density);
+  const stride = Math.round(256 / normalized);
+  if (!Number.isFinite(stride)) return 16;
+  if (stride < 1) return 1;
+  if (stride > 256) return 256;
+  return stride;
 }
 
 function normalizeBBox(bbox: WindVectorBBox): WindVectorBBox {
@@ -83,25 +94,62 @@ function isAbortError(error: unknown, signal?: AbortSignal): boolean {
 
 export async function fetchWindVectorData(options: {
   apiBaseUrl: string;
+  runTimeKey?: string;
   timeKey: string;
+  level?: string;
   bbox: WindVectorBBox;
   density: number;
   signal?: AbortSignal;
 }): Promise<WindVectorData> {
   const origin = resolveApiOrigin(options.apiBaseUrl);
-  const timeKey = encodeURIComponent(options.timeKey);
+  const runTimeKey = encodeURIComponent((options.runTimeKey ?? options.timeKey).trim());
+  const timeKey = encodeURIComponent(options.timeKey.trim());
+  const level = encodeURIComponent((options.level ?? 'sfc').trim() || 'sfc');
   const bbox = normalizeBBox(options.bbox);
-  const density = normalizeDensity(options.density);
+  const stride = densityToStride(options.density);
 
-  const url = `${origin}/api/v1/vectors/cldas/${timeKey}/wind?bbox=${bbox.west},${bbox.south},${bbox.east},${bbox.north}&density=${density}`;
+  const baseUrl = `${origin}/api/v1/vector/ecmwf/${runTimeKey}/wind/${level}/${timeKey}?bbox=${bbox.west},${bbox.south},${bbox.east},${bbox.north}`;
 
-  const response = await fetch(url, { signal: options.signal });
-  if (!response.ok) {
-    throw new Error(`Failed to fetch wind vectors: ${response.status}`);
+  let response: Response | null = null;
+  let candidateStride = stride;
+
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    response = await fetch(`${baseUrl}&stride=${candidateStride}`, { signal: options.signal });
+    if (response.ok) break;
+    if (response.status !== 400 || candidateStride >= 256) break;
+    candidateStride = Math.min(256, candidateStride * 2);
   }
 
+  if (!response || !response.ok) throw new Error(`Failed to fetch wind vectors: ${response?.status ?? 0}`);
+
   const payload = (await response.json()) as unknown;
-  return parseWindVectorData(payload);
+  const parsed = parseWindVectorData(payload);
+  if (parsed.vectors.length > 0) return parsed;
+
+  if (!isRecord(payload)) return { vectors: [] };
+  const uRaw = payload.u;
+  const vRaw = payload.v;
+  const latRaw = payload.lat;
+  const lonRaw = payload.lon;
+
+  if (!Array.isArray(uRaw) || !Array.isArray(vRaw) || !Array.isArray(latRaw) || !Array.isArray(lonRaw)) {
+    return { vectors: [] };
+  }
+
+  const count = Math.min(uRaw.length, vRaw.length, latRaw.length, lonRaw.length);
+  const vectors: WindVector[] = [];
+  for (let index = 0; index < count; index += 1) {
+    const u = uRaw[index];
+    const v = vRaw[index];
+    const lat = latRaw[index];
+    const lon = lonRaw[index];
+    if (!isFiniteNumber(lon) || !isFiniteNumber(lat) || !isFiniteNumber(u) || !isFiniteNumber(v)) {
+      continue;
+    }
+    vectors.push({ lon, lat, u, v });
+  }
+
+  return { vectors };
 }
 
 export function buildCldasTileUrlTemplate(options: CldasTileUrlTemplateOptions): string {
@@ -120,6 +168,90 @@ export function buildCldasTileUrl(options: CldasTileUrlTemplateOptions & { z: nu
   return `${origin}/api/v1/tiles/cldas/${timeKey}/${variable}/${options.z}/${options.x}/${options.y}.png`;
 }
 
+function normalizeEcmwfTimeKey(timeKey: string): string {
+  const trimmed = timeKey.trim();
+  if (!trimmed) return '';
+  if (/^\d{8}T\d{6}Z$/.test(trimmed)) return trimmed;
+  if (/^\d{10}$/.test(trimmed)) {
+    const year = trimmed.slice(0, 4);
+    const month = trimmed.slice(4, 6);
+    const day = trimmed.slice(6, 8);
+    const hour = trimmed.slice(8, 10);
+    return `${year}${month}${day}T${hour}0000Z`;
+  }
+
+  const parsed = new Date(trimmed);
+  if (Number.isNaN(parsed.getTime())) return trimmed;
+
+  const iso = parsed.toISOString().replace(/\.\d{3}Z$/, 'Z');
+  return iso.replaceAll('-', '').replaceAll(':', '');
+}
+
+function encodeTileLayerPath(layer: string): string {
+  return layer
+    .trim()
+    .replace(/^\/+/, '')
+    .replace(/\/+$/, '')
+    .split('/')
+    .filter((segment) => segment.length > 0)
+    .map((segment) => encodeURIComponent(segment))
+    .join('/');
+}
+
+export type EcmwfTileUrlTemplateOptions = {
+  apiBaseUrl: string;
+  tileLayer: string;
+  timeKey: string;
+  level?: string;
+  format?: TileImageFormat;
+};
+
+export function buildEcmwfTileUrlTemplate(options: EcmwfTileUrlTemplateOptions): string {
+  const origin = resolveApiOrigin(options.apiBaseUrl);
+  const layer = encodeTileLayerPath(options.tileLayer);
+  const timeKey = encodeURIComponent(normalizeEcmwfTimeKey(options.timeKey));
+  const level = encodeURIComponent((options.level ?? 'sfc').trim() || 'sfc');
+  const format = options.format ?? 'png';
+
+  return `${origin}/api/v1/tiles/${layer}/${timeKey}/${level}/{z}/{x}/{y}.${format}`;
+}
+
+export type EcmwfTemperatureTileUrlTemplateOptions = Omit<
+  EcmwfTileUrlTemplateOptions,
+  'tileLayer' | 'format'
+> & {
+  format?: TileImageFormat;
+};
+
+export function buildEcmwfTemperatureTileUrlTemplate(
+  options: EcmwfTemperatureTileUrlTemplateOptions,
+): string {
+  return buildEcmwfTileUrlTemplate({
+    apiBaseUrl: options.apiBaseUrl,
+    tileLayer: 'ecmwf/temp',
+    timeKey: options.timeKey,
+    level: options.level,
+    format: options.format,
+  });
+}
+
+export type EcmwfCloudTileUrlTemplateOptions = Omit<
+  EcmwfTileUrlTemplateOptions,
+  'tileLayer' | 'format'
+> & {
+  format?: TileImageFormat;
+};
+
+export function buildEcmwfCloudTileUrlTemplate(options: EcmwfCloudTileUrlTemplateOptions): string {
+  return buildEcmwfTileUrlTemplate({
+    apiBaseUrl: options.apiBaseUrl,
+    tileLayer: 'ecmwf/tcc',
+    timeKey: options.timeKey,
+    level: options.level ?? 'sfc',
+    format: options.format,
+  });
+}
+
 export type PrecipitationTileUrlTemplateOptions = Omit<
   CldasTileUrlTemplateOptions,
   'variable'
@@ -130,9 +262,13 @@ export type PrecipitationTileUrlTemplateOptions = Omit<
 export function buildPrecipitationTileUrlTemplate(
   options: PrecipitationTileUrlTemplateOptions,
 ): string {
-  const origin = resolveApiOrigin(options.apiBaseUrl);
-  const timeKey = encodeURIComponent(options.timeKey);
-  const base = `${origin}/api/v1/tiles/cldas/${timeKey}/precipitation/{z}/{x}/{y}.png`;
+  const base = buildEcmwfTileUrlTemplate({
+    apiBaseUrl: options.apiBaseUrl,
+    tileLayer: 'ecmwf/precip_amount',
+    timeKey: options.timeKey,
+    level: 'sfc',
+    format: 'png',
+  });
 
   if (options.threshold == null) return base;
   if (!Number.isFinite(options.threshold)) return base;
@@ -140,35 +276,16 @@ export function buildPrecipitationTileUrlTemplate(
   return `${base}?threshold=${encodeURIComponent(String(options.threshold))}`;
 }
 
-function normalizeCloudVariable(variable: string | undefined): string {
-  const trimmed = variable?.trim() ?? '';
-  if (!trimmed) return 'TCC';
-
-  const normalized = trimmed.toLowerCase();
-  if (
-    normalized === 'tcc' ||
-    normalized === 'cloud' ||
-    normalized === 'total_cloud_cover' ||
-    normalized === 'total-cloud-cover' ||
-    normalized === 'total cloud cover' ||
-    normalized === 'total_cloud' ||
-    normalized === 'total-cloud'
-  ) {
-    return 'TCC';
-  }
-
-  return trimmed.toUpperCase();
-}
-
 export type CloudTileUrlTemplateOptions = Omit<CldasTileUrlTemplateOptions, 'variable'> & {
   variable?: string;
 };
 
 export function buildCloudTileUrlTemplate(options: CloudTileUrlTemplateOptions): string {
-  return buildCldasTileUrlTemplate({
+  return buildEcmwfCloudTileUrlTemplate({
     apiBaseUrl: options.apiBaseUrl,
     timeKey: options.timeKey,
-    variable: normalizeCloudVariable(options.variable),
+    level: 'sfc',
+    format: 'png',
   });
 }
 

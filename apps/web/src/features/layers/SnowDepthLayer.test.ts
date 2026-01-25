@@ -48,7 +48,7 @@ describe('SnowDepthLayer', () => {
     new SnowDepthLayer(viewer as never, {
       id: 'snow-depth',
       apiBaseUrl: 'http://api.test',
-      timeKey: '2024-01-15T00:59:00Z',
+      timeKey: '2025-12-22T00:59:00Z',
       variable: 'snow-depth',
       opacity: 0.7,
       visible: true,
@@ -73,7 +73,7 @@ describe('SnowDepthLayer', () => {
     const providerUrl = (
       vi.mocked(UrlTemplateImageryProvider).mock.calls[0]?.[0] as { url?: string }
     )?.url;
-    expect(providerUrl).toContain('/20240115T000000Z/');
+    expect(providerUrl).toContain('/20251222T000000Z/');
     expect(providerUrl).toContain('/SNOD/');
 
     expect(vi.mocked(ImageryLayer)).toHaveBeenCalledWith(

@@ -4,6 +4,7 @@ import {
   buildCldasTileUrl,
   buildCldasTileUrlTemplate,
   buildCloudTileUrlTemplate,
+  buildEcmwfTemperatureTileUrlTemplate,
   buildPrecipitationTileUrlTemplate,
   clearCldasTileProbeCache,
   probeCldasTileAvailability,
@@ -27,12 +28,12 @@ describe('layersApi', () => {
   it('builds a Cesium url template without encoding placeholders', () => {
     const url = buildCldasTileUrlTemplate({
       apiBaseUrl: 'http://api.test/',
-      timeKey: '2024-01-15T00:00:00Z',
+      timeKey: '2025-12-22T00:00:00Z',
       variable: 'TMP',
     });
 
     expect(url).toBe(
-      'http://api.test/api/v1/tiles/cldas/2024-01-15T00%3A00%3A00Z/TMP/{z}/{x}/{y}.png',
+      'http://api.test/api/v1/tiles/cldas/2025-12-22T00%3A00%3A00Z/TMP/{z}/{x}/{y}.png',
     );
     expect(url).toContain('{z}');
     expect(url).toContain('{x}');
@@ -43,7 +44,7 @@ describe('layersApi', () => {
   it('builds a concrete CLDAS tile url without placeholders', () => {
     const url = buildCldasTileUrl({
       apiBaseUrl: 'http://api.test/some/prefix/',
-      timeKey: '2024-01-15T00:00:00Z',
+      timeKey: '2025-12-22T00:00:00Z',
       variable: 'TMP',
       z: 0,
       x: 0,
@@ -51,7 +52,7 @@ describe('layersApi', () => {
     });
 
     expect(url).toBe(
-      'http://api.test/api/v1/tiles/cldas/2024-01-15T00%3A00%3A00Z/TMP/0/0/0.png',
+      'http://api.test/api/v1/tiles/cldas/2025-12-22T00%3A00%3A00Z/TMP/0/0/0.png',
     );
   });
 
@@ -88,38 +89,40 @@ describe('layersApi', () => {
     );
   });
 
-  it('builds cloud tile templates using the TCC variable', () => {
+  it('builds ECMWF cloud tile templates', () => {
     const url = buildCloudTileUrlTemplate({
       apiBaseUrl: 'http://api.test/',
-      timeKey: '2024-01-15T00:00:00Z',
+      timeKey: '2025-12-22T00:00:00Z',
       variable: 'tcc',
     });
 
     expect(url).toBe(
-      'http://api.test/api/v1/tiles/cldas/2024-01-15T00%3A00%3A00Z/TCC/{z}/{x}/{y}.png',
+      'http://api.test/api/v1/tiles/ecmwf/tcc/20251222T000000Z/sfc/{z}/{x}/{y}.png',
     );
     expect(url).toContain('{z}');
     expect(url).toContain('{x}');
     expect(url).toContain('{y}');
   });
 
-  it('defaults cloud tiles to the TCC variable when omitted', () => {
+  it('defaults ECMWF cloud tiles to surface level', () => {
     const url = buildCloudTileUrlTemplate({
       apiBaseUrl: 'http://api.test',
       timeKey: '2024011500',
     });
 
-    expect(url).toBe('http://api.test/api/v1/tiles/cldas/2024011500/TCC/{z}/{x}/{y}.png');
+    expect(url).toBe(
+      'http://api.test/api/v1/tiles/ecmwf/tcc/20240115T000000Z/sfc/{z}/{x}/{y}.png',
+    );
   });
 
-  it('builds precipitation tile templates using the precipitation variable', () => {
+  it('builds ECMWF precipitation tile templates', () => {
     const url = buildPrecipitationTileUrlTemplate({
       apiBaseUrl: 'http://api.test/',
-      timeKey: '2024-01-15T00:00:00Z',
+      timeKey: '2025-12-22T00:00:00Z',
     });
 
     expect(url).toBe(
-      'http://api.test/api/v1/tiles/cldas/2024-01-15T00%3A00%3A00Z/precipitation/{z}/{x}/{y}.png',
+      'http://api.test/api/v1/tiles/ecmwf/precip_amount/20251222T000000Z/sfc/{z}/{x}/{y}.png',
     );
     expect(url).toContain('{z}');
     expect(url).toContain('{x}');
@@ -134,7 +137,7 @@ describe('layersApi', () => {
     });
 
     expect(url).toBe(
-      'http://api.test/api/v1/tiles/cldas/2024011500/precipitation/{z}/{x}/{y}.png?threshold=2.5',
+      'http://api.test/api/v1/tiles/ecmwf/precip_amount/20240115T000000Z/sfc/{z}/{x}/{y}.png?threshold=2.5',
     );
   });
 
@@ -146,24 +149,41 @@ describe('layersApi', () => {
     });
 
     expect(url).toBe(
-      'http://api.test/api/v1/tiles/cldas/2024011500/precipitation/{z}/{x}/{y}.png',
+      'http://api.test/api/v1/tiles/ecmwf/precip_amount/20240115T000000Z/sfc/{z}/{x}/{y}.png',
     );
   });
 
-  it('fetches wind vector data using bbox and density params', async () => {
+  it('builds ECMWF temperature tile templates with normalized time keys', () => {
+    const url = buildEcmwfTemperatureTileUrlTemplate({
+      apiBaseUrl: 'http://api.test/',
+      timeKey: '2025-12-22T00:00:00Z',
+      level: 'sfc',
+    });
+
+    expect(url).toBe(
+      'http://api.test/api/v1/tiles/ecmwf/temp/20251222T000000Z/sfc/{z}/{x}/{y}.png',
+    );
+    expect(url).toContain('{z}');
+    expect(url).toContain('{x}');
+    expect(url).toContain('{y}');
+  });
+
+  it('fetches wind vector data using bbox and stride params', async () => {
     const fetchMock = vi.fn(async () =>
       jsonResponse({
-        vectors: [
-          { lon: 120, lat: 30, u: 1.5, v: -2 },
-          { lon: 121, lat: 31, u: 0, v: 0.1 },
-        ],
+        u: [1.5, 0],
+        v: [-2, 0.1],
+        lat: [30, 31],
+        lon: [120, 121],
       }),
     );
     vi.stubGlobal('fetch', fetchMock);
 
     const result = await fetchWindVectorData({
       apiBaseUrl: 'http://api.test/some/prefix/',
-      timeKey: '2024-01-15T00:00:00Z',
+      runTimeKey: '2025-12-22T00:00:00Z',
+      timeKey: '2025-12-22T00:00:00Z',
+      level: 'sfc',
       bbox: { west: 110, south: 20, east: 130, north: 40 },
       density: 24,
     });
@@ -171,23 +191,28 @@ describe('layersApi', () => {
     expect(result.vectors).toHaveLength(2);
 
     expect(fetchMock).toHaveBeenCalledWith(
-      'http://api.test/api/v1/vectors/cldas/2024-01-15T00%3A00%3A00Z/wind?bbox=110,20,130,40&density=24',
+      'http://api.test/api/v1/vector/ecmwf/2025-12-22T00%3A00%3A00Z/wind/sfc/2025-12-22T00%3A00%3A00Z?bbox=110,20,130,40&stride=11',
       expect.objectContaining({ signal: undefined }),
     );
   });
 
   it('filters invalid vector entries and clamps density', async () => {
     const fetchMock = vi.fn(async (url: string) => {
-      expect(url).toContain('density=1');
+      expect(url).toContain('stride=256');
       return jsonResponse({
-        vectors: [{ lon: 120, lat: 30, u: 1.5, v: -2 }, { lon: 0, lat: 1, u: 'x' }],
+        u: [1.5, 'x'],
+        v: [-2, 0],
+        lat: [30, 1],
+        lon: [120, 0],
       });
     });
     vi.stubGlobal('fetch', fetchMock);
 
     const result = await fetchWindVectorData({
       apiBaseUrl: 'http://api.test/',
-      timeKey: '2024011500',
+      runTimeKey: '2025-12-22T00:00:00Z',
+      timeKey: '2025-12-22T01:00:00Z',
+      level: 'sfc',
       bbox: { west: -10, south: -20, east: 10, north: 20 },
       density: 0,
     });
@@ -204,7 +229,9 @@ describe('layersApi', () => {
     await expect(
       fetchWindVectorData({
         apiBaseUrl: 'http://api.test',
-        timeKey: '2024011500',
+        runTimeKey: '2025-12-22T00:00:00Z',
+        timeKey: '2025-12-22T01:00:00Z',
+        level: 'sfc',
         bbox: { west: 0, south: 0, east: 1, north: 1 },
         density: 10,
       }),

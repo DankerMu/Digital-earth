@@ -538,9 +538,12 @@ describe('CesiumViewer', () => {
             hazards: [],
           });
         }
-        if (url.startsWith('http://api.test/api/v1/vectors/')) {
+        if (url.startsWith('http://api.test/api/v1/vector/')) {
           return jsonResponse({
-            vectors: [{ lon: 120, lat: 30, u: 1.5, v: -2 }],
+            u: [1.5],
+            v: [-2],
+            lat: [30],
+            lon: [120],
           });
         }
         if (url.startsWith('http://api.test/api/v1/risk/pois')) {
@@ -918,20 +921,20 @@ describe('CesiumViewer', () => {
     useLayerManagerStore.setState({
       layers: [
         {
-          id: 'temperature-low',
-          type: 'temperature',
-          variable: 'LOW',
-          opacity: 1,
-          visible: false,
-          zIndex: 10,
-        },
-        {
           id: 'temperature-high',
           type: 'temperature',
           variable: 'HIGH',
-          opacity: 1,
+          opacity: 0.75,
           visible: false,
           zIndex: 20,
+        },
+        {
+          id: 'temperature-low',
+          type: 'temperature',
+          variable: 'LOW',
+          opacity: 0.25,
+          visible: false,
+          zIndex: 10,
         },
       ],
     });
@@ -943,14 +946,23 @@ describe('CesiumViewer', () => {
     const viewer = vi.mocked(Viewer).mock.results[0].value;
 
     await waitFor(() => expect(viewer.imageryLayers.raiseToTop).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(viewer.imageryLayers.add).toHaveBeenCalledTimes(2));
 
-    const raisedUrls = viewer.imageryLayers.raiseToTop.mock.calls.map(
-      ([layer]: [unknown]) =>
-        (layer as { provider?: { options?: { url?: string } } })?.provider?.options?.url ?? '',
+    const addedLayers: Array<{ alpha?: number }> = viewer.imageryLayers.add.mock.calls.map(
+      ([layer]: [unknown]) => layer as { alpha?: number },
+    );
+    const raisedLayers: Array<{ alpha?: number }> = viewer.imageryLayers.raiseToTop.mock.calls.map(
+      ([layer]: [unknown]) => layer as { alpha?: number },
     );
 
-    expect(raisedUrls[0]).toContain('/LOW/');
-    expect(raisedUrls[1]).toContain('/HIGH/');
+    const lowLayer = addedLayers.find((layer) => layer.alpha === 0.25);
+    const highLayer = addedLayers.find((layer) => layer.alpha === 0.75);
+
+    expect(lowLayer).toBeTruthy();
+    expect(highLayer).toBeTruthy();
+
+    expect(raisedLayers[0]).toBe(lowLayer);
+    expect(raisedLayers[1]).toBe(highLayer);
   });
 
   it('syncs cloud imagery layers from layerManager and applies opacity/visibility', async () => {
@@ -1022,7 +1034,7 @@ describe('CesiumViewer', () => {
 
     expect(imageryLayer.alpha).toBe(0.9);
     expect(imageryLayer.show).toBe(true);
-    expect(imageryLayer.provider?.options?.url).toContain('/precipitation/');
+    expect(imageryLayer.provider?.options?.url).toContain('/ecmwf/precip_amount/');
     expect(imageryLayer.provider?.options?.url).toContain('threshold=1.5');
     expect(viewer.imageryLayers.raiseToTop).toHaveBeenCalledWith(imageryLayer);
 
@@ -1125,9 +1137,9 @@ describe('CesiumViewer', () => {
         (layer as { provider?: { options?: { url?: string } } })?.provider?.options?.url ?? '',
     );
 
-    expect(raisedUrls[0]).toContain('/LOW/');
-    expect(raisedUrls[1]).toContain('/TCC/');
-    expect(raisedUrls[2]).toContain('/precipitation/');
+    expect(raisedUrls[0]).toContain('/ecmwf/temp/');
+    expect(raisedUrls[1]).toContain('/ecmwf/tcc/');
+    expect(raisedUrls[2]).toContain('/ecmwf/precip_amount/');
     expect(raisedUrls[3]).toContain('/SNOD/');
   });
 
@@ -1317,11 +1329,13 @@ describe('CesiumViewer', () => {
 
     const fetchMock = vi.mocked(globalThis.fetch);
     const windCall = fetchMock.mock.calls.find(
-      ([url]) => typeof url === 'string' && url.includes('/api/v1/vectors/cldas/'),
+      ([url]) => typeof url === 'string' && url.includes('/api/v1/vector/ecmwf/'),
     );
     expect(windCall?.[0]).toContain(
-      'http://api.test/api/v1/vectors/cldas/2024-01-15T00%3A00%3A00Z/wind?bbox=10,20,30,40&density=12',
+      `/api/v1/vector/ecmwf/${encodeURIComponent(DEFAULT_TIME_KEY)}/wind/sfc/${encodeURIComponent(DEFAULT_TIME_KEY)}`,
     );
+    expect(windCall?.[0]).toContain('bbox=10,20,30,40');
+    expect(windCall?.[0]).toContain('stride=');
   });
 
   it('opens sampling card and displays sampled values on map click', async () => {
@@ -1489,7 +1503,7 @@ describe('CesiumViewer', () => {
     const panel = await screen.findByLabelText('Local info');
     expect(panel).toHaveTextContent('30.0000, 120.0000');
     expect(panel).toHaveTextContent('100');
-    expect(panel).toHaveTextContent('2024-01-15T00:00:00Z');
+    expect(panel).toHaveTextContent(DEFAULT_TIME_KEY);
     expect(panel).toHaveTextContent('cloud:tcc');
   });
 
@@ -1601,7 +1615,12 @@ describe('CesiumViewer', () => {
       }),
     );
 
-    expect(vi.mocked(Cartesian3.fromDegrees)).toHaveBeenCalledWith(0, 0, 7500);
+    const lastFromDegreesCall = vi
+      .mocked(Cartesian3.fromDegrees)
+      .mock.calls.at(-1);
+    expect(lastFromDegreesCall?.[0]).toBeCloseTo(0.1);
+    expect(lastFromDegreesCall?.[1]).toBeCloseTo(0.2);
+    expect(lastFromDegreesCall?.[2]).toBe(20_000_000);
 
     await waitFor(() => {
       expect(useLayerManagerStore.getState().layers[0]?.visible).toBe(true);
@@ -1743,7 +1762,12 @@ describe('CesiumViewer', () => {
         }),
       );
     });
-    expect(vi.mocked(Cartesian3.fromDegrees)).toHaveBeenCalledWith(0, 0, 7500);
+    const lastFromDegreesCall = vi
+      .mocked(Cartesian3.fromDegrees)
+      .mock.calls.at(-1);
+    expect(lastFromDegreesCall?.[0]).toBeCloseTo(0.1);
+    expect(lastFromDegreesCall?.[1]).toBeCloseTo(0.2);
+    expect(lastFromDegreesCall?.[2]).toBe(20_000_000);
   });
 
   it('restores local layer/time state when returning from layerGlobal mode', async () => {
@@ -1794,7 +1818,7 @@ describe('CesiumViewer', () => {
 
       const panelBefore = await screen.findByLabelText('Local info');
       expect(panelBefore).toHaveTextContent('temperature:TMP');
-      expect(panelBefore).toHaveTextContent('2024-01-15T00:00:00Z');
+      expect(panelBefore).toHaveTextContent(DEFAULT_TIME_KEY);
 
       await waitFor(() => expect(setIntervalSpy).toHaveBeenCalled());
       act(() => {
@@ -1828,8 +1852,8 @@ describe('CesiumViewer', () => {
 
       const panelAfter = await screen.findByLabelText('Local info');
       expect(panelAfter).toHaveTextContent('temperature:TMP');
-      expect(panelAfter).toHaveTextContent('2024-01-15T00:00:00Z');
-      expect(panelAfter).not.toHaveTextContent('2024-01-15T01:00:00Z');
+      expect(panelAfter).toHaveTextContent(DEFAULT_TIME_KEY);
+      expect(panelAfter).not.toHaveTextContent('2025-12-22T01:00:00Z');
     } finally {
       setIntervalSpy.mockRestore();
       clearIntervalSpy.mockRestore();
@@ -1937,7 +1961,7 @@ describe('CesiumViewer', () => {
 
       const fetchMock = vi.mocked(globalThis.fetch);
       const windCallsAfterFirst = fetchMock.mock.calls.filter(
-        ([url]) => typeof url === 'string' && url.includes('/api/v1/vectors/cldas/'),
+        ([url]) => typeof url === 'string' && url.includes('/api/v1/vector/ecmwf/'),
       ).length;
       expect(windCallsAfterFirst).toBe(1);
 
@@ -1960,7 +1984,7 @@ describe('CesiumViewer', () => {
 
       await waitFor(() => {
         const calls = fetchMock.mock.calls.filter(
-          ([url]) => typeof url === 'string' && url.includes('/api/v1/vectors/cldas/'),
+          ([url]) => typeof url === 'string' && url.includes('/api/v1/vector/ecmwf/'),
         ).length;
         expect(calls).toBe(2);
       });
@@ -1977,7 +2001,7 @@ describe('CesiumViewer', () => {
       });
 
       const callsBeforeCacheHit = fetchMock.mock.calls.filter(
-        ([url]) => typeof url === 'string' && url.includes('/api/v1/vectors/cldas/'),
+        ([url]) => typeof url === 'string' && url.includes('/api/v1/vector/ecmwf/'),
       ).length;
       const updateCallsBeforeCacheHit = windArrowsMocks.update.mock.calls.length;
 
@@ -1992,7 +2016,7 @@ describe('CesiumViewer', () => {
       );
 
       const callsAfterCacheHit = fetchMock.mock.calls.filter(
-        ([url]) => typeof url === 'string' && url.includes('/api/v1/vectors/cldas/'),
+        ([url]) => typeof url === 'string' && url.includes('/api/v1/vector/ecmwf/'),
       ).length;
       expect(callsAfterCacheHit).toBe(callsBeforeCacheHit);
     } finally {
@@ -2030,7 +2054,7 @@ describe('CesiumViewer', () => {
         if (url.endsWith('/config.json')) {
           return Promise.resolve(jsonResponse({ apiBaseUrl: 'http://api.test' }));
         }
-        if (url.startsWith('http://api.test/api/v1/vectors/')) {
+        if (url.startsWith('http://api.test/api/v1/vector/')) {
           if (url.includes('bbox=10,20,30,40')) {
             return Promise.resolve(jsonResponse({ vectors: vectorsA }));
           }
@@ -3179,9 +3203,12 @@ describe('CesiumViewer', () => {
             ],
           });
         }
-        if (url.startsWith('http://api.test/api/v1/vectors/')) {
+        if (url.startsWith('http://api.test/api/v1/vector/')) {
           return jsonResponse({
-            vectors: [{ lon: 120, lat: 30, u: 1.5, v: -2 }],
+            u: [1.5],
+            v: [-2],
+            lat: [30],
+            lon: [120],
           });
         }
         if (url.startsWith('http://api.test/api/v1/risk/pois')) {
