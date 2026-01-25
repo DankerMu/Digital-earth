@@ -63,7 +63,7 @@ export class TemperatureLayer {
     return buildEcmwfTemperatureTileUrlTemplate({
       apiBaseUrl: params.apiBaseUrl,
       timeKey: params.timeKey,
-      level: 'sfc',
+      level: params.levelKey ?? 'sfc',
     });
   }
 

@@ -80,6 +80,20 @@ def _iter_valid_times(
         raise ValueError("step_hour must be > 0")
     if end_hour < start_hour:
         raise ValueError("end_hour must be >= start_hour")
+
+    # ECMWF standard output cadence: 0–72h every 3h, 72–240h every 6h.
+    # Preserve backwards compatibility: only apply the mixed cadence when the caller
+    # requests the default 3-hour step with an end beyond 72h.
+    if int(step_hour) == 3 and int(end_hour) > 72:
+        early = range(0, 72 + 1, 3)
+        late = range(72, int(end_hour) + 1, 6)
+        lead_hours = sorted(set(early).union(late))
+        return [
+            run_time + timedelta(hours=int(h))
+            for h in lead_hours
+            if int(start_hour) <= int(h) <= int(end_hour)
+        ]
+
     return [
         run_time + timedelta(hours=int(h))
         for h in range(int(start_hour), int(end_hour) + 1, int(step_hour))
@@ -500,7 +514,7 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Run init time (ISO8601 or YYYYMMDDTHHMMSSZ), e.g. 2025-12-22T00:00:00Z",
     )
     parser.add_argument("--lead-start", type=int, default=0)
-    parser.add_argument("--lead-end", type=int, default=72)
+    parser.add_argument("--lead-end", type=int, default=240)
     parser.add_argument("--lead-step", type=int, default=3)
 
     parser.add_argument(

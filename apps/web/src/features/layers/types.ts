@@ -13,6 +13,7 @@ export type RectangleDegrees = {
 
 export type TemperatureLayerParams = CldasTileUrlTemplateOptions & {
   id: string;
+  levelKey?: string;
   opacity: number;
   visible: boolean;
   zIndex: number;

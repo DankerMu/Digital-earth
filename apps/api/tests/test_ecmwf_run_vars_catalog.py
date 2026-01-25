@@ -34,14 +34,38 @@ def _base_config() -> dict:
     }
 
 
-def _seed_run(db_url: str, *, run_time: datetime) -> None:
-    from models import Base, EcmwfRun
+def _seed_run(
+    db_url: str,
+    *,
+    run_time: datetime,
+    levels: list[str] | None = None,
+) -> None:
+    from models import Base, EcmwfAsset, EcmwfRun, EcmwfTime
 
     engine = create_engine(db_url)
     Base.metadata.create_all(engine)
 
     with Session(engine) as session:
-        session.add(EcmwfRun(run_time=run_time, status="complete"))
+        run = EcmwfRun(run_time=run_time, status="complete")
+        session.add(run)
+        session.flush()
+
+        time = EcmwfTime(run_id=run.id, valid_time=run_time)
+        session.add(time)
+        session.flush()
+
+        for level in levels or ["sfc"]:
+            session.add(
+                EcmwfAsset(
+                    run_id=run.id,
+                    time_id=time.id,
+                    variable="wind",
+                    level=level,
+                    status="complete",
+                    version=1,
+                    path="Data/cubes/ecmwf/wind/test.nc",
+                )
+            )
         session.commit()
 
 
@@ -76,7 +100,11 @@ def test_catalog_ecmwf_run_vars_returns_vars_levels_units_legend_and_etag(
 
     db_url = f"sqlite+pysqlite:///{tmp_path / 'catalog.db'}"
     run_time = datetime(2026, 1, 1, tzinfo=timezone.utc)
-    _seed_run(db_url, run_time=run_time)
+    _seed_run(
+        db_url,
+        run_time=run_time,
+        levels=["sfc", "850", "700", "500", "300"],
+    )
 
     client, _redis = _make_client(monkeypatch, tmp_path, db_url=db_url)
     run_key = catalog_router._time_key_from_datetime(run_time)
