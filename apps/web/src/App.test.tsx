@@ -31,6 +31,19 @@ it('switches active layer and updates legend', async () => {
       });
     }
 
+    if (url === 'http://api.test/api/v1/catalog/ecmwf/runs?latest=20') {
+      return jsonResponse({
+        runs: [{ run_time: '20251222T000000Z', status: 'complete' }],
+      });
+    }
+
+    if (url === 'http://api.test/api/v1/catalog/ecmwf/runs/2025-12-22T00%3A00%3A00Z/times?policy=std') {
+      return jsonResponse({
+        times: ['20251222T000000Z', '20251222T030000Z'],
+        missing: [],
+      });
+    }
+
     if (url === 'http://api.test/api/v1/legends?layer_type=temperature') {
       return jsonResponse({
         colors: ['#0000ff', '#ffffff', '#ff0000'],

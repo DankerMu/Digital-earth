@@ -440,7 +440,7 @@ import { useLayerManagerStore } from '../../state/layerManager';
 import { useOsmBuildingsStore } from '../../state/osmBuildings';
 import { usePerformanceModeStore } from '../../state/performanceMode';
 import { DEFAULT_SCENE_MODE_ID, useSceneModeStore } from '../../state/sceneMode';
-import { DEFAULT_TIME_KEY, useTimeStore } from '../../state/time';
+import { DEFAULT_LEVEL_KEY, DEFAULT_RUN_TIME_KEY, DEFAULT_TIME_KEY, useTimeStore } from '../../state/time';
 import { useViewModeStore } from '../../state/viewMode';
 import { useViewerStatsStore } from '../../state/viewerStats';
 import { CesiumViewer } from './CesiumViewer';
@@ -479,7 +479,11 @@ describe('CesiumViewer', () => {
     useEventAutoLayersStore.setState({ restoreOnExit: true, overrides: {} });
     useEventLayersStore.setState({ enabled: true, mode: DEFAULT_EVENT_LAYER_MODE });
     useSceneModeStore.setState({ sceneModeId: DEFAULT_SCENE_MODE_ID });
-    useTimeStore.setState({ timeKey: DEFAULT_TIME_KEY });
+    useTimeStore.setState({
+      runTimeKey: DEFAULT_RUN_TIME_KEY,
+      validTimeKey: DEFAULT_TIME_KEY,
+      levelKey: DEFAULT_LEVEL_KEY,
+    });
     useLayerManagerStore.setState({ layers: [] });
     useOsmBuildingsStore.setState({ enabled: false });
     usePerformanceModeStore.setState({ mode: 'high' });
@@ -1332,7 +1336,7 @@ describe('CesiumViewer', () => {
       ([url]) => typeof url === 'string' && url.includes('/api/v1/vector/ecmwf/'),
     );
     expect(windCall?.[0]).toContain(
-      `/api/v1/vector/ecmwf/${encodeURIComponent(DEFAULT_TIME_KEY)}/wind/sfc/${encodeURIComponent(DEFAULT_TIME_KEY)}`,
+      `/api/v1/vector/ecmwf/${encodeURIComponent(DEFAULT_RUN_TIME_KEY)}/wind/${encodeURIComponent(DEFAULT_LEVEL_KEY)}/${encodeURIComponent(DEFAULT_TIME_KEY)}`,
     );
     expect(windCall?.[0]).toContain('bbox=10,20,30,40');
     expect(windCall?.[0]).toContain('stride=');

@@ -18,7 +18,7 @@ import db
 from data_source import DataNotFoundError, DataSourceError
 from http_cache import if_none_match_matches
 from local_data_service import get_data_source
-from models import EcmwfRun, EcmwfTime
+from models import EcmwfAsset, EcmwfRun, EcmwfTime
 
 logger = logging.getLogger("api.error")
 
@@ -485,7 +485,6 @@ class EcmwfRunVarsResponse(BaseModel):
 
 
 ECMWF_RUN_CATALOG_VARS = ["cloud", "precip", "wind", "temp"]
-ECMWF_RUN_CATALOG_LEVELS = ["sfc", "850", "700", "500", "300"]
 ECMWF_RUN_CATALOG_UNITS: dict[str, str] = {
     "cloud": "%",
     "precip": "mm",
@@ -493,6 +492,61 @@ ECMWF_RUN_CATALOG_UNITS: dict[str, str] = {
     "temp": "°C",
 }
 ECMWF_RUN_CATALOG_LEGEND_VERSION = 2
+
+_SURFACE_LEVEL_ALIASES = {"sfc", "surface"}
+
+
+def _normalize_level_key(level: object) -> str | None:
+    raw = (str(level) if level is not None else "").strip()
+    if raw == "":
+        return None
+    lowered = raw.lower()
+    if lowered in _SURFACE_LEVEL_ALIASES:
+        return "sfc"
+    return raw
+
+
+def _level_sort_key(level: str) -> tuple[int, float, str]:
+    lowered = level.strip().lower()
+    if lowered in _SURFACE_LEVEL_ALIASES:
+        return (0, 0.0, "sfc")
+    try:
+        numeric = float(lowered.removesuffix("hpa").strip())
+    except ValueError:
+        return (2, 0.0, lowered)
+    return (1, -numeric, lowered)
+
+
+def _query_ecmwf_run_levels(*, run_time: datetime) -> list[str]:
+    stmt = (
+        select(EcmwfAsset.level)
+        .join(EcmwfRun, EcmwfAsset.run_id == EcmwfRun.id)
+        .where(EcmwfRun.run_time == run_time)
+        .distinct()
+    )
+
+    try:
+        with Session(db.get_engine()) as session:
+            rows = session.execute(stmt).all()
+    except SQLAlchemyError as exc:
+        logger.error("ecmwf_run_vars_db_error", extra={"error": str(exc)})
+        raise HTTPException(
+            status_code=503, detail="Catalog database unavailable"
+        ) from exc
+
+    levels: list[str] = []
+    seen: set[str] = set()
+    for (level,) in rows:
+        normalized = _normalize_level_key(level)
+        if normalized is None:
+            continue
+        lowered = normalized.lower()
+        if lowered in seen:
+            continue
+        seen.add(lowered)
+        levels.append(normalized)
+
+    return sorted(levels, key=_level_sort_key)
 
 
 def _assert_ecmwf_run_exists(*, run_time: datetime) -> None:
@@ -527,10 +581,11 @@ async def get_ecmwf_run_vars(
 
     async def _compute() -> bytes:
         await to_thread(_assert_ecmwf_run_exists, run_time=parsed_run)
+        levels = await to_thread(_query_ecmwf_run_levels, run_time=parsed_run)
         return (
             EcmwfRunVarsResponse(
                 vars=ECMWF_RUN_CATALOG_VARS,
-                levels=ECMWF_RUN_CATALOG_LEVELS,
+                levels=levels,
                 units=ECMWF_RUN_CATALOG_UNITS,
                 legend_version=ECMWF_RUN_CATALOG_LEGEND_VERSION,
             )

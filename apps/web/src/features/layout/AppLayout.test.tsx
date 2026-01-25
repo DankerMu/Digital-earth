@@ -30,6 +30,33 @@ function stubLegendApi(fetchMock: ReturnType<typeof vi.fn>) {
       return textResponse('© Cesium · © ECMWF / CLDAS');
     }
 
+    if (url === 'http://api.test/api/v1/catalog/ecmwf/runs?latest=20') {
+      return jsonResponse({
+        runs: [{ run_time: '20251222T000000Z', status: 'complete' }],
+      });
+    }
+
+    if (url === 'http://api.test/api/v1/catalog/ecmwf/runs/2025-12-22T00%3A00%3A00Z/times?policy=std') {
+      return jsonResponse({
+        times: ['20251222T000000Z', '20251222T030000Z'],
+        missing: [],
+      });
+    }
+
+    if (url === 'http://api.test/api/v1/catalog/ecmwf/runs/2025-12-22T00%3A00%3A00Z/vars') {
+      return jsonResponse({
+        vars: ['cloud', 'precip', 'wind', 'temp'],
+        levels: ['sfc', '850', '700', '500', '300'],
+        units: {
+          cloud: '%',
+          precip: 'mm',
+          wind: 'm/s',
+          temp: '°C',
+        },
+        legend_version: 2,
+      });
+    }
+
     if (url === 'http://api.test/api/v1/legends?layer_type=temperature') {
       return jsonResponse({
         colors: ['#0000ff', '#ffffff', '#ff0000'],
@@ -113,7 +140,7 @@ describe('AppLayout', () => {
     expect(screen.getAllByText('50%').length).toBeGreaterThan(0);
 
     fireEvent.click(screen.getByRole('button', { name: '预报' }));
-    expect(screen.getByText('该视图尚未实现。')).toBeInTheDocument();
+    expect(screen.getByText('ECMWF 预报')).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: '返回上一视图' }));
     expect(await screen.findByText('全局')).toBeInTheDocument();

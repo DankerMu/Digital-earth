@@ -44,7 +44,7 @@ import { useLayoutPanelsStore } from '../../state/layoutPanels';
 import { useOsmBuildingsStore } from '../../state/osmBuildings';
 import { usePerformanceModeStore } from '../../state/performanceMode';
 import { useSceneModeStore } from '../../state/sceneMode';
-import { DEFAULT_TIME_KEY, useTimeStore } from '../../state/time';
+import { useTimeStore } from '../../state/time';
 import { useViewerStatsStore } from '../../state/viewerStats';
 import { useViewModeStore, type ViewModeRoute } from '../../state/viewMode';
 import { AircraftDemoLayer } from '../aircraft/AircraftDemoLayer';
@@ -663,7 +663,9 @@ export function CesiumViewer() {
   const canGoBack = useViewModeStore((state) => state.canGoBack);
   const goBack = useViewModeStore((state) => state.goBack);
   const layers = useLayerManagerStore((state) => state.layers);
+  const runTimeKey = useTimeStore((state) => state.runTimeKey);
   const timeKey = useTimeStore((state) => state.timeKey);
+  const levelKey = useTimeStore((state) => state.levelKey);
   const eventLayersEnabled = useEventLayersStore((state) => state.enabled);
   const eventLayersMode = useEventLayersStore((state) => state.mode);
   const performanceMode = usePerformanceModeStore((state) => state.mode);
@@ -2770,18 +2772,18 @@ export function CesiumViewer() {
         const [first, second] = await Promise.all([
           fetchWindVectorData({
             apiBaseUrl: apiBaseUrl ?? '',
-            runTimeKey: DEFAULT_TIME_KEY,
+            runTimeKey,
             timeKey,
-            level: 'sfc',
+            level: levelKey,
             bbox: { ...options.bbox, east: 180 },
             density: options.density,
             signal: options.signal,
           }),
           fetchWindVectorData({
             apiBaseUrl: apiBaseUrl ?? '',
-            runTimeKey: DEFAULT_TIME_KEY,
+            runTimeKey,
             timeKey,
-            level: 'sfc',
+            level: levelKey,
             bbox: { ...options.bbox, west: -180 },
             density: options.density,
             signal: options.signal,
@@ -2792,9 +2794,9 @@ export function CesiumViewer() {
 
       const data = await fetchWindVectorData({
         apiBaseUrl: apiBaseUrl ?? '',
-        runTimeKey: DEFAULT_TIME_KEY,
+        runTimeKey,
         timeKey,
-        level: 'sfc',
+        level: levelKey,
         bbox: options.bbox,
         density: options.density,
         signal: options.signal,
@@ -2842,7 +2844,7 @@ export function CesiumViewer() {
       });
 
       const normalizedApiBaseUrl = apiBaseUrl.trim().replace(/\/+$/, '');
-      const viewKey = `${normalizedApiBaseUrl}:${timeKey}:${density}:${bbox.west},${bbox.south},${bbox.east},${bbox.north}`;
+      const viewKey = `${normalizedApiBaseUrl}:${runTimeKey}:${timeKey}:${levelKey}:${density}:${bbox.west},${bbox.south},${bbox.east},${bbox.north}`;
       const styleKey = `${windLayerConfig.opacity}:${windVisible}:${lowModeEnabled}`;
 
       if (windViewKeyRef.current !== viewKey) {
@@ -2962,7 +2964,7 @@ export function CesiumViewer() {
       clearTimer();
       cancelInFlight();
     };
-  }, [apiBaseUrl, lowModeEnabled, timeKey, viewer, windLayerConfig]);
+  }, [apiBaseUrl, levelKey, lowModeEnabled, runTimeKey, timeKey, viewer, windLayerConfig]);
 
   useEffect(() => {
     if (!viewer) return;
@@ -3102,6 +3104,7 @@ export function CesiumViewer() {
         id: config.id,
         apiBaseUrl,
         timeKey,
+        levelKey,
         variable: config.variable,
         opacity: config.opacity,
         visible: config.visible,
@@ -3121,7 +3124,7 @@ export function CesiumViewer() {
       layer.destroy();
       existing.delete(id);
     }
-  }, [apiBaseUrl, layers, timeKey, viewer]);
+  }, [apiBaseUrl, layers, levelKey, timeKey, viewer]);
 
   useEffect(() => {
     if (!viewer) return;

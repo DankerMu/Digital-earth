@@ -1,9 +1,12 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 
 import { CollapsiblePanel } from '../../components/ui/CollapsiblePanel';
+import { loadConfig } from '../../config';
 import { useLayerManagerStore } from '../../state/layerManager';
+import { DEFAULT_LEVEL_KEY, useTimeStore } from '../../state/time';
 import { useViewerStatsStore } from '../../state/viewerStats';
 import { useViewModeStore } from '../../state/viewMode';
+import { getEcmwfRunVars } from '../catalog/ecmwfCatalogApi';
 import { EventListPanel } from '../products/EventListPanel';
 import PerformanceModeToggle from '../settings/PerformanceModeToggle';
 import OsmBuildingsToggle from '../settings/OsmBuildingsToggle';
@@ -36,10 +39,63 @@ export function InfoPanel({ collapsed, onToggleCollapsed }: InfoPanelProps) {
   const layers = useLayerManagerStore((state) => state.layers);
   const fps = useViewerStatsStore((state) => state.fps);
 
+  const runTimeKey = useTimeStore((state) => state.runTimeKey);
+  const levelKey = useTimeStore((state) => state.levelKey);
+  const setLevelKey = useTimeStore((state) => state.setLevelKey);
+
+  const [forecastLevels, setForecastLevels] = useState<string[]>([DEFAULT_LEVEL_KEY]);
+  const [forecastStatus, setForecastStatus] = useState<'idle' | 'loading' | 'loaded' | 'error'>(
+    'idle',
+  );
+  const [forecastError, setForecastError] = useState<string | null>(null);
+
   const selectedLayer = useMemo(() => {
     if (route.viewModeId !== 'layerGlobal') return null;
     return layers.find((layer) => layer.id === route.layerId) ?? null;
   }, [layers, route]);
+
+  useEffect(() => {
+    if (tab !== 'forecast') return;
+    if (!runTimeKey) return;
+
+    let cancelled = false;
+    const controller = new AbortController();
+    setForecastStatus('loading');
+    setForecastError(null);
+
+    void loadConfig()
+      .then((config) =>
+        getEcmwfRunVars({
+          apiBaseUrl: config.apiBaseUrl,
+          runTimeKey,
+          signal: controller.signal,
+        }),
+      )
+      .then((response) => {
+        if (cancelled) return;
+        const levels = response.levels.length > 0 ? response.levels : [DEFAULT_LEVEL_KEY];
+        setForecastLevels(levels);
+        setForecastStatus('loaded');
+
+        const currentLevelKey = useTimeStore.getState().levelKey.trim().toLowerCase();
+        if (!levels.some((item) => item.trim().toLowerCase() === currentLevelKey)) {
+          const first = levels[0]?.trim();
+          if (first) setLevelKey(first);
+        }
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        console.warn('[InfoPanel] failed to load ECMWF run vars', error);
+        setForecastStatus('error');
+        setForecastError('加载预报配置失败');
+        setForecastLevels([DEFAULT_LEVEL_KEY]);
+      });
+
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
+  }, [runTimeKey, setLevelKey, tab]);
 
   return (
     <aside aria-label="Info panel" className="h-full">
@@ -152,6 +208,41 @@ export function InfoPanel({ collapsed, onToggleCollapsed }: InfoPanelProps) {
               ) : (
                 <EventListPanel />
               )
+            ) : tab === 'forecast' ? (
+              <div className="grid gap-3 text-sm text-slate-200">
+                <div className="text-xs uppercase tracking-wide text-slate-400">
+                  ECMWF 预报
+                </div>
+                <div className="grid gap-2 rounded-lg border border-slate-400/10 bg-slate-900/20 px-3 py-2">
+                  <div className="text-xs text-slate-400">起报时次</div>
+                  <div className="text-sm text-white">{runTimeKey || '--'}</div>
+                </div>
+
+                <label className="grid gap-2 rounded-lg border border-slate-400/10 bg-slate-900/20 px-3 py-2">
+                  <span className="text-xs text-slate-400">高度层</span>
+                  <select
+                    className="w-full rounded-md border border-slate-400/20 bg-slate-900/40 px-2 py-1 text-sm text-slate-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-400 disabled:cursor-not-allowed disabled:opacity-60"
+                    value={levelKey}
+                    onChange={(event) => setLevelKey(event.target.value)}
+                    disabled={forecastStatus === 'loading' || forecastLevels.length === 0}
+                  >
+                    {forecastLevels.map((level) => (
+                      <option key={level} value={level}>
+                        {level}
+                      </option>
+                    ))}
+                  </select>
+                  <div className="text-xs text-slate-500">
+                    温度/风矢图层将使用该高度层。
+                  </div>
+                </label>
+
+                {forecastStatus === 'loading' ? (
+                  <div className="text-xs text-slate-400">加载中…</div>
+                ) : forecastStatus === 'error' ? (
+                  <div className="text-xs text-red-300">{forecastError ?? '加载失败'}</div>
+                ) : null}
+              </div>
             ) : tab === 'settings' ? (
               <div className="grid gap-3 text-sm text-slate-200">
                 <div className="text-xs uppercase tracking-wide text-slate-400">
