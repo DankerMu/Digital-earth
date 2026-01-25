@@ -44,6 +44,18 @@ def test_precipitation_amount_from_accumulation_supports_mixed_steps() -> None:
     assert out.values[:, 0, 0].tolist() == pytest.approx([0.0, 1.0, 1.0, 3.0])
 
 
+def test_precipitation_amount_from_accumulation_uses_initial_as_baseline() -> None:
+    from datacube.precipitation import precipitation_amount_from_accumulation
+
+    ds = _tp_dataset(
+        times=["2026-01-01T03:00:00"],
+        tp_mm=[5.0],
+    )
+
+    out = precipitation_amount_from_accumulation(ds["tp"], initial=0.0)
+    assert out.values[:, 0, 0].tolist() == pytest.approx([5.0])
+
+
 def test_precipitation_amount_from_accumulation_clamps_negative_diffs() -> None:
     from datacube.precipitation import precipitation_amount_from_accumulation
 

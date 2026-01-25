@@ -15,9 +15,9 @@ function createDeferred<T>() {
 
 function makeFrames() {
   return [
-    new Date('2024-01-15T12:00:00Z'),
-    new Date('2024-01-15T13:00:00Z'),
-    new Date('2024-01-15T14:00:00Z')
+    new Date('2025-12-22T12:00:00Z'),
+    new Date('2025-12-22T13:00:00Z'),
+    new Date('2025-12-22T14:00:00Z')
   ];
 }
 
@@ -34,11 +34,11 @@ describe('TimeController', () => {
       />,
     );
 
-    expect(screen.getByText('2024-01-15 12:00')).toBeInTheDocument();
+    expect(screen.getByText('2025-12-22 12:00')).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: '下一帧' }));
 
-    expect(screen.getByText('2024-01-15 13:00')).toBeInTheDocument();
+    expect(screen.getByText('2025-12-22 13:00')).toBeInTheDocument();
     expect(onTimeChange).toHaveBeenCalledTimes(1);
     expect(onRefreshLayers).toHaveBeenCalledTimes(1);
   });
@@ -84,7 +84,7 @@ describe('TimeController', () => {
 
     fireEvent.click(screen.getByRole('button', { name: '播放' }));
 
-    expect(screen.getByText('2024-01-15 12:00')).toBeInTheDocument();
+    expect(screen.getByText('2025-12-22 12:00')).toBeInTheDocument();
     expect(loadFrame).toHaveBeenCalledTimes(1);
     expect(screen.getByLabelText('加载中')).toBeInTheDocument();
 
@@ -119,7 +119,7 @@ describe('TimeController', () => {
       await vi.advanceTimersByTimeAsync(1000);
     });
     expect(onTimeChange).toHaveBeenCalledTimes(1);
-    expect(screen.getByText('2024-01-15 13:00')).toBeInTheDocument();
+    expect(screen.getByText('2025-12-22 13:00')).toBeInTheDocument();
 
     act(() => {
       fireEvent.change(screen.getByLabelText('播放速度'), {
@@ -132,7 +132,7 @@ describe('TimeController', () => {
     });
 
     expect(onTimeChange).toHaveBeenCalledTimes(2);
-    expect(screen.getByText('2024-01-15 14:00')).toBeInTheDocument();
+    expect(screen.getByText('2025-12-22 14:00')).toBeInTheDocument();
 
     vi.useRealTimers();
   });
@@ -273,9 +273,9 @@ describe('TimeController', () => {
     rerender(
       <TimeController
         frames={[
-          new Date('2024-01-15T15:00:00Z'),
-          new Date('2024-01-15T16:00:00Z'),
-          new Date('2024-01-15T17:00:00Z')
+          new Date('2025-12-22T15:00:00Z'),
+          new Date('2025-12-22T16:00:00Z'),
+          new Date('2025-12-22T17:00:00Z')
         ]}
         onRefreshLayers={onRefreshLayers}
         loadFrame={loadFrame}

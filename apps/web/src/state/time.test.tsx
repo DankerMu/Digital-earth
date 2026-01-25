@@ -18,10 +18,10 @@ describe('useTimeStore', () => {
     expect(screen.getByTestId('timeKey')).toHaveTextContent(DEFAULT_TIME_KEY);
 
     act(() => {
-      useTimeStore.getState().setTimeKey(' 2024-01-15T01:00:00Z ');
+      useTimeStore.getState().setTimeKey(' 2025-12-22T01:00:00Z ');
     });
 
-    expect(screen.getByTestId('timeKey')).toHaveTextContent('2024-01-15T01:00:00Z');
+    expect(screen.getByTestId('timeKey')).toHaveTextContent('2025-12-22T01:00:00Z');
   });
 
   it('ignores empty timeKey updates', () => {
@@ -32,4 +32,3 @@ describe('useTimeStore', () => {
     expect(useTimeStore.getState().timeKey).toBe(DEFAULT_TIME_KEY);
   });
 });
-

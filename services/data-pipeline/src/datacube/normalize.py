@@ -277,13 +277,21 @@ def normalize_datacube_dataset(
             expanded = expanded.expand_dims({"level": ds["level"].values})
         expanded = expanded.transpose("time", "level", "lat", "lon")
         expanded = standardize_missing(expanded, drop_attrs=True)
-        attrs = dict(da.attrs)
+        attrs = {
+            key: value
+            for key, value in dict(da.attrs).items()
+            if not str(key).startswith("GRIB_")
+        }
         attrs.pop("_FillValue", None)
         attrs.pop("missing_value", None)
         expanded.attrs = attrs
         ds[name] = _normalize_variable_units(name, expanded)
 
-    ds.attrs = dict(ds.attrs)
+    ds.attrs = {
+        key: value
+        for key, value in dict(ds.attrs).items()
+        if not str(key).startswith("GRIB_")
+    }
     ds.attrs.setdefault("datacube_schema_version", 1)
     ds.attrs.setdefault("datacube_missing", "NaN")
 

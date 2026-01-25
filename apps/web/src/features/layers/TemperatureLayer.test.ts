@@ -34,13 +34,13 @@ describe('TemperatureLayer', () => {
     vi.clearAllMocks();
   });
 
-  it('creates an ImageryLayer backed by CLDAS tiles and applies opacity/visibility', () => {
+  it('creates an ImageryLayer backed by ECMWF tiles and applies opacity/visibility', () => {
     const viewer = makeViewer();
 
     new TemperatureLayer(viewer as never, {
       id: 'temperature',
       apiBaseUrl: 'http://api.test',
-      timeKey: '2024-01-15T00:00:00Z',
+      timeKey: '2025-12-22T00:00:00Z',
       variable: 'temperature',
       opacity: 0.4,
       visible: true,
@@ -53,7 +53,7 @@ describe('TemperatureLayer', () => {
     );
     expect(vi.mocked(UrlTemplateImageryProvider)).toHaveBeenCalledWith(
       expect.objectContaining({
-        url: expect.stringContaining('/api/v1/tiles/cldas/'),
+        url: expect.stringContaining('/api/v1/tiles/ecmwf/temp/'),
         tilingScheme: expect.objectContaining({
           kind: 'geographic',
           options: expect.objectContaining({
@@ -70,7 +70,7 @@ describe('TemperatureLayer', () => {
     const providerUrl = (
       vi.mocked(UrlTemplateImageryProvider).mock.calls[0]?.[0] as { url?: string }
     )?.url;
-    expect(providerUrl).toContain('/TMP/');
+    expect(providerUrl).toContain('/sfc/');
 
     expect(vi.mocked(ImageryLayer)).toHaveBeenCalledWith(
       expect.objectContaining({ kind: 'url-template' }),

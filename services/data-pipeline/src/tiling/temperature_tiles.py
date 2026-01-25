@@ -31,6 +31,13 @@ class TemperatureTilingError(RuntimeError):
 
 DEFAULT_TEMPERATURE_LAYER: Final[str] = "ecmwf/temp"
 DEFAULT_TEMPERATURE_VARIABLE: Final[str] = "temp"
+DEFAULT_TEMPERATURE_VARIABLE_ALIASES: Final[tuple[str, ...]] = (
+    "temp",
+    "t2m",
+    "2t",
+    "air_temperature",
+    "tmp",
+)
 DEFAULT_TEMPERATURE_LEGEND_FILENAME: Final[str] = "legend.json"
 
 _LAYER_SEGMENT_RE: Final[re.Pattern[str]] = re.compile(r"^[A-Za-z0-9_]+$")
@@ -40,6 +47,27 @@ _LEVEL_KEY_RE: Final[re.Pattern[str]] = re.compile(r"^[A-Za-z0-9_-]+$")
 _SURFACE_LEVEL_ALIASES: Final[set[str]] = {"sfc", "surface"}
 
 SUPPORTED_TILE_FORMATS: Final[set[str]] = {"png", "webp"}
+
+
+def _resolve_temperature_variable(ds: xr.Dataset, preferred: str) -> str:
+    preferred_norm = (preferred or "").strip()
+    if preferred_norm == "":
+        raise ValueError("variable must not be empty")
+
+    present = {name.lower(): name for name in ds.data_vars}
+    direct = present.get(preferred_norm.lower())
+    if direct is not None:
+        return direct
+
+    for candidate in DEFAULT_TEMPERATURE_VARIABLE_ALIASES:
+        resolved = present.get(candidate.lower())
+        if resolved is not None:
+            return resolved
+
+    available = ", ".join(sorted(ds.data_vars))
+    raise TemperatureTilingError(
+        f"Temperature variable {preferred_norm!r} not found; available=[{available}]"
+    )
 
 
 def _validate_layer(value: str) -> str:
@@ -373,6 +401,9 @@ class TemperatureTileGenerator:
     def layer(self) -> str:
         return self._layer
 
+    def _resolve_variable_name(self, ds: xr.Dataset) -> str:
+        return _resolve_temperature_variable(ds, self._variable)
+
     def _load_legend(self) -> dict[str, Any]:
         if self._legend is None:
             self._legend = get_temperature_legend(filename=self._legend_filename)
@@ -384,14 +415,11 @@ class TemperatureTileGenerator:
 
     def _extract_grid(
         self, *, time_index: int, level_index: int
-    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, str]:
         ds = self._cube.dataset
-        if self._variable not in ds.data_vars:
-            raise TemperatureTilingError(
-                f"Variable {self._variable!r} not found; available={list(ds.data_vars)}"
-            )
+        variable_name = self._resolve_variable_name(ds)
 
-        da = ds[self._variable]
+        da = ds[variable_name]
         if "time" not in da.dims:
             raise TemperatureTilingError("temp variable missing required dim: time")
         if "level" not in da.dims:
@@ -432,6 +460,7 @@ class TemperatureTileGenerator:
             lat.astype(np.float64, copy=False),
             lon.astype(np.float64, copy=False),
             grid,
+            variable_name,
         )
 
     def _render_tile_array(
@@ -515,7 +544,7 @@ class TemperatureTileGenerator:
         config = get_tiling_config()
         self._validate_config(config)
 
-        lat, lon, grid = self._extract_grid(
+        lat, lon, grid, _variable_name = self._extract_grid(
             time_index=time_index, level_index=level_index
         )
         resolved_tile_size = int(config.tile_size if tile_size is None else tile_size)
@@ -595,7 +624,7 @@ class TemperatureTileGenerator:
             min_zoom=resolved_min_zoom, max_zoom=resolved_max_zoom, config=config
         )
 
-        lat, lon, grid = self._extract_grid(
+        lat, lon, grid, variable_name = self._extract_grid(
             time_index=time_index, level_index=level_index
         )
         lat_min = float(np.nanmin(lat))
@@ -641,7 +670,7 @@ class TemperatureTileGenerator:
 
         return TemperatureTileGenerationResult(
             layer=self._layer,
-            variable=self._variable,
+            variable=variable_name,
             time=time_key,
             level=level_key,
             output_dir=layer_dir,

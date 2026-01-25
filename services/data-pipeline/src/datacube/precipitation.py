@@ -27,8 +27,8 @@ def precipitation_amount_from_accumulation(
 
     The amount at each timestamp is computed as the difference between adjacent
     valid times. The first element (t=0) has no previous value, so it is filled
-    with `initial` (default: 0.0). Negative differences are clipped to 0 when
-    `clamp_negative` is True.
+    by subtracting `initial` (default: 0.0), i.e. `accumulated[0] - initial`.
+    Negative differences are clipped to 0 when `clamp_negative` is True.
     """
 
     dim = time_dim or _infer_time_dim(accumulated)
@@ -49,7 +49,7 @@ def precipitation_amount_from_accumulation(
     if initial is None:
         first = xr.full_like(first_slice, np.nan)
     else:
-        first = xr.full_like(first_slice, float(initial))
+        first = first_slice - float(initial)
 
     out = xr.concat([first, diff], dim=dim)
     out.attrs = dict(accumulated.attrs)

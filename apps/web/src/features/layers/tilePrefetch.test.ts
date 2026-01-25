@@ -68,8 +68,8 @@ describe('tilePrefetch', () => {
   });
 
   it('rewrites encoded time keys in tile URLs', () => {
-    const from = '2024-01-15T00:00:00Z';
-    const to = '2024-01-15T01:00:00Z';
+    const from = '2025-12-22T00:00:00Z';
+    const to = '2025-12-22T01:00:00Z';
     const url = `https://api.test/api/v1/tiles/cldas/${encodeURIComponent(from)}/TMP/3/1/2.png`;
 
     expect(rewriteTileUrlTimeKey(url, from, to)).toBe(
@@ -81,8 +81,8 @@ describe('tilePrefetch', () => {
   });
 
   it('rewrites time keys even when the encoded value is not path-delimited', () => {
-    const from = '2024-01-15T00:00:00Z';
-    const to = '2024-01-15T01:00:00Z';
+    const from = '2025-12-22T00:00:00Z';
+    const to = '2025-12-22T01:00:00Z';
     const url = `https://api.test/api/v1/tiles?time=${encodeURIComponent(from)}&v=TMP`;
 
     expect(rewriteTileUrlTimeKey(url, from, to)).toBe(
@@ -113,7 +113,7 @@ describe('tilePrefetch', () => {
   });
 
   it('caches imagery provider requestImage calls and reports cache hits', async () => {
-    const timeKey = '2024-01-15T00:00:00Z';
+    const timeKey = '2025-12-22T00:00:00Z';
     const requestImage = makeOkRequestImage();
     const provider = {
       url: `https://api.test/api/v1/tiles/cldas/${encodeURIComponent(timeKey)}/TMP/{z}/{x}/{y}.png`,
@@ -148,7 +148,7 @@ describe('tilePrefetch', () => {
       requestImage,
     };
 
-    attachTileCacheToProvider(provider, { frameKey: '2024-01-15T00:00:00Z' });
+    attachTileCacheToProvider(provider, { frameKey: '2025-12-22T00:00:00Z' });
 
     await provider.requestImage(0, 0, 0);
 
@@ -162,7 +162,7 @@ describe('tilePrefetch', () => {
   });
 
   it('does not mark providers without requestImage as patched', async () => {
-    const timeKey = '2024-01-15T00:00:00Z';
+    const timeKey = '2025-12-22T00:00:00Z';
     const provider: { url: string; requestImage?: ReturnType<typeof makeOkRequestImage> } = {
       url: `https://api.test/api/v1/tiles/cldas/${encodeURIComponent(timeKey)}/TMP/{z}/{x}/{y}.png`,
     };
@@ -181,7 +181,7 @@ describe('tilePrefetch', () => {
   });
 
   it('disables and clears request caching in performance mode', async () => {
-    const timeKey = '2024-01-15T00:00:00Z';
+    const timeKey = '2025-12-22T00:00:00Z';
     const requestImage = makeOkRequestImage();
     const provider = {
       url: `https://api.test/api/v1/tiles/cldas/${encodeURIComponent(timeKey)}/TMP/{z}/{x}/{y}.png`,
@@ -210,7 +210,7 @@ describe('tilePrefetch', () => {
   it('evicts old frames and urls based on maxFrames/maxUrlsPerFrame', async () => {
     setTilePrefetchConfig({ maxFrames: 1, maxUrlsPerFrame: 1 });
 
-    const timeKey1 = '2024-01-15T00:00:00Z';
+    const timeKey1 = '2025-12-22T00:00:00Z';
     const provider1 = {
       url: `https://api.test/tiles?time=${encodeURIComponent(timeKey1)}&z={reverseZ}&x={reverseX}&y={reverseY}&size={width}x{height}&unknown={foo}`,
       tilingScheme: {
@@ -227,7 +227,7 @@ describe('tilePrefetch', () => {
     await provider1.requestImage(0, 0, 2);
     await provider1.requestImage(1, 0, 2);
 
-    const timeKey2 = '2024-01-15T01:00:00Z';
+    const timeKey2 = '2025-12-22T01:00:00Z';
     const provider2 = {
       url: `https://api.test/tiles?time=${encodeURIComponent(timeKey2)}&z={z}&x={x}&y={y}`,
       tilingScheme: provider1.tilingScheme,
@@ -244,7 +244,7 @@ describe('tilePrefetch', () => {
   });
 
   it('drops cached entries when requestImage rejects', async () => {
-    const timeKey = '2024-01-15T00:00:00Z';
+    const timeKey = '2025-12-22T00:00:00Z';
     const requestImage = makeRejectedRequestImage(new Error('boom'));
     const provider = {
       url: `https://api.test/api/v1/tiles/cldas/${encodeURIComponent(timeKey)}/TMP/{z}/{x}/{y}.png`,
@@ -289,8 +289,8 @@ describe('tilePrefetch', () => {
 
     setTilePrefetchConfig({ maxQueueSize: 1, maxPrefetchPerFrame: 10 });
 
-    const currentTimeKey = '2024-01-15T00:00:00Z';
-    const nextTimeKey = '2024-01-15T01:00:00Z';
+    const currentTimeKey = '2025-12-22T00:00:00Z';
+    const nextTimeKey = '2025-12-22T01:00:00Z';
 
     const provider = {
       url: `https://api.test/api/v1/tiles/cldas/${encodeURIComponent(currentTimeKey)}/TMP/{z}/{x}/{y}.png`,
@@ -342,9 +342,9 @@ describe('tilePrefetch', () => {
 
     setTilePrefetchConfig({ maxQueueSize: 2, maxPrefetchPerFrame: 2, maxConcurrentPrefetch: 1 });
 
-    const timeKey0 = '2024-01-15T00:00:00Z';
-    const timeKey1 = '2024-01-15T01:00:00Z';
-    const timeKey2 = '2024-01-15T02:00:00Z';
+    const timeKey0 = '2025-12-22T00:00:00Z';
+    const timeKey1 = '2025-12-22T01:00:00Z';
+    const timeKey2 = '2025-12-22T02:00:00Z';
 
     const provider = {
       url: `https://api.test/api/v1/tiles/cldas/${encodeURIComponent(timeKey0)}/TMP/{z}/{x}/{y}.png`,
@@ -392,8 +392,8 @@ describe('tilePrefetch', () => {
     vi.stubGlobal('Image', PendingImageStub);
     setTilePrefetchConfig({ maxConcurrentPrefetch: 1, maxPrefetchPerFrame: 1, maxQueueSize: 10 });
 
-    const currentTimeKey = '2024-01-15T00:00:00Z';
-    const nextTimeKey = '2024-01-15T01:00:00Z';
+    const currentTimeKey = '2025-12-22T00:00:00Z';
+    const nextTimeKey = '2025-12-22T01:00:00Z';
 
     const provider = {
       url: `https://api.test/api/v1/tiles/cldas/${encodeURIComponent(currentTimeKey)}/TMP/{z}/{x}/{y}.png`,
@@ -429,8 +429,8 @@ describe('tilePrefetch', () => {
   it('prefetches next-frame tiles and serves them from cache', async () => {
     vi.useFakeTimers();
 
-    const currentTimeKey = '2024-01-15T00:00:00Z';
-    const nextTimeKey = '2024-01-15T01:00:00Z';
+    const currentTimeKey = '2025-12-22T00:00:00Z';
+    const nextTimeKey = '2025-12-22T01:00:00Z';
 
     const requestImageCurrent = makeOkRequestImage();
     const providerCurrent = {
@@ -474,8 +474,8 @@ describe('tilePrefetch', () => {
   it('clears queued prefetch when the network becomes constrained', async () => {
     vi.useFakeTimers();
 
-    const currentTimeKey = '2024-01-15T00:00:00Z';
-    const nextTimeKey = '2024-01-15T01:00:00Z';
+    const currentTimeKey = '2025-12-22T00:00:00Z';
+    const nextTimeKey = '2025-12-22T01:00:00Z';
 
     const providerCurrent = {
       url: `https://api.test/api/v1/tiles/cldas/${encodeURIComponent(currentTimeKey)}/TMP/{z}/{x}/{y}.png`,
@@ -521,8 +521,8 @@ describe('tilePrefetch', () => {
       maxPrefetchPerFrame: 1,
     });
 
-    const currentTimeKey = '2024-01-15T00:00:00Z';
-    const nextTimeKey = '2024-01-15T01:00:00Z';
+    const currentTimeKey = '2025-12-22T00:00:00Z';
+    const nextTimeKey = '2025-12-22T01:00:00Z';
 
     const providerCurrent = {
       url: `https://api.test/fail/${encodeURIComponent(currentTimeKey)}/TMP/{z}/{x}/{y}.png`,

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Final, Iterable, Sequence
 
@@ -9,6 +10,7 @@ import numpy as np
 import xarray as xr
 
 from datacube.core import DataCube
+from datacube.decoder import decode_grib
 from tiles.wind_speed_tiles import DEFAULT_WIND_SPEED_OPACITY, WindSpeedTileGenerator
 from tiling.bias_tiles import (
     DEFAULT_BIAS_FORECAST_VARIABLE,
@@ -17,12 +19,34 @@ from tiling.bias_tiles import (
     DEFAULT_BIAS_OBSERVATION_VARIABLE,
     BiasTileGenerator,
 )
-from tiling.precip_amount_tiles import PrecipAmountTileGenerator
-from tiling.tcc_tiles import TccTileGenerator
-from tiling.temperature_tiles import TemperatureTileGenerator
+from tiling.precip_amount_tiles import PrecipAmountTileGenerator, PrecipAmountTilingError
+from tiling.tcc_tiles import TccTileGenerator, TccTilingError
+from tiling.temperature_tiles import TemperatureTileGenerator, TemperatureTilingError
 
 
 DEFAULT_TILE_FORMATS: Final[tuple[str, ...]] = ("png", "webp")
+_GRIB_SUFFIXES: Final[set[str]] = {".grib", ".grib2", ".grb", ".grb2"}
+
+
+@dataclass(frozen=True)
+class SkippedTileGenerationResult:
+    layer: str
+    variable: str
+    error: str
+
+
+def _load_datacube(path: Path) -> DataCube:
+    """Load a DataCube from either NetCDF/Zarr or a single GRIB file.
+
+    The tiles CLI historically accepted only NetCDF/Zarr DataCubes. For local
+    debugging it is useful to point at a single GRIB (one valid time) and
+    generate a small set of tiles (e.g. zoom 0) without an intermediate export.
+    """
+
+    suffix = path.suffix.lower()
+    if suffix in _GRIB_SUFFIXES:
+        return decode_grib(path)
+    return DataCube.open(path)
 
 
 def _parse_formats(values: Sequence[str]) -> tuple[str, ...]:
@@ -96,63 +120,104 @@ def generate_ecmwf_raster_tiles(
         raise ValueError("At least one tile format must be specified")
 
     results: list[object] = []
+    skipped: list[SkippedTileGenerationResult] = []
     output_dir = Path(output_dir)
 
     if temperature:
-        results.append(
-            TemperatureTileGenerator(cube).generate(
-                output_dir,
-                valid_time=resolved_valid_time,
-                level=level,
-                min_zoom=min_zoom,
-                max_zoom=max_zoom,
-                tile_size=tile_size,
-                formats=resolved_formats,
+        generator = TemperatureTileGenerator(cube)
+        try:
+            results.append(
+                generator.generate(
+                    output_dir,
+                    valid_time=resolved_valid_time,
+                    level=level,
+                    min_zoom=min_zoom,
+                    max_zoom=max_zoom,
+                    tile_size=tile_size,
+                    formats=resolved_formats,
+                )
             )
-        )
+        except TemperatureTilingError as exc:
+            skipped.append(
+                SkippedTileGenerationResult(
+                    layer=generator.layer,
+                    variable=generator.variable,
+                    error=str(exc),
+                )
+            )
 
     if cloud:
-        results.append(
-            TccTileGenerator(cube).generate(
-                output_dir,
-                valid_time=resolved_valid_time,
-                level="sfc",
-                min_zoom=min_zoom,
-                max_zoom=max_zoom,
-                tile_size=tile_size,
-                formats=resolved_formats,
+        generator = TccTileGenerator(cube)
+        try:
+            results.append(
+                generator.generate(
+                    output_dir,
+                    valid_time=resolved_valid_time,
+                    level="sfc",
+                    min_zoom=min_zoom,
+                    max_zoom=max_zoom,
+                    tile_size=tile_size,
+                    formats=resolved_formats,
+                )
             )
-        )
+        except TccTilingError as exc:
+            skipped.append(
+                SkippedTileGenerationResult(
+                    layer=generator.layer,
+                    variable=generator.variable,
+                    error=str(exc),
+                )
+            )
 
     if precipitation:
-        results.append(
-            PrecipAmountTileGenerator(cube).generate(
-                output_dir,
-                valid_time=resolved_valid_time,
-                level=level,
-                min_zoom=min_zoom,
-                max_zoom=max_zoom,
-                tile_size=tile_size,
-                formats=resolved_formats,
+        generator = PrecipAmountTileGenerator(cube)
+        try:
+            results.append(
+                generator.generate(
+                    output_dir,
+                    valid_time=resolved_valid_time,
+                    level=level,
+                    min_zoom=min_zoom,
+                    max_zoom=max_zoom,
+                    tile_size=tile_size,
+                    formats=resolved_formats,
+                )
             )
-        )
+        except PrecipAmountTilingError as exc:
+            skipped.append(
+                SkippedTileGenerationResult(
+                    layer=generator.layer,
+                    variable=generator.variable,
+                    error=str(exc),
+                )
+            )
 
     if wind_speed:
-        results.append(
-            WindSpeedTileGenerator(cube, opacity=wind_speed_opacity).generate(
-                output_dir,
-                valid_time=resolved_valid_time,
-                level=level,
-                min_zoom=min_zoom,
-                max_zoom=max_zoom,
-                tile_size=tile_size,
-                formats=resolved_formats,
+        generator = WindSpeedTileGenerator(cube, opacity=wind_speed_opacity)
+        try:
+            results.append(
+                generator.generate(
+                    output_dir,
+                    valid_time=resolved_valid_time,
+                    level=level,
+                    min_zoom=min_zoom,
+                    max_zoom=max_zoom,
+                    tile_size=tile_size,
+                    formats=resolved_formats,
+                )
             )
-        )
+        except TemperatureTilingError as exc:
+            skipped.append(
+                SkippedTileGenerationResult(
+                    layer=generator.layer,
+                    variable=generator.variable,
+                    error=str(exc),
+                )
+            )
 
-    if not results:
+    if not results and not skipped:
         raise ValueError("No tile layers selected")
-    return results
+    return [*results, *skipped]
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -268,7 +333,7 @@ def main(argv: Iterable[str] | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(list(argv) if argv is not None else None)
 
-    cube = DataCube.open(Path(args.datacube))
+    cube = _load_datacube(Path(args.datacube))
     try:
         formats = _parse_formats(tuple(args.formats)) or DEFAULT_TILE_FORMATS
         resolved_valid_time = (

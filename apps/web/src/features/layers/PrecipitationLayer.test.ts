@@ -40,7 +40,7 @@ describe('PrecipitationLayer', () => {
     new PrecipitationLayer(viewer as never, {
       id: 'precipitation',
       apiBaseUrl: 'http://api.test',
-      timeKey: '2024-01-15T00:00:00Z',
+      timeKey: '2025-12-22T00:00:00Z',
       opacity: 0.9,
       visible: true,
       zIndex: 30,
@@ -53,7 +53,7 @@ describe('PrecipitationLayer', () => {
     );
     expect(vi.mocked(UrlTemplateImageryProvider)).toHaveBeenCalledWith(
       expect.objectContaining({
-        url: expect.stringContaining('/api/v1/tiles/cldas/'),
+        url: expect.stringContaining('/api/v1/tiles/ecmwf/precip_amount/'),
         tilingScheme: expect.objectContaining({
           kind: 'geographic',
           options: expect.objectContaining({
@@ -70,7 +70,7 @@ describe('PrecipitationLayer', () => {
     const providerUrl = (
       vi.mocked(UrlTemplateImageryProvider).mock.calls[0]?.[0] as { url?: string }
     )?.url;
-    expect(providerUrl).toContain('/precipitation/');
+    expect(providerUrl).toContain('/precip_amount/');
     expect(providerUrl).toContain('threshold=1.25');
 
     expect(vi.mocked(ImageryLayer)).toHaveBeenCalledWith(

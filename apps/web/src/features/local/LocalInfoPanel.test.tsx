@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { useAircraftDemoStore } from '../../state/aircraftDemo';
 import { DEFAULT_CAMERA_PERSPECTIVE_ID, useCameraPerspectiveStore } from '../../state/cameraPerspective';
+import { DEFAULT_TIME_KEY } from '../../state/time';
 import { LocalInfoPanel } from './LocalInfoPanel';
 
 describe('LocalInfoPanel', () => {
@@ -18,7 +19,7 @@ describe('LocalInfoPanel', () => {
         lat={30.123456}
         lon={120.987654}
         heightMeters={1234.56}
-        timeKey="2024-01-15T00:00:00Z"
+        timeKey={DEFAULT_TIME_KEY}
         activeLayer={{
           id: 'cloud',
           type: 'cloud',
@@ -35,7 +36,7 @@ describe('LocalInfoPanel', () => {
 
     expect(screen.getByLabelText('Local info')).toHaveTextContent('30.1235, 120.9877');
     expect(screen.getByText('1235')).toBeInTheDocument();
-    expect(screen.getByText('2024-01-15T00:00:00Z')).toBeInTheDocument();
+    expect(screen.getByText(DEFAULT_TIME_KEY)).toBeInTheDocument();
     expect(screen.getByText('cloud:tcc')).toBeInTheDocument();
   });
 
