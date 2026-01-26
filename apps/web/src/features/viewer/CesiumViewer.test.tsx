@@ -1277,6 +1277,57 @@ describe('CesiumViewer', () => {
     expect(cloudLayer?.show).toBe(false);
   });
 
+  it('restores cloud imagery layers when switching global → local → global', async () => {
+    useLayerManagerStore.setState({
+      layers: [
+        {
+          id: 'cloud',
+          type: 'cloud',
+          variable: 'tcc',
+          opacity: 0.65,
+          visible: true,
+          zIndex: 20,
+        },
+      ],
+    });
+
+    render(<CesiumViewer />);
+
+    await waitFor(() => expect(vi.mocked(Viewer)).toHaveBeenCalledTimes(1));
+
+    const viewer = vi.mocked(Viewer).mock.results[0].value;
+
+    await waitFor(() => expect(viewer.imageryLayers.add).toHaveBeenCalled());
+
+    const addedLayers = viewer.imageryLayers.add.mock.calls.map(([layer]: [unknown]) => layer as {
+      show?: boolean;
+      provider?: { options?: { credit?: string } };
+    });
+    const cloudLayer = addedLayers.find(
+      (layer: { show?: boolean; provider?: { options?: { credit?: string } } }) =>
+        layer.provider?.options?.credit === 'Cloud tiles',
+    );
+
+    expect(cloudLayer).toBeTruthy();
+    expect(cloudLayer?.show).toBe(true);
+
+    act(() => {
+      useViewModeStore.setState({
+        route: { viewModeId: 'local', lat: 30, lon: 120, heightMeters: 100 },
+        history: [],
+        saved: {},
+      });
+    });
+
+    await waitFor(() => expect(cloudLayer?.show).toBe(false));
+
+    act(() => {
+      useViewModeStore.setState({ route: { viewModeId: 'global' }, history: [], saved: {} });
+    });
+
+    await waitFor(() => expect(cloudLayer?.show).toBe(true));
+  });
+
   it('syncs precipitation imagery layers from layerManager and applies threshold filtering', async () => {
     useLayerManagerStore.setState({
       layers: [
