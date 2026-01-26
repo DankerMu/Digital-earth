@@ -92,7 +92,7 @@ import { evaluateRisk, getRiskPois } from '../risk/riskApi';
 import { formatRiskLevel, riskSeverityForLevel, type POIRiskResult, type RiskPOI } from '../risk/riskTypes';
 import { RiskPoiPopup } from '../risk/RiskPoiPopup';
 import { extractGeoJsonPolygons, type LonLat } from './geoJsonPolygons';
-import { requestViewerRender } from '../../lib/cesiumSafe';
+import { isCesiumDestroyed, requestViewerRender } from '../../lib/cesiumSafe';
 
 const DEFAULT_CAMERA = {
   longitude: 116.391,
@@ -2217,6 +2217,60 @@ export function CesiumViewer() {
 	      const position = movement.position;
 	      if (!position) return;
 
+        const route = useViewModeStore.getState().route;
+        const sceneModeId = useSceneModeStore.getState().sceneModeId;
+        const cameraPerspectiveId = useCameraPerspectiveStore.getState().cameraPerspectiveId;
+
+        if (route.viewModeId === 'local' && sceneModeId !== '2d' && cameraPerspectiveId === 'human') {
+          const picked = pickLocation(position);
+          if (!picked) return;
+
+          const pickedSurfaceHeightMeters = picked.heightMeters;
+          const routeSurfaceHeightMeters =
+            typeof route.heightMeters === 'number' && Number.isFinite(route.heightMeters)
+              ? route.heightMeters
+              : undefined;
+          const surfaceHeightMeters =
+            typeof pickedSurfaceHeightMeters === 'number' && Number.isFinite(pickedSurfaceHeightMeters)
+              ? pickedSurfaceHeightMeters
+              : routeSurfaceHeightMeters ?? 0;
+
+          samplingAbortRef.current?.abort();
+          closeSamplingCard();
+
+          const destination = Cartesian3.fromDegrees(
+            picked.lon,
+            picked.lat,
+            surfaceHeightMeters + HUMAN_EYE_HEIGHT_METERS,
+          );
+
+          localEntryKeyRef.current = `${sceneModeId}:${picked.lon}:${picked.lat}:${surfaceHeightMeters}`;
+          useViewModeStore.getState().replaceRoute({
+            viewModeId: 'local',
+            lon: picked.lon,
+            lat: picked.lat,
+            ...(Number.isFinite(surfaceHeightMeters) ? { heightMeters: surfaceHeightMeters } : {}),
+          });
+
+          if (isCesiumDestroyed(viewer)) return;
+          try {
+            viewer.camera.flyTo({
+              destination,
+              orientation: {
+                heading: viewer.camera.heading,
+                pitch: viewer.camera.pitch,
+                roll: 0,
+              },
+              duration: 0.8,
+            });
+            requestViewerRender(viewer);
+          } catch (error) {
+            console.warn('[Digital Earth] failed to move human camera', error);
+          }
+
+          return;
+        }
+
 	      const normalizeScreenPosition = (value: unknown): { x: number; y: number } | null => {
 	        if (!value || typeof value !== 'object') return null;
 	        const x = (value as { x?: unknown }).x;
@@ -2314,7 +2368,6 @@ export function CesiumViewer() {
 	        return;
 	      }
 
-	      const route = useViewModeStore.getState().route;
 	      if (route.viewModeId === 'event') {
 	        const screenPos = normalizeScreenPosition(position);
 	        const dataSource = riskDataSourceRef.current as unknown as {
