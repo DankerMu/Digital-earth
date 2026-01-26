@@ -2,6 +2,7 @@
   "apiBaseUrl": "https://api.digital-earth.example",
   "map": {
     "terrainProvider": "selfHosted",
+    "cesiumIonAccessToken": "${DIGITAL_EARTH_WEB_CESIUM_ION_ACCESS_TOKEN}",
     "selfHosted": {
       "terrainUrl": "https://tiles.digital-earth.example/terrain/"
     }

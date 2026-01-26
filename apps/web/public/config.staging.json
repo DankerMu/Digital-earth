@@ -1,4 +1,6 @@
 {
-  "apiBaseUrl": "https://staging.api.digital-earth.example"
+  "apiBaseUrl": "https://staging.api.digital-earth.example",
+  "map": {
+    "cesiumIonAccessToken": "${DIGITAL_EARTH_WEB_CESIUM_ION_ACCESS_TOKEN}"
+  }
 }
-

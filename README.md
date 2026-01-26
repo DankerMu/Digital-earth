@@ -295,7 +295,7 @@ export DIGITAL_EARTH_WEB_CESIUM_ION_ACCESS_TOKEN="<your-web-token>"
 docker compose -f deploy/docker-compose.local.yml up --build
 ```
 
-> Web 容器会在启动时通过 `deploy/dockerfiles/web-entrypoint.sh` 将 `apps/web/public/config.template.json` 渲染为运行时 `/config.json`；
+> Web 容器会在启动时通过 `deploy/dockerfiles/10-inject-config.sh`（安装到 Nginx 的 `/docker-entrypoint.d/`）将 `apps/web/public/config.template.json` 渲染为运行时 `/config.json`；
 > 未设置 `DIGITAL_EARTH_WEB_CESIUM_ION_ACCESS_TOKEN` 时默认注入空字符串，不影响启动。
 
 **本地构建 + Compose（示例）**
