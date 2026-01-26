@@ -115,7 +115,7 @@ describe('WindArrows', () => {
     const calls = vi.mocked(Cartesian3.fromDegrees).mock.calls;
     expect(calls[0]).toEqual([0, 0, 0]);
 
-    const entities = (viewer as unknown as { __mocks: { getEntities: () => any[] } }).__mocks.getEntities();
+    const entities = (viewer as unknown as { __mocks: { getEntities: () => unknown[] } }).__mocks.getEntities();
     expect(entities[0]?.polyline?.clampToGround).toBe(true);
   });
 
@@ -147,7 +147,7 @@ describe('WindArrows', () => {
     const calls = vi.mocked(Cartesian3.fromDegrees).mock.calls;
     expect(calls[0]?.[2]).toBeGreaterThan(0);
 
-    const entities = (viewer as unknown as { __mocks: { getEntities: () => any[] } }).__mocks.getEntities();
+    const entities = (viewer as unknown as { __mocks: { getEntities: () => unknown[] } }).__mocks.getEntities();
     expect(entities[0]?.polyline?.clampToGround).toBe(false);
   });
 
