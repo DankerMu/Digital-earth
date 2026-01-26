@@ -154,6 +154,10 @@ vi.mock('cesium', () => {
     CTRL: 0,
   };
 
+  const JulianDate = {
+    fromIso8601: vi.fn((iso: string) => ({ iso })),
+  };
+
   const createWorldTerrainAsync = vi.fn(async () => ({ terrain: true }));
   const EllipsoidTerrainProvider = vi.fn(function (options?: unknown) {
     return { ellipsoidTerrain: true, options };
@@ -289,6 +293,10 @@ vi.mock('cesium', () => {
 
   const viewer = {
     camera,
+    clock: {
+      currentTime: null as unknown,
+      shouldAnimate: true,
+    },
     dataSources: {
       add: vi.fn(async (dataSource: unknown) => dataSource),
       remove: vi.fn(() => true),
@@ -330,6 +338,7 @@ vi.mock('cesium', () => {
       }),
       globe: {
         ellipsoid: baseEllipsoid,
+        enableLighting: false,
       },
       fog: {
         enabled: false,
@@ -486,6 +495,7 @@ vi.mock('cesium', () => {
     Ellipsoid,
     EllipsoidTerrainProvider,
     Ion,
+    JulianDate,
     sampleTerrainMostDetailed,
   };
 });
@@ -494,6 +504,7 @@ import {
   Cartesian3,
   CesiumTerrainProvider,
   EllipsoidTerrainProvider,
+  JulianDate,
   Rectangle,
   createOsmBuildingsAsync,
   createWorldTerrainAsync,
@@ -512,6 +523,7 @@ import { DEFAULT_EVENT_LAYER_MODE, useEventLayersStore } from '../../state/event
 import { useLayerManagerStore } from '../../state/layerManager';
 import { useOsmBuildingsStore } from '../../state/osmBuildings';
 import { usePerformanceModeStore } from '../../state/performanceMode';
+import { useRealLightingStore } from '../../state/realLighting';
 import { DEFAULT_SCENE_MODE_ID, useSceneModeStore } from '../../state/sceneMode';
 import { DEFAULT_LEVEL_KEY, DEFAULT_RUN_TIME_KEY, DEFAULT_TIME_KEY, useTimeStore } from '../../state/time';
 import { useViewModeStore } from '../../state/viewMode';
@@ -546,6 +558,7 @@ describe('CesiumViewer', () => {
     localStorage.removeItem('digital-earth.viewMode');
     localStorage.removeItem('digital-earth.cameraPerspective');
     localStorage.removeItem('digital-earth.osmBuildings');
+    localStorage.removeItem('digital-earth.realLighting');
     localStorage.removeItem('digital-earth.aircraftDemo');
     useBasemapStore.setState({ basemapId: DEFAULT_BASEMAP_ID });
     useAircraftDemoStore.setState({ enabled: false });
@@ -560,6 +573,7 @@ describe('CesiumViewer', () => {
     });
     useLayerManagerStore.setState({ layers: [] });
     useOsmBuildingsStore.setState({ enabled: false });
+    useRealLightingStore.setState({ enabled: true });
     usePerformanceModeStore.setState({ mode: 'high' });
     useViewModeStore.setState({ route: { viewModeId: 'global' }, history: [], saved: {} });
     useViewerStatsStore.setState({ fps: null });
@@ -699,6 +713,72 @@ describe('CesiumViewer', () => {
     expect(viewer.scene.screenSpaceCameraController.maximumZoomDistance).toBe(40_000_000);
   });
 
+  it('syncs timeKey to Cesium clock and disables animation', async () => {
+    useTimeStore.setState({ validTimeKey: '2026-01-01T12:00:00Z' });
+
+    render(<CesiumViewer />);
+
+    await waitFor(() => expect(vi.mocked(Viewer)).toHaveBeenCalledTimes(1));
+
+    const viewer = vi.mocked(Viewer).mock.results[0].value;
+
+    await waitFor(() => {
+      expect(viewer.clock.currentTime).toEqual({ iso: '2026-01-01T12:00:00Z' });
+    });
+
+    expect(vi.mocked(JulianDate.fromIso8601)).toHaveBeenCalledWith('2026-01-01T12:00:00Z');
+    expect(viewer.clock.shouldAnimate).toBe(false);
+  });
+
+  it('enables globe lighting when real lighting is enabled', async () => {
+    useRealLightingStore.setState({ enabled: true });
+
+    render(<CesiumViewer />);
+
+    await waitFor(() => expect(vi.mocked(Viewer)).toHaveBeenCalledTimes(1));
+
+    const viewer = vi.mocked(Viewer).mock.results[0].value;
+
+    await waitFor(() => {
+      expect(viewer.scene.globe.enableLighting).toBe(true);
+    });
+  });
+
+  it('disables globe lighting in low performance mode', async () => {
+    useRealLightingStore.setState({ enabled: true });
+    usePerformanceModeStore.setState({ mode: 'low' });
+
+    render(<CesiumViewer />);
+
+    await waitFor(() => expect(vi.mocked(Viewer)).toHaveBeenCalledTimes(1));
+
+    const viewer = vi.mocked(Viewer).mock.results[0].value;
+
+    await waitFor(() => {
+      expect(viewer.scene.globe.enableLighting).toBe(false);
+    });
+  });
+
+  it('updates Cesium clock when timeKey changes', async () => {
+    render(<CesiumViewer />);
+
+    await waitFor(() => expect(vi.mocked(Viewer)).toHaveBeenCalledTimes(1));
+
+    const viewer = vi.mocked(Viewer).mock.results[0].value;
+
+    await waitFor(() => {
+      expect(viewer.clock.currentTime).toEqual({ iso: DEFAULT_TIME_KEY });
+    });
+
+    act(() => {
+      useTimeStore.getState().setTimeKey('2026-01-02T00:00:00Z');
+    });
+
+    await waitFor(() => {
+      expect(viewer.clock.currentTime).toEqual({ iso: '2026-01-02T00:00:00Z' });
+    });
+  });
+
   it('overrides home button to fly to default destination', async () => {
     render(<CesiumViewer />);
 
@@ -748,6 +828,7 @@ describe('CesiumViewer', () => {
     await waitFor(() => expect(vi.mocked(Viewer)).toHaveBeenCalledTimes(1));
 
     const viewer = vi.mocked(Viewer).mock.results[0].value;
+    viewer.scene.requestRender.mockClear();
 
     act(() => {
       useBasemapStore.getState().setBasemapId('nasa-gibs-blue-marble');
@@ -762,7 +843,7 @@ describe('CesiumViewer', () => {
       expect.objectContaining({ baseLayer: true }),
       true,
     );
-    expect(viewer.scene.requestRender).toHaveBeenCalledTimes(1);
+    expect(viewer.scene.requestRender).toHaveBeenCalled();
   });
 
   it('does not switch basemap when basemapProvider is not open', async () => {

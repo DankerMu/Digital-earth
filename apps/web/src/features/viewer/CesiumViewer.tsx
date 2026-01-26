@@ -13,6 +13,7 @@ import {
   Entity,
   ImageryLayer,
   Ion,
+  JulianDate,
   KeyboardEventModifier,
   Math as CesiumMath,
   PolygonGraphics,
@@ -45,6 +46,7 @@ import { useLayerManagerStore, type LayerConfig, type LayerType } from '../../st
 import { useLayoutPanelsStore } from '../../state/layoutPanels';
 import { useOsmBuildingsStore } from '../../state/osmBuildings';
 import { usePerformanceModeStore } from '../../state/performanceMode';
+import { useRealLightingStore } from '../../state/realLighting';
 import { useSceneModeStore } from '../../state/sceneMode';
 import { useTimeStore } from '../../state/time';
 import { useViewerStatsStore } from '../../state/viewerStats';
@@ -848,6 +850,8 @@ export function CesiumViewer() {
   const lowModeEnabled = performanceMode === 'low';
   const setPerformanceMode = usePerformanceModeStore((state) => state.setMode);
   const infoPanelCollapsed = useLayoutPanelsStore((state) => state.infoPanelCollapsed);
+  const realLightingEnabled = useRealLightingStore((state) => state.enabled);
+  const effectiveRealLightingEnabled = realLightingEnabled && !lowModeEnabled;
   const osmBuildingsEnabled = useOsmBuildingsStore((state) => state.enabled);
   const cameraPerspectiveId = useCameraPerspectiveStore((state) => state.cameraPerspectiveId);
   const localCloudSurfaceHeightMeters =
@@ -1358,6 +1362,31 @@ export function CesiumViewer() {
     if (!token) return;
     Ion.defaultAccessToken = token;
   }, [mapConfig?.cesiumIonAccessToken]);
+
+  useEffect(() => {
+    if (!viewer) return;
+
+    let shouldRequestRender = false;
+
+    const clock = (viewer as unknown as { clock?: { currentTime?: unknown; shouldAnimate?: boolean } }).clock;
+    if (clock) {
+      try {
+        clock.currentTime = JulianDate.fromIso8601(timeKey);
+        clock.shouldAnimate = false;
+        shouldRequestRender = true;
+      } catch (error: unknown) {
+        console.warn('[Digital Earth] failed to parse timeKey for Cesium clock', { timeKey, error });
+      }
+    }
+
+    const globe = (viewer.scene as unknown as { globe?: { enableLighting?: boolean } }).globe;
+    if (globe && !Object.is(globe.enableLighting, effectiveRealLightingEnabled)) {
+      globe.enableLighting = effectiveRealLightingEnabled;
+      shouldRequestRender = true;
+    }
+
+    if (shouldRequestRender) viewer.scene.requestRender();
+  }, [effectiveRealLightingEnabled, timeKey, viewer]);
 
   useEffect(() => {
     if (!viewer) return;

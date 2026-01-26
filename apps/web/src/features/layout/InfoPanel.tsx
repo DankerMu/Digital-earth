@@ -10,6 +10,7 @@ import { getEcmwfRunVars } from '../catalog/ecmwfCatalogApi';
 import { EventListPanel } from '../products/EventListPanel';
 import PerformanceModeToggle from '../settings/PerformanceModeToggle';
 import OsmBuildingsToggle from '../settings/OsmBuildingsToggle';
+import RealLightingToggle from '../settings/RealLightingToggle';
 
 export type InfoPanelProps = {
   collapsed: boolean;
@@ -255,9 +256,10 @@ export function InfoPanel({ collapsed, onToggleCollapsed }: InfoPanelProps) {
                       FPS: {fps != null ? `${fps}` : 'N/A'}
                     </div>
                   </div>
+                  <RealLightingToggle />
                   <OsmBuildingsToggle />
                   <div className="text-xs text-slate-400">
-                    Low 模式会减少粒子与风矢密度，并关闭体云/建筑（如有），以提升低性能设备体验。
+                    Low 模式会减少粒子与风矢密度，并关闭真实光照/体云/建筑（如有），以提升低性能设备体验。
                   </div>
                 </div>
               </div>
