@@ -10,6 +10,14 @@ vi.mock('cesium', () => {
     })),
   };
 
+  const Ellipsoid = {
+    WGS84: {
+      radii: {
+        x: 6378137,
+      },
+    },
+  };
+
   const withAlpha = vi.fn((alpha: number) => ({ kind: 'white', alpha }));
   const Color = {
     WHITE: { kind: 'white', withAlpha },
@@ -19,10 +27,10 @@ vi.mock('cesium', () => {
     return { kind: 'polyline-arrow-material', color };
   });
 
-  return { Cartesian3, Color, PolylineArrowMaterialProperty };
+  return { Cartesian3, Color, Ellipsoid, PolylineArrowMaterialProperty };
 });
 
-import { Cartesian3, PolylineArrowMaterialProperty } from 'cesium';
+import { Cartesian3, Ellipsoid, PolylineArrowMaterialProperty } from 'cesium';
 import { WindArrows, windArrowDensityForCameraHeight } from './WindArrows';
 
 function makeViewer() {
@@ -87,6 +95,121 @@ describe('WindArrows', () => {
     expect(calls[3]?.[1]).toBeGreaterThan(0);
 
     expect(viewer.scene.requestRender).toHaveBeenCalled();
+  });
+
+  it('clamps arrows to the ground when no shell is active', () => {
+    const viewer = makeViewer();
+    const arrows = new WindArrows(viewer as never, {
+      metersPerSecondToLength: 1000,
+      minArrowLengthMeters: 1000,
+      maxArrowLengthMeters: 1000,
+    });
+
+    arrows.update({
+      enabled: true,
+      opacity: 1,
+      lowModeEnabled: false,
+      vectors: [{ lon: 0, lat: 0, u: 5, v: 0 }],
+    });
+
+    const calls = vi.mocked(Cartesian3.fromDegrees).mock.calls;
+    expect(calls[0]).toEqual([0, 0, 0]);
+
+    const entities = (viewer as unknown as { __mocks: { getEntities: () => Array<{ polyline?: { clampToGround?: boolean } }> } }).__mocks.getEntities();
+    expect(entities[0]?.polyline?.clampToGround).toBe(true);
+  });
+
+  it('renders arrows at the shell height when a layerGlobal shell is active', () => {
+    const viewer = makeViewer();
+    (viewer as unknown as { terrainProvider?: unknown }).terrainProvider = {
+      tilingScheme: {
+        ellipsoid: {
+          radii: {
+            x: Ellipsoid.WGS84.radii.x + 8000,
+          },
+        },
+      },
+    };
+
+    const arrows = new WindArrows(viewer as never, {
+      metersPerSecondToLength: 1000,
+      minArrowLengthMeters: 1000,
+      maxArrowLengthMeters: 1000,
+    });
+
+    arrows.update({
+      enabled: true,
+      opacity: 1,
+      lowModeEnabled: false,
+      vectors: [{ lon: 0, lat: 0, u: 5, v: 0 }],
+    });
+
+    const calls = vi.mocked(Cartesian3.fromDegrees).mock.calls;
+    expect(calls[0]?.[2]).toBeGreaterThan(0);
+
+    const entities = (viewer as unknown as { __mocks: { getEntities: () => Array<{ polyline?: { clampToGround?: boolean } }> } }).__mocks.getEntities();
+    expect(entities[0]?.polyline?.clampToGround).toBe(false);
+  });
+
+  it('skips rendering when update inputs are invalid', () => {
+    const viewer = makeViewer();
+    const arrows = new WindArrows(viewer as never, {
+      metersPerSecondToLength: 1000,
+      minArrowLengthMeters: 1000,
+      maxArrowLengthMeters: 1000,
+    });
+
+    arrows.update({
+      enabled: true,
+      opacity: Number.NaN,
+      lowModeEnabled: false,
+      vectors: [{ lon: 0, lat: 0, u: 5, v: 0 }],
+    });
+
+    arrows.update({
+      enabled: true,
+      opacity: -1,
+      lowModeEnabled: false,
+      vectors: [{ lon: 0, lat: 0, u: 5, v: 0 }],
+    });
+
+    arrows.update({
+      enabled: true,
+      opacity: 1,
+      lowModeEnabled: false,
+      vectors: null as never,
+    });
+
+    expect(viewer.entities.add).not.toHaveBeenCalled();
+  });
+
+  it('handles invalid vectors and terrainProvider access errors without crashing', () => {
+    const viewer = makeViewer();
+    Object.defineProperty(viewer, 'terrainProvider', {
+      get() {
+        throw new Error('terrainProvider unavailable');
+      },
+    });
+
+    const arrows = new WindArrows(viewer as never, {
+      metersPerSecondToLength: 1000,
+      minArrowLengthMeters: 1000,
+      maxArrowLengthMeters: 1000,
+    });
+
+    arrows.update({
+      enabled: true,
+      opacity: 1,
+      lowModeEnabled: false,
+      vectors: [
+        { lon: 0, lat: 0, u: 0, v: 0 }, // speed=0, skipped
+        { lon: Number.NaN, lat: Number.NaN, u: 5, v: 0 }, // wraps/clamps + renders
+        { lon: 0, lat: 0, u: Number.NaN, v: 5 }, // non-finite speed, skipped
+      ],
+    });
+
+    expect(viewer.entities.add).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(Cartesian3.fromDegrees)).toHaveBeenCalled();
   });
 
   it('clears entities when disabled', () => {
@@ -179,6 +302,48 @@ describe('windArrowDensityForCameraHeight', () => {
         lowModeEnabled: false,
       }),
     ).toBe(4);
+
+    expect(
+      windArrowDensityForCameraHeight({
+        cameraHeightMeters: 15_000_000,
+        lowModeEnabled: false,
+      }),
+    ).toBe(6);
+
+    expect(
+      windArrowDensityForCameraHeight({
+        cameraHeightMeters: 7_000_000,
+        lowModeEnabled: false,
+      }),
+    ).toBe(8);
+
+    expect(
+      windArrowDensityForCameraHeight({
+        cameraHeightMeters: 3_000_000,
+        lowModeEnabled: false,
+      }),
+    ).toBe(12);
+
+    expect(
+      windArrowDensityForCameraHeight({
+        cameraHeightMeters: 1_500_000,
+        lowModeEnabled: false,
+      }),
+    ).toBe(16);
+
+    expect(
+      windArrowDensityForCameraHeight({
+        cameraHeightMeters: 250_000,
+        lowModeEnabled: false,
+      }),
+    ).toBe(24);
+
+    expect(
+      windArrowDensityForCameraHeight({
+        cameraHeightMeters: 150_000,
+        lowModeEnabled: false,
+      }),
+    ).toBe(28);
   });
 
   it('reduces density in performance mode and handles missing heights', () => {
@@ -195,5 +360,12 @@ describe('windArrowDensityForCameraHeight', () => {
         lowModeEnabled: false,
       }),
     ).toBe(12);
+
+    expect(
+      windArrowDensityForCameraHeight({
+        cameraHeightMeters: null,
+        lowModeEnabled: true,
+      }),
+    ).toBe(6);
   });
 });
