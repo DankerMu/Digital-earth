@@ -1,4 +1,4 @@
-import { Cartesian3, Color, PolylineArrowMaterialProperty, type Viewer } from 'cesium';
+import { Cartesian3, Color, Ellipsoid, PolylineArrowMaterialProperty, type Viewer } from 'cesium';
 
 import { isCesiumDestroyed, requestViewerRender } from '../../lib/cesiumSafe';
 
@@ -33,6 +33,8 @@ const DEFAULT_WIDTH_PIXELS = 2;
 
 const METERS_PER_DEGREE_LAT = 111_320;
 const MIN_METERS_PER_DEGREE_LON = 1;
+const SHELL_OFFSET_THRESHOLD_METERS = 1;
+const SHELL_EPSILON_METERS = 1;
 
 function clamp(value: number, min: number, max: number): number {
   if (!Number.isFinite(value)) return min;
@@ -73,6 +75,20 @@ function wrapLongitudeDegrees(lon: number): number {
 
 function clampLatitudeDegrees(lat: number): number {
   return clamp(lat, -89.999, 89.999);
+}
+
+function shellOffsetMetersForViewer(viewer: Viewer): number {
+  try {
+    const terrainProvider = viewer.terrainProvider as unknown as {
+      tilingScheme?: { ellipsoid?: { radii?: { x?: number } } };
+    };
+    const radiiX = terrainProvider?.tilingScheme?.ellipsoid?.radii?.x;
+    const offset = (radiiX ?? Number.NaN) - Ellipsoid.WGS84.radii.x;
+    if (!Number.isFinite(offset)) return 0;
+    return offset;
+  } catch {
+    return 0;
+  }
 }
 
 export function windArrowDensityForCameraHeight(options: {
@@ -194,6 +210,10 @@ export class WindArrows {
     this.clear();
     if (isCesiumDestroyed(this.viewer)) return;
 
+    const shellOffsetMeters = shellOffsetMetersForViewer(this.viewer);
+    const isShellActive = shellOffsetMeters > SHELL_OFFSET_THRESHOLD_METERS;
+    const arrowHeightMeters = isShellActive ? shellOffsetMeters + SHELL_EPSILON_METERS : 0;
+
     const width = clamp(this.options.widthPixels, 1, 10);
     const color = Color.WHITE.withAlpha(style.opacity);
     const material = new PolylineArrowMaterialProperty(color);
@@ -216,8 +236,8 @@ export class WindArrows {
       const endpoints = computeArrowEndpoints(vector, arrowLengthMeters);
       if (!endpoints) continue;
 
-      const start = Cartesian3.fromDegrees(endpoints.startLon, endpoints.startLat, 0);
-      const end = Cartesian3.fromDegrees(endpoints.endLon, endpoints.endLat, 0);
+      const start = Cartesian3.fromDegrees(endpoints.startLon, endpoints.startLat, arrowHeightMeters);
+      const end = Cartesian3.fromDegrees(endpoints.endLon, endpoints.endLat, arrowHeightMeters);
 
       try {
         const entity = entities.add({
@@ -227,7 +247,7 @@ export class WindArrows {
             positions: [start, end],
             width,
             material,
-            clampToGround: true,
+            clampToGround: !isShellActive,
           },
         });
         this.entities.push(entity);
