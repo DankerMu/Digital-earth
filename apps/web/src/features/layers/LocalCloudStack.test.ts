@@ -67,6 +67,13 @@ import {
 import type { LayerConfig } from '../../state/layerManager';
 import { LocalCloudStack } from './LocalCloudStack';
 
+class FakeImage {
+  src = '';
+  crossOrigin: string | null = null;
+  onload: (() => void) | null = null;
+  onerror: (() => void) | null = null;
+}
+
 function makeViewer(options: { cameraHeightMeters?: number } = {}) {
   const primitives = {
     add: vi.fn(),
@@ -87,6 +94,8 @@ function makeViewer(options: { cameraHeightMeters?: number } = {}) {
 describe('LocalCloudStack', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.unstubAllGlobals();
+    vi.stubGlobal('Image', FakeImage as never);
   });
 
   it('creates 3x3 primitives for each visible cloud layer and fills XYZ url placeholders', () => {
@@ -95,6 +104,7 @@ describe('LocalCloudStack', () => {
 
     stack.update({
       enabled: true,
+      humanModeEnabled: false,
       apiBaseUrl: 'http://api.test',
       timeKey: '2025-12-22T00:00:00Z',
       lon: 180,
@@ -146,7 +156,12 @@ describe('LocalCloudStack', () => {
 
     const imageUrls = vi
       .mocked(Material.fromType)
-      .mock.calls.map((call) => (call[1] as { image?: string }).image ?? '');
+      .mock.calls.map((call) => {
+        const image = (call[1] as { image?: unknown } | undefined)?.image;
+        if (typeof image === 'string') return image;
+        if (image && typeof (image as { src?: unknown }).src === 'string') return (image as { src: string }).src;
+        return '';
+      });
 
     expect(imageUrls.every((url) => url.length > 0)).toBe(true);
     expect(imageUrls.some((url) => url.includes('/api/v1/tiles/ecmwf/tcc/'))).toBe(true);
@@ -168,6 +183,7 @@ describe('LocalCloudStack', () => {
 
     stack.update({
       enabled: true,
+      humanModeEnabled: false,
       apiBaseUrl: 'http://api.test',
       timeKey: '2025-12-22T00:00:00Z',
       lon: 180,
@@ -189,7 +205,12 @@ describe('LocalCloudStack', () => {
 
     const imageUrls = vi
       .mocked(Material.fromType)
-      .mock.calls.map((call) => (call[1] as { image?: string }).image ?? '');
+      .mock.calls.map((call) => {
+        const image = (call[1] as { image?: unknown } | undefined)?.image;
+        if (typeof image === 'string') return image;
+        if (image && typeof (image as { src?: unknown }).src === 'string') return (image as { src: string }).src;
+        return '';
+      });
 
     expect(imageUrls.some((url) => url.includes('/10/'))).toBe(true);
   });
@@ -200,6 +221,7 @@ describe('LocalCloudStack', () => {
 
     const baseUpdate = {
       enabled: true,
+      humanModeEnabled: false,
       apiBaseUrl: 'http://api.test',
       timeKey: '2025-12-22T00:00:00Z',
       lon: 12.25,
@@ -265,6 +287,7 @@ describe('LocalCloudStack', () => {
 
     stack.update({
       enabled: true,
+      humanModeEnabled: false,
       apiBaseUrl: 'http://api.test',
       timeKey: '2025-12-22T00:00:00Z',
       lon: -999,
@@ -287,7 +310,12 @@ describe('LocalCloudStack', () => {
 
     const imageUrls = vi
       .mocked(Material.fromType)
-      .mock.calls.map((call) => (call[1] as { image?: string }).image ?? '');
+      .mock.calls.map((call) => {
+        const image = (call[1] as { image?: unknown } | undefined)?.image;
+        if (typeof image === 'string') return image;
+        if (image && typeof (image as { src?: unknown }).src === 'string') return (image as { src: string }).src;
+        return '';
+      });
 
     expect(imageUrls.some((url) => url.includes('/api/v1/tiles/ecmwf/humidity/'))).toBe(true);
     expect(imageUrls.some((url) => url.includes('/700/'))).toBe(true);
@@ -305,6 +333,7 @@ describe('LocalCloudStack', () => {
 
     stack.update({
       enabled: true,
+      humanModeEnabled: false,
       apiBaseUrl: 'http://api.test',
       timeKey: '2025-12-22T01:00:00Z',
       lon: -999,
@@ -334,6 +363,7 @@ describe('LocalCloudStack', () => {
 
     stack.update({
       enabled: false,
+      humanModeEnabled: false,
       apiBaseUrl: null,
       timeKey: null,
       lon: 0,
@@ -347,6 +377,7 @@ describe('LocalCloudStack', () => {
 
     stack.update({
       enabled: true,
+      humanModeEnabled: false,
       apiBaseUrl: 'http://api.test',
       timeKey: '2025-12-22T00:00:00Z',
       lon: 0,
@@ -369,6 +400,7 @@ describe('LocalCloudStack', () => {
 
     stack.update({
       enabled: true,
+      humanModeEnabled: false,
       apiBaseUrl: 'http://api.test',
       timeKey: '2025-12-22T00:00:00Z',
       lon: 0,
@@ -394,6 +426,7 @@ describe('LocalCloudStack', () => {
 
     stack.update({
       enabled: false,
+      humanModeEnabled: false,
       apiBaseUrl: 'http://api.test',
       timeKey: '2025-12-22T00:00:00Z',
       lon: 0,
@@ -412,6 +445,7 @@ describe('LocalCloudStack', () => {
 
     stack.update({
       enabled: true,
+      humanModeEnabled: false,
       apiBaseUrl: 'http://api.test',
       timeKey: '2025-12-22T00:00:00Z',
       lon: 0,
@@ -445,6 +479,7 @@ describe('LocalCloudStack', () => {
 
     stack.update({
       enabled: true,
+      humanModeEnabled: false,
       apiBaseUrl: 'http://api.test',
       timeKey: '2025-12-22T00:00:00Z',
       lon: 0,
@@ -465,5 +500,73 @@ describe('LocalCloudStack', () => {
     expect(viewer.scene.primitives.add).not.toHaveBeenCalled();
     expect(viewer.scene.primitives.remove).toHaveBeenCalledTimes(9);
     expect(viewer.scene.requestRender).toHaveBeenCalledTimes(1);
+  });
+
+  it('requests a render after a tile image finishes loading', () => {
+    const viewer = makeViewer();
+    const stack = new LocalCloudStack(viewer as never);
+
+    stack.update({
+      enabled: true,
+      humanModeEnabled: false,
+      apiBaseUrl: 'http://api.test',
+      timeKey: '2025-12-22T00:00:00Z',
+      lon: 180,
+      lat: 90,
+      surfaceHeightMeters: 10,
+      layers: [
+        {
+          id: 'cloud-1',
+          type: 'cloud',
+          variable: 'tcc',
+          opacity: 1,
+          visible: true,
+          zIndex: 0,
+        },
+      ] satisfies LayerConfig[],
+    });
+
+    expect(viewer.scene.requestRender).toHaveBeenCalledTimes(1);
+
+    const firstImage = vi.mocked(Material.fromType).mock.calls[0]?.[1] as { image?: FakeImage } | undefined;
+    firstImage?.image?.onload?.();
+
+    expect(viewer.scene.requestRender).toHaveBeenCalledTimes(2);
+  });
+
+  it('uses a human-specific tile material when enabled', () => {
+    const viewer = makeViewer();
+    const stack = new LocalCloudStack(viewer as never);
+
+    stack.update({
+      enabled: true,
+      humanModeEnabled: true,
+      apiBaseUrl: 'http://api.test',
+      timeKey: '2025-12-22T00:00:00Z',
+      lon: 180,
+      lat: 90,
+      surfaceHeightMeters: 10,
+      layers: [
+        {
+          id: 'cloud-1',
+          type: 'cloud',
+          variable: 'tcc',
+          opacity: 1,
+          visible: true,
+          zIndex: 0,
+        },
+      ] satisfies LayerConfig[],
+    });
+
+    const firstCall = vi.mocked(Material.fromType).mock.calls[0] ?? [];
+    expect(firstCall[0]).toBe('LocalCloudTileHuman');
+    expect(firstCall[1]).toEqual(
+      expect.objectContaining({
+        edgeFadeStart: expect.any(Number),
+        edgeFadeWidth: expect.any(Number),
+        edgeFadeMinAlpha: expect.any(Number),
+        edgeFadeMaxAlpha: expect.any(Number),
+      }),
+    );
   });
 });

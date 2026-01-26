@@ -401,13 +401,17 @@ function localFrustumForCameraHeight(heightMeters: number): { near: number; far:
 
 function localHumanFrustumForCameraHeight(heightMeters: number): { near: number; far: number } {
   const near = clampNumber(heightMeters * 0.0005, 0.05, 0.2);
-  const far = clampNumber(heightMeters * 400, 10_000, 50_000);
+  const far = clampNumber(heightMeters * 400, 10_000, 200_000);
   return { near, far: Math.max(far, near + 1) };
 }
 
 function localFogDensityForCameraHeight(heightMeters: number): number {
   const normalized = clampNumber(heightMeters / 12_000, 0, 1);
   return 0.00055 * (1 - normalized) + 0.00005;
+}
+
+function localHumanFogDensityForCameraHeight(heightMeters: number): number {
+  return localFogDensityForCameraHeight(heightMeters) * 0.35;
 }
 
 type FlyToRequest = {
@@ -3095,10 +3099,13 @@ export function CesiumViewer() {
       }
 
       if (scene.fog) {
-        const fogEnabled = volumetricEnabled && cameraPerspectiveId !== 'human';
+        const fogEnabled = volumetricEnabled;
         scene.fog.enabled = fogEnabled;
         if (fogEnabled) {
-          scene.fog.density = localFogDensityForCameraHeight(heightMeters);
+          scene.fog.density =
+            cameraPerspectiveId === 'human'
+              ? localHumanFogDensityForCameraHeight(heightMeters)
+              : localFogDensityForCameraHeight(heightMeters);
           scene.fog.screenSpaceErrorFactor = 3.0;
           scene.fog.minimumBrightness = 0.12;
         }
@@ -3630,6 +3637,7 @@ export function CesiumViewer() {
     if (!viewer || !stack) return;
 
     const enabled = !lowModeEnabled && viewModeRoute.viewModeId === 'local';
+    const humanModeEnabled = enabled && cameraPerspectiveId === 'human';
 
     const lon = viewModeRoute.viewModeId === 'local' ? viewModeRoute.lon : Number.NaN;
     const lat = viewModeRoute.viewModeId === 'local' ? viewModeRoute.lat : Number.NaN;
@@ -3638,6 +3646,7 @@ export function CesiumViewer() {
     const runUpdate = () => {
       stack.update({
         enabled,
+        humanModeEnabled,
         apiBaseUrl,
         timeKey: cloudTimeKey,
         lon,
@@ -3702,7 +3711,16 @@ export function CesiumViewer() {
       camera.moveEnd?.removeEventListener?.(runUpdateImmediate);
       clearTimer();
     };
-  }, [apiBaseUrl, cloudTimeKey, layers, localCloudSurfaceHeightMeters, lowModeEnabled, viewModeRoute, viewer]);
+  }, [
+    apiBaseUrl,
+    cameraPerspectiveId,
+    cloudTimeKey,
+    layers,
+    localCloudSurfaceHeightMeters,
+    lowModeEnabled,
+    viewModeRoute,
+    viewer,
+  ]);
 
   useEffect(() => {
     if (!viewer) return;

@@ -1952,7 +1952,9 @@ describe('CesiumViewer', () => {
 
     expect(viewer.scene.skyBox.show).toBe(true);
     expect(viewer.scene.skyAtmosphere.show).toBe(true);
-    expect(viewer.scene.fog.enabled).toBe(false);
+    expect(viewer.scene.fog.enabled).toBe(true);
+    expect(viewer.scene.fog.density).toBeGreaterThan(0);
+    expect(viewer.scene.fog.density).toBeLessThan(0.001);
     expect(viewer.camera.frustum.near).toBeCloseTo(0.0615);
     expect(viewer.camera.frustum.far).toBe(49_200);
 
