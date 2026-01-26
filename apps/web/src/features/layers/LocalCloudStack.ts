@@ -16,6 +16,90 @@ import { buildCloudTileUrlTemplate } from './layersApi';
 const DEFAULT_LOCAL_CLOUD_TILE_ZOOM = 6;
 const DEFAULT_LOCAL_CLOUD_TILE_RADIUS = 1;
 
+const LOCAL_CLOUD_TILE_HUMAN_MATERIAL_TYPE = 'LocalCloudTileHuman';
+const LOCAL_CLOUD_TILE_HUMAN_EDGE_FADE_START = 0.0;
+const LOCAL_CLOUD_TILE_HUMAN_EDGE_FADE_WIDTH = 0.08;
+const LOCAL_CLOUD_TILE_HUMAN_EDGE_FADE_MIN_ALPHA = 0.2;
+const LOCAL_CLOUD_TILE_HUMAN_EDGE_FADE_MAX_ALPHA = 0.7;
+
+let humanCloudTileMaterialRegistered = false;
+
+function ensureHumanCloudTileMaterialRegistered(): void {
+  if (humanCloudTileMaterialRegistered) return;
+  humanCloudTileMaterialRegistered = true;
+
+  const cache = (
+    Material as unknown as {
+      _materialCache?: {
+        addMaterial?: (type: string, material: unknown) => void;
+      };
+    }
+  )._materialCache;
+
+  cache?.addMaterial?.(LOCAL_CLOUD_TILE_HUMAN_MATERIAL_TYPE, {
+    fabric: {
+      type: LOCAL_CLOUD_TILE_HUMAN_MATERIAL_TYPE,
+      uniforms: {
+        image: undefined,
+        color: Color.WHITE,
+        edgeFadeStart: LOCAL_CLOUD_TILE_HUMAN_EDGE_FADE_START,
+        edgeFadeWidth: LOCAL_CLOUD_TILE_HUMAN_EDGE_FADE_WIDTH,
+        edgeFadeMinAlpha: LOCAL_CLOUD_TILE_HUMAN_EDGE_FADE_MIN_ALPHA,
+        edgeFadeMaxAlpha: LOCAL_CLOUD_TILE_HUMAN_EDGE_FADE_MAX_ALPHA,
+      },
+      source: `
+uniform sampler2D image;
+uniform vec4 color;
+uniform float edgeFadeStart;
+uniform float edgeFadeWidth;
+uniform float edgeFadeMinAlpha;
+uniform float edgeFadeMaxAlpha;
+
+czm_material czm_getMaterial(czm_materialInput materialInput)
+{
+  czm_material material = czm_getDefaultMaterial(materialInput);
+  vec2 st = materialInput.st;
+  vec4 texel = czm_texture2D(image, st);
+
+  float coverage = texel.a;
+  if (coverage > 0.999)
+  {
+    coverage = max(max(texel.r, texel.g), texel.b);
+  }
+
+  float distToEdge = min(min(st.x, 1.0 - st.x), min(st.y, 1.0 - st.y));
+  float edgeFactor = smoothstep(edgeFadeStart, edgeFadeStart + edgeFadeWidth, distToEdge);
+  float fadedCoverage = coverage * edgeFactor;
+  float keepCoverage = smoothstep(edgeFadeMinAlpha, edgeFadeMaxAlpha, coverage);
+  float finalCoverage = mix(fadedCoverage, coverage, keepCoverage);
+
+  material.diffuse = texel.rgb * color.rgb;
+  material.alpha = finalCoverage * color.a;
+  return material;
+}
+`,
+    },
+    translucent: () => true,
+  });
+}
+
+function createCloudTileImage(options: { url: string; requestRender: () => void }): HTMLImageElement | string {
+  if (typeof Image !== 'function') return options.url;
+  const image = new Image();
+  image.crossOrigin = 'anonymous';
+  const requestRender = () => {
+    try {
+      options.requestRender();
+    } catch {
+      // ignore render requests during teardown
+    }
+  };
+  image.onload = requestRender;
+  image.onerror = requestRender;
+  image.src = options.url;
+  return image;
+}
+
 type LocalCloudTileSettings = {
   zoom: number;
   radius: number;
@@ -156,6 +240,7 @@ type CloudGroup = {
 
 export type LocalCloudStackUpdate = {
   enabled: boolean;
+  humanModeEnabled: boolean;
   apiBaseUrl: string | null;
   timeKey: string | null;
   lon: number;
@@ -178,6 +263,9 @@ export class LocalCloudStack {
     if (!update.enabled) {
       this.clear();
       return;
+    }
+    if (update.humanModeEnabled) {
+      ensureHumanCloudTileMaterialRegistered();
     }
     const apiBaseUrl = update.apiBaseUrl?.trim() ?? '';
     const timeKey = update.timeKey?.trim() ?? '';
@@ -219,7 +307,9 @@ export class LocalCloudStack {
       const heightMeters = Math.max(0, update.surfaceHeightMeters + cloudLayerHeightOffsetMeters(layer));
       const alpha = clamp01(layer.opacity);
 
-      const key = `${timeKey}:${variable}:${levelKey ?? 'sfc'}:${heightMeters}:${center.x}:${center.y}:${zoom}:${radius}`;
+      const key = `${timeKey}:${variable}:${levelKey ?? 'sfc'}:${heightMeters}:${center.x}:${center.y}:${zoom}:${radius}:${
+        update.humanModeEnabled ? 'human' : 'default'
+      }`;
       const existing = this.groups.get(layer.id);
 
       if (!existing || existing.key !== key) {
@@ -245,11 +335,25 @@ export class LocalCloudStack {
               vertexFormat: EllipsoidSurfaceAppearance.VERTEX_FORMAT,
             });
 
-            const material = Material.fromType('Image', {
-              image: fillUrlTemplate(template, { z: zoom, x, y }),
-              transparent: true,
-              color: Color.WHITE.withAlpha(alpha),
+            const requestRender = () => this.viewer.scene.requestRender();
+            const image = createCloudTileImage({
+              url: fillUrlTemplate(template, { z: zoom, x, y }),
+              requestRender,
             });
+            const material = update.humanModeEnabled
+              ? Material.fromType(LOCAL_CLOUD_TILE_HUMAN_MATERIAL_TYPE, {
+                  image,
+                  color: Color.WHITE.withAlpha(alpha),
+                  edgeFadeStart: LOCAL_CLOUD_TILE_HUMAN_EDGE_FADE_START,
+                  edgeFadeWidth: LOCAL_CLOUD_TILE_HUMAN_EDGE_FADE_WIDTH,
+                  edgeFadeMinAlpha: LOCAL_CLOUD_TILE_HUMAN_EDGE_FADE_MIN_ALPHA,
+                  edgeFadeMaxAlpha: LOCAL_CLOUD_TILE_HUMAN_EDGE_FADE_MAX_ALPHA,
+                })
+              : Material.fromType('Image', {
+                  image,
+                  transparent: true,
+                  color: Color.WHITE.withAlpha(alpha),
+                });
 
             const appearance = new EllipsoidSurfaceAppearance({
               aboveGround: false,
