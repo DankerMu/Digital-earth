@@ -19,5 +19,7 @@ RUN pnpm --filter web build
 # Stage 2: Serve
 FROM nginx:1.25.4-alpine
 COPY --from=builder /app/apps/web/dist /usr/share/nginx/html
+COPY deploy/dockerfiles/10-inject-config.sh /docker-entrypoint.d/10-inject-config.sh
+RUN chmod +x /docker-entrypoint.d/10-inject-config.sh
 EXPOSE 80
 CMD ["nginx", "-g", "daemon off;"]

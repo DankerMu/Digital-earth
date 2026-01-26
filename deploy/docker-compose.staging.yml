@@ -5,8 +5,10 @@ include:
 
 services:
   web:
+    environment:
+      - DIGITAL_EARTH_WEB_CESIUM_ION_ACCESS_TOKEN
     volumes:
-      - ../apps/web/public/config.staging.json:/usr/share/nginx/html/config.json:ro
+      - ../apps/web/public/config.staging.json:/usr/share/nginx/html/config.template.json:ro
 
   api:
     environment:

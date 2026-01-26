@@ -7,8 +7,8 @@ services:
       dockerfile: deploy/dockerfiles/web.Dockerfile
     ports:
       - "3000:80"
-    volumes:
-      - ../apps/web/public/config.dev.json:/usr/share/nginx/html/config.json:ro
+    environment:
+      - DIGITAL_EARTH_WEB_CESIUM_ION_ACCESS_TOKEN
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:80/"]
       interval: 30s

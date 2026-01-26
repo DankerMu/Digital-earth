@@ -19,7 +19,7 @@ services:
 
   web:
     volumes:
-      - ../apps/web/public/config.dev.json:/usr/share/nginx/html/config.json:ro
+      - ../apps/web/public/config.json:/usr/share/nginx/html/config.json:ro
 
   nginx:
     ports:

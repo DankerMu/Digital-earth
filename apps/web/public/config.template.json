@@ -2,6 +2,6 @@
   "apiBaseUrl": "http://localhost:8000",
   "map": {
     "terrainProvider": "ion",
-    "cesiumIonAccessToken": ""
+    "cesiumIonAccessToken": "${DIGITAL_EARTH_WEB_CESIUM_ION_ACCESS_TOKEN}"
   }
 }
