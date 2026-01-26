@@ -1,5 +1,7 @@
 import type { Camera, Viewer } from 'cesium';
 
+import { requestViewerRender } from '../../lib/cesiumSafe';
+
 import { computeLocalModeBBox } from './bboxCalculator';
 import { VoxelCloudPerformanceMonitor } from './performanceMonitor';
 import { QUALITY_PRESETS, type VoxelCloudQuality } from './qualityConfig';
@@ -105,7 +107,7 @@ export class VoxelCloudLayer {
     this.lastApiCallAtMs = -Infinity;
     this.lastLoadedKey = null;
     this.cancelInFlight();
-    this.viewer.scene.requestRender();
+    requestViewerRender(this.viewer);
   }
 
   setAutoDowngrade(enabled: boolean): void {
@@ -161,7 +163,7 @@ export class VoxelCloudLayer {
           this.loadAbortController = null;
           this.inFlightKey = null;
           this.requestToken += 1;
-          this.viewer.scene.requestRender();
+          requestViewerRender(this.viewer);
         }
         return;
       }
@@ -187,7 +189,7 @@ export class VoxelCloudLayer {
       } finally {
         if (this.loadAbortController === controller) this.loadAbortController = null;
         if (this.inFlightKey === cacheKey) this.inFlightKey = null;
-        this.viewer.scene.requestRender();
+        requestViewerRender(this.viewer);
       }
       return;
     }
@@ -198,7 +200,7 @@ export class VoxelCloudLayer {
     if (now - this.lastApiCallAtMs < preset.updateInterval) {
       if (this.inFlightKey && this.inFlightKey !== cacheKey) {
         this.cancelInFlight();
-        this.viewer.scene.requestRender();
+        requestViewerRender(this.viewer);
       }
       return;
     }
@@ -239,7 +241,7 @@ export class VoxelCloudLayer {
     } finally {
       if (this.loadAbortController === controller) this.loadAbortController = null;
       if (this.inFlightKey === cacheKey) this.inFlightKey = null;
-      this.viewer.scene.requestRender();
+      requestViewerRender(this.viewer);
     }
   }
 
@@ -282,6 +284,6 @@ export class VoxelCloudLayer {
     this.lastLoadedKey = null;
     this.cancelInFlight();
     this.renderer.setEnabled(false);
-    this.viewer.scene.requestRender();
+    requestViewerRender(this.viewer);
   }
 }

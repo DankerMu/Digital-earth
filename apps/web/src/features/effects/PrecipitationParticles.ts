@@ -10,6 +10,8 @@ import {
   type Viewer,
 } from 'cesium';
 
+import { isCesiumDestroyed, requestViewerRender } from '../../lib/cesiumSafe';
+
 import type { PrecipitationKind } from './weatherSampler';
 
 export type PrecipitationParticleType = Exclude<PrecipitationKind, 'none'>;
@@ -167,6 +169,8 @@ export class PrecipitationParticles {
   }
 
   update(update: PrecipitationParticlesUpdate): void {
+    if (isCesiumDestroyed(this.viewer)) return;
+
     const intensity = clamp01(update.intensity);
     const requestedType = normalizeParticleType(update.kind);
 
@@ -201,7 +205,7 @@ export class PrecipitationParticles {
         maxParticles,
         kind: requestedType,
       });
-      this.viewer.scene.requestRender();
+      requestViewerRender(this.viewer);
     }
   }
 
@@ -211,33 +215,51 @@ export class PrecipitationParticles {
 
   private activateIfNeeded(): void {
     if (this.active) return;
+    if (isCesiumDestroyed(this.viewer)) return;
     this.active = true;
-    this.viewer.scene.requestRenderMode = false;
+    try {
+      this.viewer.scene.requestRenderMode = false;
+    } catch {
+      // ignore requestRenderMode updates during teardown
+    }
     this.ensureParticleSystem();
     this.attachPreUpdate();
-    this.viewer.scene.requestRender();
+    requestViewerRender(this.viewer);
   }
 
   private deactivate(): void {
     if (!this.active && !this.particleSystem) return;
     this.active = false;
     this.detachPreUpdate();
-    this.viewer.scene.requestRenderMode = this.baseRequestRenderMode;
+    if (!isCesiumDestroyed(this.viewer)) {
+      try {
+        this.viewer.scene.requestRenderMode = this.baseRequestRenderMode;
+      } catch {
+        // ignore requestRenderMode updates during teardown
+      }
+    }
 
     if (this.particleSystem) {
-      const primitives = this.viewer.scene.primitives as unknown as {
-        remove: (primitive: unknown) => boolean;
-      };
-      primitives.remove(this.particleSystem);
+      if (!isCesiumDestroyed(this.viewer)) {
+        const primitives = this.viewer.scene.primitives as unknown as {
+          remove: (primitive: unknown) => boolean;
+        };
+        try {
+          primitives.remove(this.particleSystem);
+        } catch {
+          // ignore primitive removal errors during teardown
+        }
+      }
       this.particleSystem.destroy();
       this.particleSystem = null;
     }
 
-    this.viewer.scene.requestRender();
+    requestViewerRender(this.viewer);
   }
 
   private ensureParticleSystem(): void {
     if (this.particleSystem) return;
+    if (isCesiumDestroyed(this.viewer)) return;
 
     const emitter = new ConeEmitter(
       CesiumMath.toRadians(this.options.emitterAngleDegrees),
@@ -261,16 +283,20 @@ export class PrecipitationParticles {
     const primitives = this.viewer.scene.primitives as unknown as {
       add: (primitive: unknown) => unknown;
     };
-    primitives.add(particleSystem);
+    try {
+      primitives.add(particleSystem);
+    } catch {
+      particleSystem.destroy();
+      return;
+    }
     this.particleSystem = particleSystem;
   }
 
   private attachPreUpdate(): void {
     if (this.preUpdateHandler) return;
-    const scene = this.viewer.scene as unknown as {
-      preUpdate?: { addEventListener?: (handler: () => void) => void };
-    };
-    const preUpdate = scene.preUpdate;
+    const preUpdate = (
+      this.viewer as unknown as { scene?: { preUpdate?: { addEventListener?: (handler: () => void) => void } } } | null
+    )?.scene?.preUpdate;
     if (!preUpdate?.addEventListener) return;
 
     const handler = () => {
@@ -290,10 +316,10 @@ export class PrecipitationParticles {
 
   private detachPreUpdate(): void {
     if (!this.preUpdateHandler) return;
-    const scene = this.viewer.scene as unknown as {
-      preUpdate?: { removeEventListener?: (handler: () => void) => void };
-    };
-    scene.preUpdate?.removeEventListener?.(this.preUpdateHandler);
+    const preUpdate = (
+      this.viewer as unknown as { scene?: { preUpdate?: { removeEventListener?: (handler: () => void) => void } } } | null
+    )?.scene?.preUpdate;
+    preUpdate?.removeEventListener?.(this.preUpdateHandler);
     this.preUpdateHandler = null;
   }
 

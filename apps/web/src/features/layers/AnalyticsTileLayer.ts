@@ -10,6 +10,7 @@ import {
 
 import { attachTileCacheToProvider } from './tilePrefetch';
 import type { RectangleDegrees } from './types';
+import { isCesiumDestroyed, requestViewerRender } from '../../lib/cesiumSafe';
 
 export type AnalyticsTileLayerParams = {
   id: string;
@@ -91,16 +92,24 @@ export class AnalyticsTileLayer {
 
   destroy(): void {
     if (!this.imageryLayer) return;
-    this.viewer.imageryLayers.remove(this.imageryLayer, true);
+    if (!isCesiumDestroyed(this.viewer)) {
+      try {
+        this.viewer.imageryLayers.remove(this.imageryLayer, true);
+      } catch {
+        // ignore teardown errors
+      }
+    }
     this.imageryLayer = null;
     this.urlTemplate = null;
     this.frameKey = null;
     this.coverageKey = null;
     this.levelsKey = null;
-    this.viewer.scene.requestRender();
+    requestViewerRender(this.viewer);
   }
 
   private sync(options: { forceRecreate?: boolean } = {}): void {
+    if (isCesiumDestroyed(this.viewer)) return;
+
     const nextTemplate = this.current.urlTemplate.trim();
     const nextFrameKey = this.current.frameKey.trim();
     const nextCoverageKey = coverageKey(this.current.rectangle);
@@ -118,7 +127,11 @@ export class AnalyticsTileLayer {
 
     if (shouldRecreate) {
       if (this.imageryLayer) {
-        this.viewer.imageryLayers.remove(this.imageryLayer, true);
+        try {
+          this.viewer.imageryLayers.remove(this.imageryLayer, true);
+        } catch {
+          // ignore teardown errors
+        }
       }
 
       const rectangle = normalizeRectangle(this.current.rectangle);
@@ -142,7 +155,16 @@ export class AnalyticsTileLayer {
         alpha: clampOpacity(this.current.opacity),
         show: this.current.visible,
       });
-      this.viewer.imageryLayers.add(this.imageryLayer);
+      try {
+        this.viewer.imageryLayers.add(this.imageryLayer);
+      } catch {
+        this.imageryLayer = null;
+        this.urlTemplate = null;
+        this.frameKey = null;
+        this.coverageKey = null;
+        this.levelsKey = null;
+        return;
+      }
       this.imageryLayer.minificationFilter = TextureMinificationFilter.NEAREST;
       this.imageryLayer.magnificationFilter = TextureMagnificationFilter.NEAREST;
       this.urlTemplate = nextTemplate;
@@ -155,7 +177,6 @@ export class AnalyticsTileLayer {
 
     this.imageryLayer.alpha = clampOpacity(this.current.opacity);
     this.imageryLayer.show = this.current.visible;
-    this.viewer.scene.requestRender();
+    requestViewerRender(this.viewer);
   }
 }
-

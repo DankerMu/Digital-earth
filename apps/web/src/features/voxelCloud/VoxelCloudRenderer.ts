@@ -7,6 +7,8 @@ import {
   type Viewer,
 } from 'cesium';
 
+import { requestViewerRender } from '../../lib/cesiumSafe';
+
 import { decodeVolumePack, type VolumePackBBox } from '../../lib/volumePack';
 import { buildAtlasCanvas, buildVolumeAtlas, type VolumeAtlas } from './atlas';
 import { recommendVoxelCloudParams, type VoxelCloudRecommendedParams } from './recommendations';
@@ -181,7 +183,7 @@ export class VoxelCloudRenderer {
     if (this.stage) {
       this.stage.enabled = this.settings.enabled;
     }
-    this.viewer.scene.requestRender();
+    requestViewerRender(this.viewer);
   }
 
   setRaySteps(raySteps: number): void {
@@ -191,7 +193,7 @@ export class VoxelCloudRenderer {
 
   updateSettings(partial: Partial<Omit<VoxelCloudSettings, 'enabled'>>): void {
     this.settings = { ...this.settings, ...partial };
-    this.viewer.scene.requestRender();
+    requestViewerRender(this.viewer);
   }
 
   async loadFromArrayBuffer(buffer: ArrayBuffer, options: { signal?: AbortSignal } = {}): Promise<void> {
@@ -236,7 +238,7 @@ export class VoxelCloudRenderer {
     this.northWorld = null;
     this.upWorld = null;
     this.dimensionsMeters = null;
-    this.viewer.scene.requestRender();
+    requestViewerRender(this.viewer);
   }
 
   private computeVolumeDimensionsMeters(bbox: VolumePackBBox): { width: number; height: number; depth: number } {
@@ -348,7 +350,7 @@ export class VoxelCloudRenderer {
         approxAtlasBytes: approxBytes,
       };
 
-      this.viewer.scene.requestRender();
+      requestViewerRender(this.viewer);
     } catch (error) {
       if (signal?.aborted || isAbortError(error)) {
         throw error;

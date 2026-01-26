@@ -1,6 +1,7 @@
 import { Cartesian3, CustomDataSource, Entity, type Viewer } from 'cesium';
 import { useEffect, useRef } from 'react';
 
+import { isCesiumDestroyed, requestViewerRender } from '../../lib/cesiumSafe';
 import type { CameraPerspectiveId } from '../../state/cameraPerspective';
 import { useAircraftDemoStore } from '../../state/aircraftDemo';
 import type { ViewModeRoute } from '../../state/viewMode';
@@ -69,17 +70,29 @@ export function AircraftDemoLayer({
     const attachedViewer = attachedViewerRef.current;
 
     if (dataSource && attachedViewer && attachedViewer !== viewer) {
-      attachedViewer.dataSources.remove(dataSource, false);
+      if (!isCesiumDestroyed(attachedViewer)) {
+        try {
+          attachedViewer.dataSources.remove(dataSource, false);
+        } catch {
+          // ignore teardown errors
+        }
+      }
       attachedViewerRef.current = null;
       lastKeyRef.current = null;
     }
 
     if (!enabled || viewModeRoute.viewModeId !== 'local') {
       if (dataSource && attachedViewerRef.current === viewer) {
-        viewer.dataSources.remove(dataSource, false);
+        if (!isCesiumDestroyed(viewer)) {
+          try {
+            viewer.dataSources.remove(dataSource, false);
+          } catch {
+            // ignore teardown errors
+          }
+        }
         attachedViewerRef.current = null;
         lastKeyRef.current = null;
-        viewer.scene.requestRender();
+        requestViewerRender(viewer);
       }
       return;
     }
@@ -117,7 +130,7 @@ export function AircraftDemoLayer({
       }
     }
 
-    viewer.scene.requestRender();
+    requestViewerRender(viewer);
   }, [cameraPerspectiveId, enabled, viewModeRoute, viewer]);
 
   useEffect(() => {
@@ -125,7 +138,13 @@ export function AircraftDemoLayer({
       const dataSource = dataSourceRef.current;
       const attachedViewer = attachedViewerRef.current;
       if (!dataSource || !attachedViewer) return;
-      attachedViewer.dataSources.remove(dataSource, false);
+      if (!isCesiumDestroyed(attachedViewer)) {
+        try {
+          attachedViewer.dataSources.remove(dataSource, false);
+        } catch {
+          // ignore teardown errors
+        }
+      }
       attachedViewerRef.current = null;
       lastKeyRef.current = null;
     };

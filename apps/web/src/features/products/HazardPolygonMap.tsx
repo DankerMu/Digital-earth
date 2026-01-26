@@ -19,6 +19,7 @@ import {
 } from 'cesium';
 import { useEffect, useRef } from 'react';
 
+import { requestViewerRender } from '../../lib/cesiumSafe';
 import type { LonLat } from '../../lib/geo';
 
 type Hazard = { id: string; vertices: LonLat[] };
@@ -112,7 +113,7 @@ function setConstantPositionValue(existing: unknown, value: Cartesian3): Constan
 }
 
 function requestRender(viewer: Viewer) {
-  viewer.scene.requestRender();
+  requestViewerRender(viewer);
 }
 
 function syncHazardEntities(options: {

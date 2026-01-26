@@ -6,6 +6,7 @@ import {
   type Viewer,
 } from 'cesium';
 
+import { requestViewerRender } from '../../lib/cesiumSafe';
 import type { SceneModeId } from '../../state/sceneMode';
 
 type CapturedCameraView = {
@@ -102,7 +103,7 @@ export function switchViewerSceneMode(
   const handler = () => {
     viewer.scene.morphComplete.removeEventListener(handler);
     restoreCameraView(viewer, captured, modeId);
-    viewer.scene.requestRender();
+    requestViewerRender(viewer);
   };
 
   viewer.scene.morphComplete.addEventListener(handler);

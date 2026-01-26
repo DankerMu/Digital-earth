@@ -1,5 +1,7 @@
 import { Cartesian3, Color, PolylineArrowMaterialProperty, type Viewer } from 'cesium';
 
+import { isCesiumDestroyed, requestViewerRender } from '../../lib/cesiumSafe';
+
 export type WindVector = {
   lon: number;
   lat: number;
@@ -190,6 +192,7 @@ export class WindArrows {
 
   private render(vectors: WindVector[], style: { opacity: number }): void {
     this.clear();
+    if (isCesiumDestroyed(this.viewer)) return;
 
     const width = clamp(this.options.widthPixels, 1, 10);
     const color = Color.WHITE.withAlpha(style.opacity);
@@ -216,35 +219,47 @@ export class WindArrows {
       const start = Cartesian3.fromDegrees(endpoints.startLon, endpoints.startLat, 0);
       const end = Cartesian3.fromDegrees(endpoints.endLon, endpoints.endLat, 0);
 
-      const entity = entities.add({
-        id: `wind-arrow-${index}`,
-        show: true,
-        polyline: {
-          positions: [start, end],
-          width,
-          material,
-          clampToGround: true,
-        },
-      });
-
-      this.entities.push(entity);
+      try {
+        const entity = entities.add({
+          id: `wind-arrow-${index}`,
+          show: true,
+          polyline: {
+            positions: [start, end],
+            width,
+            material,
+            clampToGround: true,
+          },
+        });
+        this.entities.push(entity);
+      } catch {
+        break;
+      }
     }
 
-    this.viewer.scene.requestRender();
+    requestViewerRender(this.viewer);
   }
 
   private clear(): void {
     if (this.entities.length === 0) return;
+
+    if (isCesiumDestroyed(this.viewer)) {
+      this.entities = [];
+      return;
+    }
 
     const entities = this.viewer.entities as unknown as {
       remove: (entity: unknown) => boolean;
     };
 
     for (const entity of this.entities) {
-      entities.remove(entity);
+      try {
+        entities.remove(entity);
+      } catch {
+        // ignore teardown errors
+      }
     }
 
     this.entities = [];
-    this.viewer.scene.requestRender();
+    requestViewerRender(this.viewer);
   }
 }

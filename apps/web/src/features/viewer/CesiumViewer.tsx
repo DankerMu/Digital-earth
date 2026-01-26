@@ -92,6 +92,7 @@ import { evaluateRisk, getRiskPois } from '../risk/riskApi';
 import { formatRiskLevel, riskSeverityForLevel, type POIRiskResult, type RiskPOI } from '../risk/riskTypes';
 import { RiskPoiPopup } from '../risk/RiskPoiPopup';
 import { extractGeoJsonPolygons, type LonLat } from './geoJsonPolygons';
+import { requestViewerRender } from '../../lib/cesiumSafe';
 
 const DEFAULT_CAMERA = {
   longitude: 116.391,
@@ -378,7 +379,7 @@ function setupRiskPoiClustering(
     const heightMeters = getViewerCameraHeightMeters(viewer);
     const didChange = applyRiskClusterConfig(clustering, riskClusterConfigForHeight(heightMeters));
     if (didChange) {
-      viewer.scene.requestRender();
+      requestViewerRender(viewer);
     }
   };
 
@@ -1399,7 +1400,7 @@ export function CesiumViewer() {
       shouldRequestRender = true;
     }
 
-    if (shouldRequestRender) viewer.scene.requestRender();
+    if (shouldRequestRender) requestViewerRender(viewer);
   }, [effectiveRealLightingEnabled, timeKey, viewer]);
 
   useEffect(() => {
@@ -1509,7 +1510,7 @@ export function CesiumViewer() {
         } catch {
           // ignore teardown errors
         }
-        scene.requestRender();
+        requestViewerRender(viewer);
       }
       return;
     }
@@ -1520,7 +1521,7 @@ export function CesiumViewer() {
     const existing = osmBuildingsTilesetRef.current;
     if (existing) {
       existing.show = true;
-      scene.requestRender();
+      requestViewerRender(viewer);
       return;
     }
 
@@ -1547,9 +1548,7 @@ export function CesiumViewer() {
         tileset.show = true;
 
         osmBuildingsTilesetCleanupRef.current?.();
-        const requestRender = () => {
-          scene.requestRender();
-        };
+        const requestRender = () => requestViewerRender(viewer);
         tileset.loadProgress.addEventListener(requestRender);
         tileset.allTilesLoaded.addEventListener(requestRender);
         tileset.initialTilesLoaded.addEventListener(requestRender);
@@ -1561,7 +1560,7 @@ export function CesiumViewer() {
 
         // Add buildings below other primitives so weather and overlays can still render on top.
         primitives.add(tileset, 0);
-        scene.requestRender();
+        requestViewerRender(viewer);
       })
       .catch((error: unknown) => {
         if (cancelled) return;
@@ -1687,7 +1686,7 @@ export function CesiumViewer() {
       if (terrainProviderMode === 'none' || terrainProviderMode === undefined) {
         setTerrainReady(false);
         viewer.terrainProvider = new EllipsoidTerrainProvider();
-        viewer.scene.requestRender();
+        requestViewerRender(viewer);
         return;
       }
 
@@ -1698,14 +1697,14 @@ export function CesiumViewer() {
           setTerrainNotice('未配置 Cesium ion token，已回退到无地形模式。');
           setTerrainReady(false);
           viewer.terrainProvider = new EllipsoidTerrainProvider();
-          viewer.scene.requestRender();
+          requestViewerRender(viewer);
           return;
         }
 
         if (cachedIonTerrainRef.current?.token === token && cachedIonTerrainRef.current.provider) {
           viewer.terrainProvider = cachedIonTerrainRef.current.provider as never;
           setTerrainReady(true);
-          viewer.scene.requestRender();
+          requestViewerRender(viewer);
           return;
         }
 
@@ -1715,7 +1714,7 @@ export function CesiumViewer() {
         cachedIonTerrainRef.current = { token, provider: terrain as unknown };
         viewer.terrainProvider = terrain;
         setTerrainReady(true);
-        viewer.scene.requestRender();
+        requestViewerRender(viewer);
         return;
       }
 
@@ -1726,7 +1725,7 @@ export function CesiumViewer() {
           setTerrainNotice('未配置自建地形地址，已回退到无地形模式。');
           setTerrainReady(false);
           viewer.terrainProvider = new EllipsoidTerrainProvider();
-          viewer.scene.requestRender();
+          requestViewerRender(viewer);
           return;
         }
 
@@ -1736,7 +1735,7 @@ export function CesiumViewer() {
         ) {
           viewer.terrainProvider = cachedSelfHostedTerrainRef.current.provider as never;
           setTerrainReady(true);
-          viewer.scene.requestRender();
+          requestViewerRender(viewer);
           return;
         }
 
@@ -1746,7 +1745,7 @@ export function CesiumViewer() {
         cachedSelfHostedTerrainRef.current = { terrainUrl, provider: terrain as unknown };
         viewer.terrainProvider = terrain;
         setTerrainReady(true);
-        viewer.scene.requestRender();
+        requestViewerRender(viewer);
       }
     };
 
@@ -1756,7 +1755,7 @@ export function CesiumViewer() {
       setTerrainNotice('地形加载失败，已回退到无地形模式。');
       setTerrainReady(false);
       viewer.terrainProvider = new EllipsoidTerrainProvider();
-      viewer.scene.requestRender();
+      requestViewerRender(viewer);
     });
 
     return () => {
@@ -2530,7 +2529,7 @@ export function CesiumViewer() {
           viewer.entities.remove(entity);
         }
         eventEntitiesRef.current = [];
-        viewer.scene.requestRender();
+        requestViewerRender(viewer);
       }
 
       setEventMonitoringTimeKey(null);
@@ -2563,7 +2562,7 @@ export function CesiumViewer() {
         viewer.entities.remove(entity);
       }
       eventEntitiesRef.current = [];
-      viewer.scene.requestRender();
+      requestViewerRender(viewer);
     }
 
     void (async () => {
@@ -2629,14 +2628,14 @@ export function CesiumViewer() {
           viewer.camera.flyTo({ destination: rectangle, duration: 1.8 });
         }
 
-        viewer.scene.requestRender();
+        requestViewerRender(viewer);
       } catch (error) {
         if (controller.signal.aborted) return;
         if (eventEntryKeyRef.current !== key) return;
         console.warn('[Digital Earth] failed to plot event polygon', error);
         setEventMonitoringTimeKey(null);
         setEventMonitoringRectangle(null);
-        viewer.scene.requestRender();
+        requestViewerRender(viewer);
       } finally {
         if (eventAbortRef.current === controller) eventAbortRef.current = null;
       }
@@ -2665,7 +2664,7 @@ export function CesiumViewer() {
         riskDataSourceRef.current = null;
         riskClusterTeardownRef.current?.();
         riskClusterTeardownRef.current = null;
-        viewer.scene.requestRender();
+        requestViewerRender(viewer);
       }
       return;
     }
@@ -2701,7 +2700,7 @@ export function CesiumViewer() {
       riskClusterTeardownRef.current = setupRiskPoiClustering(viewer, dataSource);
     } else {
       dataSource.entities.removeAll();
-      viewer.scene.requestRender();
+      requestViewerRender(viewer);
     }
 
 	    riskPoisByIdRef.current.clear();
@@ -2755,7 +2754,7 @@ export function CesiumViewer() {
 	        // failure does not result in an empty layer.
 	        plotPois(riskEvalByIdRef.current);
 
-	        viewer.scene.requestRender();
+	        requestViewerRender(viewer);
 
 	        try {
 	          if (pois.length === 0) return;
@@ -2774,7 +2773,7 @@ export function CesiumViewer() {
 	          for (const result of evaluation.results) nextEvalMap.set(result.poi_id, result);
 	          riskEvalByIdRef.current = nextEvalMap;
 	          plotPois(nextEvalMap);
-	          viewer.scene.requestRender();
+	          requestViewerRender(viewer);
 	        } catch (error) {
 	          if (controller.signal.aborted) return;
 	          if (riskEntryKeyRef.current !== key) return;
@@ -2787,7 +2786,7 @@ export function CesiumViewer() {
         riskPoisByIdRef.current.clear();
         riskEvalByIdRef.current.clear();
         dataSource.entities.removeAll();
-        viewer.scene.requestRender();
+        requestViewerRender(viewer);
       } finally {
         if (riskAbortRef.current === controller) riskAbortRef.current = null;
       }
@@ -2905,11 +2904,11 @@ export function CesiumViewer() {
     );
 
     viewer.terrainProvider = new EllipsoidTerrainProvider({ ellipsoid: shellEllipsoid });
-    viewer.scene.requestRender();
+    requestViewerRender(viewer);
 
     return () => {
       viewer.terrainProvider = baseTerrainProvider;
-      viewer.scene.requestRender();
+      requestViewerRender(viewer);
     };
   }, [layerGlobalShellHeightMeters, sceneModeId, viewer]);
 
@@ -2941,7 +2940,7 @@ export function CesiumViewer() {
       if (typeof baseController.enableRotate === 'boolean') controller.enableRotate = baseController.enableRotate;
       if (baseController.rotateEventTypes !== undefined) controller.rotateEventTypes = baseController.rotateEventTypes;
       if (baseController.lookEventTypes !== undefined) controller.lookEventTypes = baseController.lookEventTypes;
-      viewer.scene.requestRender();
+      requestViewerRender(viewer);
       return;
     }
 
@@ -2962,7 +2961,7 @@ export function CesiumViewer() {
         if (typeof baseController.enableRotate === 'boolean') controller.enableRotate = baseController.enableRotate;
         if (baseController.rotateEventTypes !== undefined) controller.rotateEventTypes = baseController.rotateEventTypes;
         if (baseController.lookEventTypes !== undefined) controller.lookEventTypes = baseController.lookEventTypes;
-        viewer.scene.requestRender();
+        requestViewerRender(viewer);
       }
       appliedCameraPerspectiveRef.current = cameraPerspectiveId;
       return;
@@ -2975,7 +2974,7 @@ export function CesiumViewer() {
     controller.lookEventTypes = CameraEventType.LEFT_DRAG;
 
     if (appliedCameraPerspectiveRef.current === cameraPerspectiveId) {
-      viewer.scene.requestRender();
+      requestViewerRender(viewer);
       return;
     }
 
@@ -3072,7 +3071,7 @@ export function CesiumViewer() {
         if (typeof base.frustum.far === 'number') camera.frustum.far = base.frustum.far;
         if (typeof base.frustum.fov === 'number') camera.frustum.fov = base.frustum.fov;
       }
-      scene.requestRender();
+      requestViewerRender(viewer);
     };
 
     const update = () => {
@@ -3111,7 +3110,7 @@ export function CesiumViewer() {
         }
       }
 
-      scene.requestRender();
+      requestViewerRender(viewer);
     };
 
     update();
@@ -3184,7 +3183,7 @@ export function CesiumViewer() {
       }
     }
 
-    if (didChange) scene.requestRender();
+    if (didChange) requestViewerRender(viewer);
   }, [lowModeEnabled, viewModeRoute.viewModeId, viewer]);
 
   useEffect(() => {
@@ -3811,7 +3810,7 @@ export function CesiumViewer() {
       didReorder = true;
     }
     if (didReorder) {
-      viewer.scene.requestRender();
+      requestViewerRender(viewer);
     }
   }, [apiBaseUrl, cloudTimeKey, layers, timeKey, viewer]);
 

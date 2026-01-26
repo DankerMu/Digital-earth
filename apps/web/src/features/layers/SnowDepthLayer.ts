@@ -12,6 +12,7 @@ import { alignToMostRecentHourTimeKey, normalizeSnowDepthVariable } from './clda
 import { buildCldasTileUrlTemplate } from './layersApi';
 import { attachTileCacheToProvider } from './tilePrefetch';
 import type { SnowDepthLayerParams } from './types';
+import { isCesiumDestroyed, requestViewerRender } from '../../lib/cesiumSafe';
 
 const CLDAS_SNOW_DEPTH_GLOBAL_MAX_TILE_LEVEL = 6;
 const CLDAS_SNOW_DEPTH_EVENT_MIN_TILE_LEVEL = 8;
@@ -65,11 +66,17 @@ export class SnowDepthLayer {
 
   destroy(): void {
     if (!this.imageryLayer) return;
-    this.viewer.imageryLayers.remove(this.imageryLayer, true);
+    if (!isCesiumDestroyed(this.viewer)) {
+      try {
+        this.viewer.imageryLayers.remove(this.imageryLayer, true);
+      } catch {
+        // ignore teardown errors
+      }
+    }
     this.imageryLayer = null;
     this.urlTemplate = null;
     this.coverageKey = null;
-    this.viewer.scene.requestRender();
+    requestViewerRender(this.viewer);
   }
 
   private createUrlTemplate(params: SnowDepthLayerParams): { template: string; frameKey: string } {
@@ -92,6 +99,8 @@ export class SnowDepthLayer {
   }
 
   private sync(options: { forceRecreate?: boolean } = {}): void {
+    if (isCesiumDestroyed(this.viewer)) return;
+
     const { template: nextTemplate, frameKey } = this.createUrlTemplate(this.current);
     const nextCoverage = this.nextCoverageKey(this.current);
     const shouldRecreate =
@@ -102,7 +111,11 @@ export class SnowDepthLayer {
 
     if (shouldRecreate) {
       if (this.imageryLayer) {
-        this.viewer.imageryLayers.remove(this.imageryLayer, true);
+        try {
+          this.viewer.imageryLayers.remove(this.imageryLayer, true);
+        } catch {
+          // ignore teardown errors
+        }
       }
 
       const rectangle = normalizeRectangle(this.current.rectangle);
@@ -129,7 +142,14 @@ export class SnowDepthLayer {
         alpha: clampOpacity(this.current.opacity),
         show: this.current.visible,
       });
-      this.viewer.imageryLayers.add(this.imageryLayer);
+      try {
+        this.viewer.imageryLayers.add(this.imageryLayer);
+      } catch {
+        this.imageryLayer = null;
+        this.urlTemplate = null;
+        this.coverageKey = null;
+        return;
+      }
       this.imageryLayer.minificationFilter = TextureMinificationFilter.NEAREST;
       this.imageryLayer.magnificationFilter = TextureMagnificationFilter.NEAREST;
       this.urlTemplate = nextTemplate;
@@ -140,6 +160,6 @@ export class SnowDepthLayer {
 
     this.imageryLayer.alpha = clampOpacity(this.current.opacity);
     this.imageryLayer.show = this.current.visible;
-    this.viewer.scene.requestRender();
+    requestViewerRender(this.viewer);
   }
 }

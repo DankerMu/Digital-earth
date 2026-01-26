@@ -10,6 +10,7 @@ import {
 import { buildPrecipitationTileUrlTemplate } from './layersApi';
 import { attachTileCacheToProvider } from './tilePrefetch';
 import type { PrecipitationLayerParams } from './types';
+import { isCesiumDestroyed, requestViewerRender } from '../../lib/cesiumSafe';
 
 const MAX_TILE_LEVEL = 22;
 
@@ -53,10 +54,16 @@ export class PrecipitationLayer {
 
   destroy(): void {
     if (!this.imageryLayer) return;
-    this.viewer.imageryLayers.remove(this.imageryLayer, true);
+    if (!isCesiumDestroyed(this.viewer)) {
+      try {
+        this.viewer.imageryLayers.remove(this.imageryLayer, true);
+      } catch {
+        // ignore teardown errors
+      }
+    }
     this.imageryLayer = null;
     this.urlTemplate = null;
-    this.viewer.scene.requestRender();
+    requestViewerRender(this.viewer);
   }
 
   private createUrlTemplate(params: PrecipitationLayerParams): string {
@@ -68,6 +75,8 @@ export class PrecipitationLayer {
   }
 
   private sync(options: { forceRecreate?: boolean } = {}): void {
+    if (isCesiumDestroyed(this.viewer)) return;
+
     const nextTemplate = this.createUrlTemplate(this.current);
     const shouldRecreate =
       options.forceRecreate ||
@@ -76,7 +85,11 @@ export class PrecipitationLayer {
 
     if (shouldRecreate) {
       if (this.imageryLayer) {
-        this.viewer.imageryLayers.remove(this.imageryLayer, true);
+        try {
+          this.viewer.imageryLayers.remove(this.imageryLayer, true);
+        } catch {
+          // ignore teardown errors
+        }
       }
 
       const provider = new UrlTemplateImageryProvider({
@@ -96,7 +109,13 @@ export class PrecipitationLayer {
         alpha: clampOpacity(this.current.opacity),
         show: this.current.visible,
       });
-      this.viewer.imageryLayers.add(this.imageryLayer);
+      try {
+        this.viewer.imageryLayers.add(this.imageryLayer);
+      } catch {
+        this.imageryLayer = null;
+        this.urlTemplate = null;
+        return;
+      }
       this.imageryLayer.minificationFilter = TextureMinificationFilter.NEAREST;
       this.imageryLayer.magnificationFilter = TextureMagnificationFilter.NEAREST;
       this.urlTemplate = nextTemplate;
@@ -106,6 +125,6 @@ export class PrecipitationLayer {
 
     this.imageryLayer.alpha = clampOpacity(this.current.opacity);
     this.imageryLayer.show = this.current.visible;
-    this.viewer.scene.requestRender();
+    requestViewerRender(this.viewer);
   }
 }

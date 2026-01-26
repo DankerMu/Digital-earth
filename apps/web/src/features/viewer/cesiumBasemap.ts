@@ -9,6 +9,7 @@ import {
 } from 'cesium';
 
 import { type BasemapConfig, type IonBasemap, type UrlTemplateBasemap, type WmtsBasemap } from '../../config/basemaps';
+import { isCesiumDestroyed, requestViewerRender } from '../../lib/cesiumSafe';
 
 export function normalizeTmsTemplate(
   urlTemplate: string,
@@ -63,13 +64,15 @@ export async function createImageryProviderForBasemapAsync(
 }
 
 export function setViewerImageryProvider(viewer: Viewer, provider: ImageryProvider): void {
+  if (isCesiumDestroyed(viewer)) return;
+
   const baseLayer = viewer.imageryLayers.get(0);
   if (baseLayer) {
     viewer.imageryLayers.remove(baseLayer, true);
   }
 
   viewer.imageryLayers.addImageryProvider(provider, 0);
-  viewer.scene.requestRender();
+  requestViewerRender(viewer);
 }
 
 export async function setViewerBasemap(viewer: Viewer, basemap: BasemapConfig): Promise<boolean> {
