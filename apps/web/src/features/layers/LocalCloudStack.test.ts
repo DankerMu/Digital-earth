@@ -67,7 +67,7 @@ import {
 import type { LayerConfig } from '../../state/layerManager';
 import { LocalCloudStack } from './LocalCloudStack';
 
-function makeViewer() {
+function makeViewer(options: { cameraHeightMeters?: number } = {}) {
   const primitives = {
     add: vi.fn(),
     remove: vi.fn(),
@@ -78,6 +78,9 @@ function makeViewer() {
       primitives,
       requestRender: vi.fn(),
     },
+    ...(typeof options.cameraHeightMeters === 'number'
+      ? { camera: { positionCartographic: { height: options.cameraHeightMeters } } }
+      : {}),
   };
 }
 
@@ -157,6 +160,38 @@ describe('LocalCloudStack', () => {
 
     expect(vi.mocked(Color.WHITE.withAlpha)).toHaveBeenCalledWith(0.5);
     expect(viewer.scene.requestRender).toHaveBeenCalledTimes(1);
+  });
+
+  it('increases tile zoom/radius near ground for extra detail', () => {
+    const viewer = makeViewer({ cameraHeightMeters: 2000 });
+    const stack = new LocalCloudStack(viewer as never);
+
+    stack.update({
+      enabled: true,
+      apiBaseUrl: 'http://api.test',
+      timeKey: '2025-12-22T00:00:00Z',
+      lon: 180,
+      lat: 90,
+      surfaceHeightMeters: 0,
+      layers: [
+        {
+          id: 'cloud-1',
+          type: 'cloud',
+          variable: 'tcc',
+          opacity: 0.75,
+          visible: true,
+          zIndex: 0,
+        },
+      ] satisfies LayerConfig[],
+    });
+
+    expect(viewer.scene.primitives.add).toHaveBeenCalledTimes(25);
+
+    const imageUrls = vi
+      .mocked(Material.fromType)
+      .mock.calls.map((call) => (call[1] as { image?: string }).image ?? '');
+
+    expect(imageUrls.some((url) => url.includes('/10/'))).toBe(true);
   });
 
   it('reuses existing primitives when the tile key is unchanged and updates opacity via uniforms', () => {
@@ -432,4 +467,3 @@ describe('LocalCloudStack', () => {
     expect(viewer.scene.requestRender).toHaveBeenCalledTimes(1);
   });
 });
-

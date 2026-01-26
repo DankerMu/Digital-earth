@@ -106,6 +106,7 @@ const CLOUD_LAYER_FRAME_STEP_MS = 60 * 60 * 1000;
 const WEATHER_SAMPLE_THROTTLE_MS = 750;
 const WEATHER_SAMPLE_ZOOM = 8;
 const WIND_VECTOR_THROTTLE_MS = 800;
+const LOCAL_CLOUD_STACK_UPDATE_THROTTLE_MS = 200;
 const WIND_ARROWS_MAX_COUNT = 500;
 const WIND_VECTOR_CACHE_MAX_ENTRIES = 20;
 const EVENT_ANALYTICS_LIST_LIMIT = 25;
@@ -849,6 +850,12 @@ export function CesiumViewer() {
   const infoPanelCollapsed = useLayoutPanelsStore((state) => state.infoPanelCollapsed);
   const osmBuildingsEnabled = useOsmBuildingsStore((state) => state.enabled);
   const cameraPerspectiveId = useCameraPerspectiveStore((state) => state.cameraPerspectiveId);
+  const localCloudSurfaceHeightMeters =
+    viewModeRoute.viewModeId === 'local' &&
+    typeof viewModeRoute.heightMeters === 'number' &&
+    Number.isFinite(viewModeRoute.heightMeters)
+      ? viewModeRoute.heightMeters
+      : 0;
   const appliedBasemapIdRef = useRef<BasemapId | null>(null);
   const didApplySceneModeRef = useRef(false);
   const localEntryKeyRef = useRef<string | null>(null);
@@ -3560,7 +3567,7 @@ export function CesiumViewer() {
             ? String(Math.round(config.level))
             : undefined,
         opacity: config.opacity,
-        visible: config.visible,
+        visible: config.visible && viewModeRoute.viewModeId !== 'local',
         zIndex: config.zIndex,
       };
 
@@ -3577,34 +3584,86 @@ export function CesiumViewer() {
       layer.destroy();
       existing.delete(id);
     }
-  }, [apiBaseUrl, cloudTimeKey, layers, viewer]);
+  }, [apiBaseUrl, cloudTimeKey, layers, viewModeRoute.viewModeId, viewer]);
 
   useEffect(() => {
     const stack = localCloudStackRef.current;
     if (!viewer || !stack) return;
 
-    const enabled =
-      !lowModeEnabled && viewModeRoute.viewModeId === 'local' && cameraPerspectiveId !== 'free';
+    const enabled = !lowModeEnabled && viewModeRoute.viewModeId === 'local';
 
     const lon = viewModeRoute.viewModeId === 'local' ? viewModeRoute.lon : Number.NaN;
     const lat = viewModeRoute.viewModeId === 'local' ? viewModeRoute.lat : Number.NaN;
-    const surfaceHeightMeters =
-      viewModeRoute.viewModeId === 'local' &&
-      typeof viewModeRoute.heightMeters === 'number' &&
-      Number.isFinite(viewModeRoute.heightMeters)
-        ? viewModeRoute.heightMeters
-        : 0;
+    const surfaceHeightMeters = viewModeRoute.viewModeId === 'local' ? localCloudSurfaceHeightMeters : 0;
 
-    stack.update({
-      enabled,
-      apiBaseUrl,
-      timeKey: cloudTimeKey,
-      lon,
-      lat,
-      surfaceHeightMeters,
-      layers,
-    });
-  }, [apiBaseUrl, cameraPerspectiveId, cloudTimeKey, layers, lowModeEnabled, viewModeRoute, viewer]);
+    const runUpdate = () => {
+      stack.update({
+        enabled,
+        apiBaseUrl,
+        timeKey: cloudTimeKey,
+        lon,
+        lat,
+        surfaceHeightMeters,
+        layers,
+      });
+    };
+
+    runUpdate();
+
+    if (!enabled) return;
+
+    let timeoutId: number | null = null;
+    let lastUpdateAt = 0;
+    let pending = false;
+
+    const clearTimer = () => {
+      if (timeoutId == null) return;
+      window.clearTimeout(timeoutId);
+      timeoutId = null;
+    };
+
+    const scheduleUpdate = () => {
+      const now = Date.now();
+      const elapsed = now - lastUpdateAt;
+
+      if (elapsed >= LOCAL_CLOUD_STACK_UPDATE_THROTTLE_MS && timeoutId == null) {
+        lastUpdateAt = now;
+        runUpdate();
+        return;
+      }
+
+      pending = true;
+      if (timeoutId != null) return;
+      timeoutId = window.setTimeout(() => {
+        timeoutId = null;
+        if (!pending) return;
+        pending = false;
+        lastUpdateAt = Date.now();
+        runUpdate();
+      }, Math.max(0, LOCAL_CLOUD_STACK_UPDATE_THROTTLE_MS - elapsed));
+    };
+
+    const runUpdateImmediate = () => {
+      clearTimer();
+      pending = false;
+      lastUpdateAt = Date.now();
+      runUpdate();
+    };
+
+    const camera = viewer.camera as unknown as {
+      changed?: { addEventListener?: (handler: () => void) => void; removeEventListener?: (handler: () => void) => void };
+      moveEnd?: { addEventListener?: (handler: () => void) => void; removeEventListener?: (handler: () => void) => void };
+    };
+
+    camera.changed?.addEventListener?.(scheduleUpdate);
+    camera.moveEnd?.addEventListener?.(runUpdateImmediate);
+
+    return () => {
+      camera.changed?.removeEventListener?.(scheduleUpdate);
+      camera.moveEnd?.removeEventListener?.(runUpdateImmediate);
+      clearTimer();
+    };
+  }, [apiBaseUrl, cloudTimeKey, layers, localCloudSurfaceHeightMeters, lowModeEnabled, viewModeRoute, viewer]);
 
   useEffect(() => {
     if (!viewer) return;
