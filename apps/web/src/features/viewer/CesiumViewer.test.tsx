@@ -155,7 +155,13 @@ vi.mock('cesium', () => {
   };
 
   const JulianDate = {
-    fromIso8601: vi.fn((iso: string) => ({ iso })),
+    fromIso8601: vi.fn((iso: string, result?: { iso?: string } | undefined) => {
+      if (result && typeof result === 'object') {
+        result.iso = iso;
+        return result;
+      }
+      return { iso };
+    }),
   };
 
   const createWorldTerrainAsync = vi.fn(async () => ({ terrain: true }));
@@ -583,11 +589,17 @@ describe('CesiumViewer', () => {
       cesium as unknown as {
         __mocks: {
           getViewer: () => {
+            clock?: { currentTime?: unknown; shouldAnimate?: boolean };
             scene: { screenSpaceCameraController: Record<string, unknown> };
           };
         };
       }
     ).__mocks.getViewer();
+
+    if (viewer.clock) {
+      viewer.clock.currentTime = { iso: DEFAULT_TIME_KEY };
+      viewer.clock.shouldAnimate = true;
+    }
 
     const controller = viewer.scene.screenSpaceCameraController as Record<string, unknown>;
     controller.minimumZoomDistance = 0;
@@ -726,8 +738,38 @@ describe('CesiumViewer', () => {
       expect(viewer.clock.currentTime).toEqual({ iso: '2026-01-01T12:00:00Z' });
     });
 
-    expect(vi.mocked(JulianDate.fromIso8601)).toHaveBeenCalledWith('2026-01-01T12:00:00Z');
+    expect(vi.mocked(JulianDate.fromIso8601)).toHaveBeenCalledWith(
+      '2026-01-01T12:00:00Z',
+      viewer.clock.currentTime,
+    );
     expect(viewer.clock.shouldAnimate).toBe(false);
+  });
+
+  it('warns but keeps rendering when timeKey parsing fails', async () => {
+    const invalidTimeKey = 'not-a-time';
+    useTimeStore.setState({ validTimeKey: invalidTimeKey });
+
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    try {
+      vi.mocked(JulianDate.fromIso8601).mockImplementationOnce(() => {
+        throw new Error('Invalid ISO 8601');
+      });
+
+      render(<CesiumViewer />);
+
+      await waitFor(() => expect(vi.mocked(Viewer)).toHaveBeenCalledTimes(1));
+      expect(screen.getByTestId('cesium-container')).toBeInTheDocument();
+
+      await waitFor(() =>
+        expect(warnSpy).toHaveBeenCalledWith(
+          '[Digital Earth] failed to parse timeKey for Cesium clock',
+          expect.objectContaining({ timeKey: invalidTimeKey, error: expect.any(Error) }),
+        ),
+      );
+    } finally {
+      warnSpy.mockRestore();
+    }
   });
 
   it('enables globe lighting when real lighting is enabled', async () => {

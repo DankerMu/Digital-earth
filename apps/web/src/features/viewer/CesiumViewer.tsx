@@ -1370,9 +1370,19 @@ export function CesiumViewer() {
 
     const clock = (viewer as unknown as { clock?: { currentTime?: unknown; shouldAnimate?: boolean } }).clock;
     if (clock) {
-      try {
-        clock.currentTime = JulianDate.fromIso8601(timeKey);
+      if (clock.shouldAnimate) {
         clock.shouldAnimate = false;
+        shouldRequestRender = true;
+      }
+
+      try {
+        // Intentionally sync Cesium lighting (sun position) with `timeKey` (user-selected time),
+        // not `localTimeKey` which may advance during animated layers (e.g. cloud frame playback).
+        if (clock.currentTime && typeof clock.currentTime === 'object') {
+          clock.currentTime = JulianDate.fromIso8601(timeKey, clock.currentTime as JulianDate);
+        } else {
+          clock.currentTime = JulianDate.fromIso8601(timeKey);
+        }
         shouldRequestRender = true;
       } catch (error: unknown) {
         console.warn('[Digital Earth] failed to parse timeKey for Cesium clock', { timeKey, error });

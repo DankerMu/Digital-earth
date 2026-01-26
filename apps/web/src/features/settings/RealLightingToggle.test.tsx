@@ -41,6 +41,5 @@ test('disables real lighting toggle in low performance mode', () => {
 
   const statusId = checkbox.getAttribute('aria-describedby');
   expect(statusId).toBeTruthy();
-  expect(document.getElementById(statusId!)).toHaveTextContent('Low 模式已关闭');
+  expect(document.getElementById(statusId!)).toHaveTextContent('Low 模式下禁用');
 });
-

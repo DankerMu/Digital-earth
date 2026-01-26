@@ -259,7 +259,7 @@ export function InfoPanel({ collapsed, onToggleCollapsed }: InfoPanelProps) {
                   <RealLightingToggle />
                   <OsmBuildingsToggle />
                   <div className="text-xs text-slate-400">
-                    Low 模式会减少粒子与风矢密度，并关闭真实光照/体云/建筑（如有），以提升低性能设备体验。
+                    真实光照默认开启，开启后会增加渲染开销；如出现卡顿可随时关闭。Low 模式会减少粒子与风矢密度，并自动禁用真实光照/体云/建筑（如有），以提升低性能设备体验。
                   </div>
                 </div>
               </div>

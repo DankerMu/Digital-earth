@@ -14,7 +14,7 @@ export default function RealLightingToggle() {
   const inputId = useId();
   const statusId = useId();
 
-  const statusLabel = lowModeEnabled ? 'Low 模式已关闭' : effectiveEnabled ? '开启' : '关闭';
+  const statusLabel = lowModeEnabled ? 'Low 模式下禁用' : effectiveEnabled ? '开启' : '关闭';
 
   return (
     <div className="flex items-center gap-3 text-sm text-slate-300">
@@ -38,4 +38,3 @@ export default function RealLightingToggle() {
     </div>
   );
 }
-
