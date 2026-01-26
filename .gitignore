@@ -1,5 +1,6 @@
 # Project specific
 Data/
+apps/web/public/config.dev.json
 
 # OS
 .DS_Store

@@ -19,5 +19,7 @@ RUN pnpm --filter web build
 # Stage 2: Serve
 FROM nginx:1.25.4-alpine
 COPY --from=builder /app/apps/web/dist /usr/share/nginx/html
+COPY deploy/dockerfiles/web-entrypoint.sh /web-entrypoint.sh
+RUN chmod +x /web-entrypoint.sh
 EXPOSE 80
 CMD ["nginx", "-g", "daemon off;"]

@@ -282,9 +282,21 @@ Digital-earth/
 
 相关文件：
 
-- Compose：`deploy/docker-compose.base.yml`、`deploy/docker-compose.staging.yml`、`deploy/docker-compose.prod.yml`、`deploy/docker-compose.ci.yml`
+- Compose：`deploy/docker-compose.base.yml`、`deploy/docker-compose.local.yml`、`deploy/docker-compose.staging.yml`、`deploy/docker-compose.prod.yml`、`deploy/docker-compose.ci.yml`
 - Dockerfile：`deploy/dockerfiles/web.Dockerfile`、`deploy/dockerfiles/api.Dockerfile`、`deploy/dockerfiles/pipeline.Dockerfile`
 - Nginx：`deploy/nginx/nginx.conf`、`deploy/nginx/sites-enabled/app.conf`
+
+**本地开发（从源码构建 + Compose）**
+
+```bash
+# 可选：Cesium ion Web Token（会暴露到浏览器侧，请遵循 docs/cesium-token-security.md）
+export DIGITAL_EARTH_WEB_CESIUM_ION_ACCESS_TOKEN="<your-web-token>"
+
+docker compose -f deploy/docker-compose.local.yml up --build
+```
+
+> Web 容器会在启动时通过 `deploy/dockerfiles/web-entrypoint.sh` 将 `apps/web/public/config.template.json` 渲染为运行时 `/config.json`；
+> 未设置 `DIGITAL_EARTH_WEB_CESIUM_ION_ACCESS_TOKEN` 时默认注入空字符串，不影响启动。
 
 **本地构建 + Compose（示例）**
 
