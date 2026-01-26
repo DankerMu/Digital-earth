@@ -569,4 +569,36 @@ describe('LocalCloudStack', () => {
       }),
     );
   });
+
+  it('does not throw when viewer is missing during teardown', () => {
+    const viewer = makeViewer();
+    const stack = new LocalCloudStack(viewer as never);
+
+    stack.update({
+      enabled: true,
+      humanModeEnabled: false,
+      apiBaseUrl: 'http://api.test',
+      timeKey: '2025-12-22T00:00:00Z',
+      lon: 180,
+      lat: 90,
+      surfaceHeightMeters: 10,
+      layers: [
+        {
+          id: 'cloud-1',
+          type: 'cloud',
+          variable: 'tcc',
+          opacity: 1,
+          visible: true,
+          zIndex: 0,
+        },
+      ] satisfies LayerConfig[],
+    });
+
+    expect(viewer.scene.requestRender).toHaveBeenCalledTimes(1);
+
+    (stack as unknown as { viewer?: unknown }).viewer = undefined;
+
+    expect(() => stack.destroy()).not.toThrow();
+    expect(viewer.scene.requestRender).toHaveBeenCalledTimes(1);
+  });
 });

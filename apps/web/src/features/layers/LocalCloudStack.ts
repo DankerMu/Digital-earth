@@ -250,16 +250,41 @@ export type LocalCloudStackUpdate = {
 };
 
 export class LocalCloudStack {
-  private readonly viewer: Viewer;
-  private readonly primitives: PrimitiveCollection;
+  private viewer: Viewer | null;
+  private primitives: PrimitiveCollection | null;
   private groups = new Map<string, CloudGroup>();
 
-  constructor(viewer: Viewer) {
-    this.viewer = viewer;
-    this.primitives = viewer.scene.primitives as unknown as PrimitiveCollection;
+  constructor(viewer: Viewer | null | undefined) {
+    this.viewer = viewer ?? null;
+    const scenePrimitives = (viewer as unknown as { scene?: { primitives?: unknown } } | null)?.scene?.primitives;
+    this.primitives = scenePrimitives ? (scenePrimitives as PrimitiveCollection) : null;
+  }
+
+  private requestRender(): void {
+    const scene = (this.viewer as unknown as { scene?: { requestRender?: () => void } } | null)?.scene;
+    try {
+      scene?.requestRender?.();
+    } catch {
+      // ignore render requests during teardown
+    }
+  }
+
+  private removePrimitive(primitive: Primitive): void {
+    if (!this.primitives) return;
+    try {
+      this.primitives.remove(primitive);
+    } catch {
+      // ignore teardown errors
+    }
   }
 
   update(update: LocalCloudStackUpdate): void {
+    const viewer = this.viewer;
+    const primitives = this.primitives;
+    if (!viewer || !primitives) {
+      this.clear();
+      return;
+    }
     if (!update.enabled) {
       this.clear();
       return;
@@ -284,7 +309,7 @@ export class LocalCloudStack {
       return;
     }
 
-    const cameraHeightMeters = getViewerCameraHeightMeters(this.viewer);
+    const cameraHeightMeters = getViewerCameraHeightMeters(viewer);
     const heightAboveSurfaceMeters =
       cameraHeightMeters == null
         ? null
@@ -313,7 +338,7 @@ export class LocalCloudStack {
       const existing = this.groups.get(layer.id);
 
       if (!existing || existing.key !== key) {
-        existing?.records.forEach((record) => this.primitives.remove(record.primitive));
+        existing?.records.forEach((record) => this.removePrimitive(record.primitive));
         const records: PrimitiveRecord[] = [];
 
         const template = buildCloudTileUrlTemplate({
@@ -335,7 +360,7 @@ export class LocalCloudStack {
               vertexFormat: EllipsoidSurfaceAppearance.VERTEX_FORMAT,
             });
 
-            const requestRender = () => this.viewer.scene.requestRender();
+            const requestRender = () => this.requestRender();
             const image = createCloudTileImage({
               url: fillUrlTemplate(template, { z: zoom, x, y }),
               requestRender,
@@ -370,7 +395,7 @@ export class LocalCloudStack {
               show: true,
             });
 
-            this.primitives.add(primitive);
+            primitives.add(primitive);
             records.push({ primitive, material });
           }
         }
@@ -387,25 +412,27 @@ export class LocalCloudStack {
 
     for (const [id, group] of this.groups.entries()) {
       if (nextGroupIds.has(id)) continue;
-      for (const record of group.records) this.primitives.remove(record.primitive);
+      for (const record of group.records) this.removePrimitive(record.primitive);
       this.groups.delete(id);
     }
 
-    this.viewer.scene.requestRender();
+    this.requestRender();
   }
 
   destroy(): void {
     this.clear();
+    this.viewer = null;
+    this.primitives = null;
   }
 
   private clear(): void {
     if (this.groups.size === 0) return;
     for (const group of this.groups.values()) {
       for (const record of group.records) {
-        this.primitives.remove(record.primitive);
+        this.removePrimitive(record.primitive);
       }
     }
     this.groups.clear();
-    this.viewer.scene.requestRender();
+    this.requestRender();
   }
 }
