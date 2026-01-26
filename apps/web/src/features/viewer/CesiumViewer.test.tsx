@@ -1886,6 +1886,118 @@ describe('CesiumViewer', () => {
     await waitFor(() => expect(screen.queryByLabelText('Sampling data')).not.toBeInTheDocument());
   });
 
+  it('moves camera and updates local route on map click in human ground mode', async () => {
+    useViewModeStore.setState({
+      route: { viewModeId: 'local', lat: 10, lon: 20, heightMeters: 100 },
+      history: [],
+      saved: {},
+    });
+    useCameraPerspectiveStore.setState({ cameraPerspectiveId: 'human' });
+    useSceneModeStore.setState({ sceneModeId: '3d' });
+
+    const cesium = await import('cesium');
+    (
+      cesium as unknown as {
+        Cartographic: { fromCartesian: ReturnType<typeof vi.fn> };
+        __mocks: { triggerLeftClick: (movement: { position?: unknown }) => void };
+      }
+    ).Cartographic.fromCartesian.mockReturnValue({
+      longitude: 120,
+      latitude: 30,
+      height: 100,
+    });
+
+    render(<CesiumViewer />);
+    await waitFor(() => expect(vi.mocked(Viewer)).toHaveBeenCalledTimes(1));
+
+    const viewer = vi.mocked(Viewer).mock.results[0].value;
+
+    await waitFor(() =>
+      expect(viewer.camera.flyTo).toHaveBeenCalledWith(expect.objectContaining({ duration: 1.1 })),
+    );
+
+    viewer.camera.flyTo.mockClear();
+    vi.mocked(Cartesian3.fromDegrees).mockClear();
+
+    act(() => {
+      (
+        cesium as unknown as {
+          __mocks: { triggerLeftClick: (movement: { position?: unknown }) => void };
+        }
+      ).__mocks.triggerLeftClick({ position: { x: 12, y: 34 } });
+    });
+
+    await waitFor(() => expect(viewer.camera.flyTo).toHaveBeenCalledTimes(1));
+    expect(viewer.camera.flyTo).toHaveBeenCalledWith(
+      expect.objectContaining({
+        duration: 0.8,
+        orientation: {
+          heading: 1,
+          pitch: 0.5,
+          roll: 0,
+        },
+      }),
+    );
+
+    const degreesCall = vi.mocked(Cartesian3.fromDegrees).mock.calls[0];
+    expect(degreesCall?.[0]).toBe(120);
+    expect(degreesCall?.[1]).toBe(30);
+    expect(Number(degreesCall?.[2])).toBeCloseTo(101.7);
+
+    expect(useViewModeStore.getState().route).toEqual({
+      viewModeId: 'local',
+      lat: 30,
+      lon: 120,
+      heightMeters: 100,
+    });
+    expect(screen.queryByLabelText('Sampling data')).not.toBeInTheDocument();
+  });
+
+  it('ignores map click in human ground mode when pickLocation fails', async () => {
+    useViewModeStore.setState({
+      route: { viewModeId: 'local', lat: 10, lon: 20, heightMeters: 100 },
+      history: [],
+      saved: {},
+    });
+    useCameraPerspectiveStore.setState({ cameraPerspectiveId: 'human' });
+    useSceneModeStore.setState({ sceneModeId: '3d' });
+
+    const cesium = await import('cesium');
+
+    render(<CesiumViewer />);
+    await waitFor(() => expect(vi.mocked(Viewer)).toHaveBeenCalledTimes(1));
+
+    const viewer = vi.mocked(Viewer).mock.results[0].value;
+
+    await waitFor(() =>
+      expect(viewer.camera.flyTo).toHaveBeenCalledWith(expect.objectContaining({ duration: 1.1 })),
+    );
+
+    viewer.camera.flyTo.mockClear();
+
+    vi.mocked(viewer.scene.pickPosition).mockReturnValueOnce(null);
+    vi.mocked(viewer.camera.pickEllipsoid).mockReturnValueOnce(null);
+
+    act(() => {
+      (
+        cesium as unknown as {
+          __mocks: { triggerLeftClick: (movement: { position?: unknown }) => void };
+        }
+      ).__mocks.triggerLeftClick({ position: { x: 12, y: 34 } });
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(viewer.camera.flyTo).not.toHaveBeenCalled();
+    expect(useViewModeStore.getState().route).toEqual({
+      viewModeId: 'local',
+      lat: 10,
+      lon: 20,
+      heightMeters: 100,
+    });
+    expect(screen.queryByLabelText('Sampling data')).not.toBeInTheDocument();
+  });
+
   it('enters local mode and flies camera on ctrl+click', async () => {
     useLayerManagerStore.setState({
       layers: [
