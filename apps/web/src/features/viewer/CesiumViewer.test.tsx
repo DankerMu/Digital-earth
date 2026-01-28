@@ -2320,6 +2320,81 @@ describe('CesiumViewer', () => {
     );
   });
 
+  it('exits layerGlobal mode when the selected layer is hidden', async () => {
+    useLayerManagerStore.setState({
+      layers: [
+        {
+          id: 'cloud',
+          type: 'cloud',
+          variable: 'tcc',
+          opacity: 0.8,
+          visible: true,
+          zIndex: 10,
+        },
+      ],
+    });
+    useViewModeStore.setState({
+      route: { viewModeId: 'layerGlobal', layerId: 'cloud' },
+      history: [{ viewModeId: 'local', lat: 30, lon: 120 }],
+      saved: {},
+    });
+
+    render(<CesiumViewer />);
+
+    await waitFor(() => expect(vi.mocked(Viewer)).toHaveBeenCalledTimes(1));
+    const viewer = vi.mocked(Viewer).mock.results[0].value;
+
+    await waitFor(() => expect(viewer.camera.flyTo).toHaveBeenCalled());
+
+    act(() => {
+      useLayerManagerStore.getState().setLayerVisible('cloud', false);
+    });
+
+    await waitFor(() => {
+      expect(useViewModeStore.getState().route).toEqual({ viewModeId: 'global' });
+    });
+
+    expect(useLayerManagerStore.getState().layers[0]?.visible).toBe(false);
+  });
+
+  it('pops history when leaving layerGlobal back to global', async () => {
+    useLayerManagerStore.setState({
+      layers: [
+        {
+          id: 'cloud',
+          type: 'cloud',
+          variable: 'tcc',
+          opacity: 0.8,
+          visible: true,
+          zIndex: 10,
+        },
+      ],
+    });
+    useViewModeStore.setState({
+      route: { viewModeId: 'layerGlobal', layerId: 'cloud' },
+      history: [{ viewModeId: 'global' }],
+      saved: {},
+    });
+
+    render(<CesiumViewer />);
+
+    await waitFor(() => expect(vi.mocked(Viewer)).toHaveBeenCalledTimes(1));
+    const viewer = vi.mocked(Viewer).mock.results[0].value;
+
+    await waitFor(() => expect(viewer.camera.flyTo).toHaveBeenCalled());
+
+    act(() => {
+      useLayerManagerStore.getState().setLayerVisible('cloud', false);
+    });
+
+    await waitFor(() => {
+      expect(useViewModeStore.getState().route).toEqual({ viewModeId: 'global' });
+    });
+
+    expect(useViewModeStore.getState().history).toEqual([]);
+    expect(useLayerManagerStore.getState().layers[0]?.visible).toBe(false);
+  });
+
   it.each(['2d', 'columbus'] as const)(
     'does not override the globe ellipsoid in %s scene mode',
     async (sceneModeId) => {

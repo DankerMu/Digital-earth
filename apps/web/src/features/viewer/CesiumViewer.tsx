@@ -2902,12 +2902,26 @@ export function CesiumViewer() {
       ? LAYER_GLOBAL_SHELL_HEIGHT_METERS_BY_LAYER_TYPE[targetLayer.type]
       : LAYER_GLOBAL_SHELL_HEIGHT_METERS_BY_LAYER_TYPE.cloud;
 
+    const key = `${sceneModeId}:${viewModeRoute.layerId}:${shellHeightMeters}:${targetLayer ? 'present' : 'missing'}`;
+    const didEnterLayerGlobal = layerGlobalEntryKeyRef.current !== key;
+
     if (targetLayer && !targetLayer.visible) {
-      useLayerManagerStore.getState().setLayerVisible(targetLayer.id, true);
+      if (didEnterLayerGlobal) {
+        useLayerManagerStore.getState().setLayerVisible(targetLayer.id, true);
+      } else {
+        const viewMode = useViewModeStore.getState();
+        const previous = viewMode.history.at(-1);
+
+        if (previous?.viewModeId === 'global') {
+          viewMode.goBack();
+        } else {
+          viewMode.replaceRoute({ viewModeId: 'global' });
+        }
+        return;
+      }
     }
 
-    const key = `${sceneModeId}:${viewModeRoute.layerId}:${shellHeightMeters}:${targetLayer ? 'present' : 'missing'}`;
-    if (layerGlobalEntryKeyRef.current === key) return;
+    if (!didEnterLayerGlobal) return;
     layerGlobalEntryKeyRef.current = key;
 
     const cartographic = viewer.camera.positionCartographic;
