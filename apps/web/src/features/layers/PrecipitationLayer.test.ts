@@ -4,7 +4,27 @@ vi.mock('cesium', () => {
   return {
     GeographicTilingScheme: vi.fn((options?: unknown) => ({ kind: 'geographic', options })),
     UrlTemplateImageryProvider: vi.fn(function (options: unknown) {
-      return { kind: 'url-template', options };
+      const listeners = new Set<(error: unknown) => void>();
+
+      return {
+        kind: 'url-template',
+        options,
+        errorEvent: {
+          addEventListener: vi.fn((listener: (error: unknown) => void) => {
+            listeners.add(listener);
+          }),
+          removeEventListener: vi.fn((listener: (error: unknown) => void) => {
+            listeners.delete(listener);
+          }),
+          __mocks: {
+            trigger: (error: unknown) => {
+              for (const listener of listeners) {
+                listener(error);
+              }
+            },
+          },
+        },
+      };
     }),
     ImageryLayer: vi.fn(function (provider: unknown, options: unknown) {
       return { kind: 'imagery-layer', provider, ...(options as Record<string, unknown>) };
@@ -72,6 +92,12 @@ describe('PrecipitationLayer', () => {
     )?.url;
     expect(providerUrl).toContain('/precip_amount/');
     expect(providerUrl).toContain('threshold=1.25');
+
+    const provider = vi.mocked(UrlTemplateImageryProvider).mock.results[0]?.value as {
+      errorEvent?: { addEventListener?: ReturnType<typeof vi.fn> };
+    };
+    expect(provider.errorEvent?.addEventListener).toHaveBeenCalledTimes(1);
+    expect(provider.errorEvent?.addEventListener).toHaveBeenCalledWith(expect.any(Function));
 
     expect(vi.mocked(ImageryLayer)).toHaveBeenCalledWith(
       expect.objectContaining({ kind: 'url-template' }),
@@ -236,5 +262,66 @@ describe('PrecipitationLayer', () => {
         threshold: null,
       }),
     ).toThrow('PrecipitationLayer id mismatch');
+  });
+
+  it('logs once when precipitation tiles are missing (404)', () => {
+    const viewer = makeViewer();
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    try {
+      new PrecipitationLayer(viewer as never, {
+        id: 'precipitation',
+        apiBaseUrl: 'http://api.test',
+        timeKey: '2024011500',
+        opacity: 1,
+        visible: true,
+        zIndex: 30,
+        threshold: null,
+      });
+
+      const provider = vi.mocked(UrlTemplateImageryProvider).mock.results[0]?.value as {
+        errorEvent?: { __mocks?: { trigger?: (error: unknown) => void } };
+      };
+
+      provider.errorEvent?.__mocks?.trigger?.({ error: { statusCode: 404 }, x: 0, y: 0, level: 0 });
+      provider.errorEvent?.__mocks?.trigger?.({ error: { statusCode: 404 }, x: 1, y: 1, level: 0 });
+
+      const warnCalls = warnSpy.mock.calls.filter(
+        ([message]) => message === '[Digital Earth] precipitation tiles missing (404)',
+      );
+      expect(warnCalls).toHaveLength(1);
+      expect(warnCalls[0]?.[1]).toEqual(
+        expect.objectContaining({
+          statusCode: 404,
+          urlTemplate: expect.stringContaining('/api/v1/tiles/ecmwf/precip_amount/'),
+        }),
+      );
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it('removes its provider error listener on destroy', () => {
+    const viewer = makeViewer();
+
+    const layer = new PrecipitationLayer(viewer as never, {
+      id: 'precipitation',
+      apiBaseUrl: 'http://api.test',
+      timeKey: '2024011500',
+      opacity: 1,
+      visible: true,
+      zIndex: 30,
+      threshold: null,
+    });
+
+    const provider = vi.mocked(UrlTemplateImageryProvider).mock.results[0]?.value as {
+      errorEvent?: { removeEventListener?: ReturnType<typeof vi.fn> };
+    };
+
+    layer.destroy();
+
+    expect(provider.errorEvent?.removeEventListener).toHaveBeenCalledTimes(1);
+    expect(provider.errorEvent?.removeEventListener).toHaveBeenCalledWith(expect.any(Function));
+    expect(viewer.scene.requestRender).toHaveBeenCalled();
   });
 });

@@ -236,6 +236,51 @@ describe('layersApi', () => {
     expect(result.vectors).toEqual([{ lon: 120, lat: 30, u: 1.5, v: -2 }]);
   });
 
+  it('returns empty vectors when wind vector endpoint returns 404 and logs once', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    try {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async () => new Response('Not found', { status: 404 })),
+      );
+
+      const options = {
+        apiBaseUrl: 'http://api.test',
+        runTimeKey: '2026-01-01T00:00:00Z',
+        timeKey: '2026-01-01T01:00:00Z',
+        level: 'sfc',
+        bbox: { west: 0, south: 0, east: 1, north: 1 },
+        density: 10,
+      } as const;
+
+      const first = await fetchWindVectorData(options);
+      const second = await fetchWindVectorData({
+        ...options,
+        bbox: { west: 10, south: 10, east: 11, north: 11 },
+      });
+
+      expect(first.vectors).toEqual([]);
+      expect(second.vectors).toEqual([]);
+
+      const warnCalls = warnSpy.mock.calls.filter(
+        ([message]) => message === '[Digital Earth] wind vector data missing (404)',
+      );
+      expect(warnCalls).toHaveLength(1);
+      expect(warnCalls[0]?.[1]).toEqual(
+        expect.objectContaining({
+          apiBaseUrl: 'http://api.test',
+          runTimeKey: options.runTimeKey,
+          timeKey: options.timeKey,
+          level: options.level,
+          stride: expect.any(Number),
+        }),
+      );
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
   it('throws when wind vector fetch returns a non-200 response', async () => {
     vi.stubGlobal(
       'fetch',
