@@ -32,6 +32,20 @@ export type WindVectorBBox = {
   north: number;
 };
 
+const WIND_VECTOR_MISSING_LOG_CACHE_MAX_ENTRIES = 64;
+const windVectorMissingLogCache = new Set<string>();
+
+function warnWindVectorMissingOnce(key: string, details: Record<string, unknown>) {
+  if (windVectorMissingLogCache.has(key)) return;
+  windVectorMissingLogCache.add(key);
+  if (windVectorMissingLogCache.size > WIND_VECTOR_MISSING_LOG_CACHE_MAX_ENTRIES) {
+    const oldest = windVectorMissingLogCache.values().next().value as string | undefined;
+    if (oldest) windVectorMissingLogCache.delete(oldest);
+  }
+
+  console.warn('[Digital Earth] wind vector data missing (404)', details);
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object';
 }
@@ -118,6 +132,18 @@ export async function fetchWindVectorData(options: {
     if (response.ok) break;
     if (response.status !== 400 || candidateStride >= 256) break;
     candidateStride = Math.min(256, candidateStride * 2);
+  }
+
+  if (response && response.status === 404) {
+    warnWindVectorMissingOnce(`${origin}:${runTimeKey}:${timeKey}:${level}`, {
+      apiBaseUrl: options.apiBaseUrl,
+      runTimeKey: options.runTimeKey ?? options.timeKey,
+      timeKey: options.timeKey,
+      level: options.level ?? 'sfc',
+      bbox,
+      stride: candidateStride,
+    });
+    return { vectors: [] };
   }
 
   if (!response || !response.ok) throw new Error(`Failed to fetch wind vectors: ${response?.status ?? 0}`);

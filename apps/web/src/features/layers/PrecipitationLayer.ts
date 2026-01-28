@@ -21,12 +21,35 @@ function clampOpacity(value: number): number {
   return value;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object';
+}
+
+function extractHttpStatusCode(value: unknown): number | null {
+  if (!isRecord(value)) return null;
+
+  const candidates = [value.statusCode, value.status, (value.error as unknown)];
+
+  for (const candidate of candidates) {
+    if (typeof candidate === 'number' && Number.isFinite(candidate)) return candidate;
+    if (isRecord(candidate)) {
+      const nested = candidate.statusCode ?? candidate.status;
+      if (typeof nested === 'number' && Number.isFinite(nested)) return nested;
+    }
+  }
+
+  return null;
+}
+
 export class PrecipitationLayer {
   public readonly id: string;
   private readonly viewer: Viewer;
   private current: PrecipitationLayerParams;
   private imageryLayer: ImageryLayer | null = null;
   private urlTemplate: string | null = null;
+  private provider: UrlTemplateImageryProvider | null = null;
+  private providerErrorHandler: ((error: unknown) => void) | null = null;
+  private didWarnTileError = false;
 
   constructor(viewer: Viewer, params: PrecipitationLayerParams) {
     this.viewer = viewer;
@@ -54,6 +77,7 @@ export class PrecipitationLayer {
 
   destroy(): void {
     if (!this.imageryLayer) return;
+    this.detachProviderErrorListener();
     if (!isCesiumDestroyed(this.viewer)) {
       try {
         this.viewer.imageryLayers.remove(this.imageryLayer, true);
@@ -64,6 +88,17 @@ export class PrecipitationLayer {
     this.imageryLayer = null;
     this.urlTemplate = null;
     requestViewerRender(this.viewer);
+  }
+
+  private detachProviderErrorListener() {
+    if (!this.provider || !this.providerErrorHandler) return;
+    try {
+      this.provider.errorEvent.removeEventListener(this.providerErrorHandler);
+    } catch {
+      // ignore provider teardown errors
+    }
+    this.providerErrorHandler = null;
+    this.provider = null;
   }
 
   private createUrlTemplate(params: PrecipitationLayerParams): string {
@@ -85,6 +120,7 @@ export class PrecipitationLayer {
 
     if (shouldRecreate) {
       if (this.imageryLayer) {
+        this.detachProviderErrorListener();
         try {
           this.viewer.imageryLayers.remove(this.imageryLayer, true);
         } catch {
@@ -105,6 +141,42 @@ export class PrecipitationLayer {
       });
       attachTileCacheToProvider(provider, { frameKey: this.current.timeKey });
 
+      this.detachProviderErrorListener();
+      this.didWarnTileError = false;
+      this.provider = provider;
+      this.providerErrorHandler = (error: unknown) => {
+        if (this.didWarnTileError) return;
+        this.didWarnTileError = true;
+
+        const statusCode = extractHttpStatusCode(error);
+        const errorDetails: Record<string, unknown> = {
+          statusCode,
+          urlTemplate: nextTemplate,
+        };
+
+        if (isRecord(error)) {
+          const tileX = error.x;
+          const tileY = error.y;
+          const tileLevel = error.level;
+          if (typeof tileX === 'number') errorDetails.x = tileX;
+          if (typeof tileY === 'number') errorDetails.y = tileY;
+          if (typeof tileLevel === 'number') errorDetails.level = tileLevel;
+          if (typeof error.message === 'string') errorDetails.message = error.message;
+        }
+
+        if (statusCode === 404) {
+          console.warn('[Digital Earth] precipitation tiles missing (404)', errorDetails);
+        } else {
+          console.warn('[Digital Earth] precipitation tiles failed to load', errorDetails);
+        }
+      };
+
+      try {
+        provider.errorEvent.addEventListener(this.providerErrorHandler);
+      } catch {
+        // ignore provider event wiring errors
+      }
+
       this.imageryLayer = new ImageryLayer(provider, {
         alpha: clampOpacity(this.current.opacity),
         show: this.current.visible,
@@ -112,6 +184,7 @@ export class PrecipitationLayer {
       try {
         this.viewer.imageryLayers.add(this.imageryLayer);
       } catch {
+        this.detachProviderErrorListener();
         this.imageryLayer = null;
         this.urlTemplate = null;
         return;
